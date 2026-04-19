@@ -1,9 +1,16 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Users } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileList } from "@/components/staging/file-list";
 import { CommitBox } from "@/components/staging/commit-box";
 import type { FileStatus } from "@/types/git";
+
+// Claude Code orange — used for CC co-author avatar
+const CLAUDE_ORANGE = "#E8734A";
+
+function isClaudeCoAuthor(email: string): boolean {
+  return email.includes("anthropic.com") || email.includes("claude");
+}
 
 export function DetailPanel() {
   const {
@@ -15,7 +22,6 @@ export function DetailPanel() {
     selectCommitFile,
   } = useRepoStore();
 
-  // Mode 1: A commit is selected from the graph
   if (selectedCommitId) {
     const commit = commits.find((c) => c.id === selectedCommitId);
     if (commit) {
@@ -30,7 +36,6 @@ export function DetailPanel() {
     }
   }
 
-  // Mode 2: No commit selected — show staging panel
   if (fileStatuses.length > 0) {
     return (
       <div className="flex h-full flex-col bg-card">
@@ -50,7 +55,6 @@ export function DetailPanel() {
     );
   }
 
-  // No changes, no selection
   return (
     <div className="flex h-full flex-col items-center justify-center bg-card p-4">
       <p className="text-sm text-muted-foreground">
@@ -101,7 +105,7 @@ function CommitDetailView({
         isOpen={commitOpen}
         onToggle={() => setCommitOpen(!commitOpen)}
       >
-        <div className="px-4 pb-3">
+        <div className="px-4 pb-4">
           {/* SHA */}
           <p className="font-mono text-xs text-muted-foreground mb-2">
             {commit.short_id}
@@ -112,13 +116,18 @@ function CommitDetailView({
 
           {/* Body (description) */}
           {commit.body && (
-            <p className="text-xs text-muted-foreground whitespace-pre-wrap mb-2 max-h-48 overflow-y-auto">
-              {commit.body}
-            </p>
+            <div className="rounded-md bg-secondary/50 px-3 py-2 mb-2 max-h-20 overflow-y-auto">
+              <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                {commit.body}
+              </p>
+            </div>
           )}
 
           {/* Author */}
-          <div className="flex items-center gap-1.5 mt-2">
+          <p className="text-xs text-muted-foreground/50 uppercase tracking-wider mt-3 mb-1">
+            Author
+          </p>
+          <div className="flex items-center gap-1.5">
             <div className="h-5 w-5 rounded-full bg-secondary flex items-center justify-center shrink-0">
               <span className="text-xs font-medium text-foreground">
                 {commit.author_name.charAt(0).toUpperCase()}
@@ -134,27 +143,50 @@ function CommitDetailView({
 
           {/* Co-authors */}
           {commit.co_authors.length > 0 && (
-            <div className="mt-2 space-y-1.5">
-              {commit.co_authors.map((ca, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <div className="h-5 w-5 rounded-full bg-accent flex items-center justify-center shrink-0">
-                    <Users className="h-2.5 w-2.5 text-accent-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-foreground">{ca.name}</p>
-                    {ca.email && (
-                      <p className="text-xs text-muted-foreground/60">
-                        {ca.email}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <>
+              <p className="text-xs text-muted-foreground/50 uppercase tracking-wider mt-3 mb-1">
+                Co-Author{commit.co_authors.length > 1 ? "s" : ""}
+              </p>
+              <div className="space-y-1.5">
+                {commit.co_authors.map((ca, i) => {
+                  const isClaude = isClaudeCoAuthor(ca.email);
+                  return (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <div
+                        className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
+                        style={
+                          isClaude
+                            ? { backgroundColor: CLAUDE_ORANGE }
+                            : undefined
+                        }
+                      >
+                        {isClaude ? (
+                          <ClaudeIcon />
+                        ) : (
+                          <span className="text-xs font-medium text-foreground bg-secondary rounded-full h-5 w-5 flex items-center justify-center">
+                            {ca.name.charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs text-foreground">{ca.name}</p>
+                        {ca.email && (
+                          <p className="text-xs text-muted-foreground/60">
+                            {ca.email}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
 
           {/* Date */}
-          <p className="text-xs text-muted-foreground/60 mt-2">{dateStr}</p>
+          <p className="text-xs text-muted-foreground/60 mt-3">
+            Authored {dateStr}
+          </p>
         </div>
       </CollapsibleSection>
 
@@ -165,7 +197,7 @@ function CommitDetailView({
           isOpen={filesOpen}
           onToggle={() => setFilesOpen(!filesOpen)}
         >
-          <div>
+          <div className="pb-3">
             {commitFiles.map((file) => (
               <CommitFileRow
                 key={file.path}
@@ -264,5 +296,23 @@ function CommitFileRow({
         </span>
       )}
     </button>
+  );
+}
+
+/** Tiny Claude sparkle icon in white */
+function ClaudeIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"
+        fill="white"
+      />
+    </svg>
   );
 }
