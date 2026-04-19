@@ -370,12 +370,14 @@ function CommitFileRow({
           {dirPath}
         </span>
       )}
-      {file.additions != null && (
-        <span className="shrink-0 text-xs text-green-400">+{file.additions}</span>
-      )}
-      {file.deletions != null && file.deletions > 0 && (
-        <span className="shrink-0 text-xs text-red-400">-{file.deletions}</span>
-      )}
+      <span className="ml-auto shrink-0 flex items-center gap-1">
+        {file.additions != null && (
+          <span className="text-xs text-green-400">+{file.additions}</span>
+        )}
+        {file.deletions != null && file.deletions > 0 && (
+          <span className="text-xs text-red-400">-{file.deletions}</span>
+        )}
+      </span>
     </button>
   );
 }
