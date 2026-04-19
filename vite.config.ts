@@ -15,5 +15,11 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      // Ignore git internals and Rust build artifacts — git operations
+      // (stash, commit, checkout) modify .git/ files which would trigger
+      // unwanted HMR full-page reloads
+      ignored: ["**/.git/**", "**/src-tauri/target/**"],
+    },
   },
 });
