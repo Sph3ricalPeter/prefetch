@@ -111,6 +111,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   stashes: [],
 
   openRepository: async (path: string) => {
+    // Skip if this repo is already open
+    if (get().repoPath === path && get().commits.length > 0) return;
     set({ isLoading: true, error: null });
     try {
       const name = await openRepo(path);
