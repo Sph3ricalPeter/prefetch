@@ -273,8 +273,16 @@ export function CommitGraphCanvas({
       : -1;
 
     if (selectedRow >= firstVisibleRow && selectedRow <= lastVisibleRow) {
-      ctx.fillStyle = "hsl(0 0% 14.9%)";
-      ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      if (selectedRow === headRow) {
+        const headCommit = commits[headCommitIdx];
+        ctx.fillStyle = headCommit ? getCommitColor(headCommit) : "#ffffff";
+        ctx.globalAlpha = 0.18;
+        ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.fillStyle = "hsl(0 0% 14.9%)";
+        ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      }
     }
 
     if (
@@ -283,8 +291,16 @@ export function CommitGraphCanvas({
       hoveredRow <= lastVisibleRow &&
       hoveredRow !== selectedRow
     ) {
-      ctx.fillStyle = "hsl(0 0% 10%)";
-      ctx.fillRect(0, hoveredRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      if (hoveredRow === headRow) {
+        const headCommit = commits[headCommitIdx];
+        ctx.fillStyle = headCommit ? getCommitColor(headCommit) : "#ffffff";
+        ctx.globalAlpha = 0.14;
+        ctx.fillRect(0, hoveredRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.fillStyle = "hsl(0 0% 10%)";
+        ctx.fillRect(0, hoveredRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      }
     }
 
     // WIP row highlight handled by general hover/selection above
