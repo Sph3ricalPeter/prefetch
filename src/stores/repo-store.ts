@@ -7,6 +7,7 @@ import type {
   FileStatus,
   GraphEdge,
   StashInfo,
+  TagInfo,
 } from "@/types/git";
 import {
   openRepo,
@@ -29,6 +30,10 @@ import {
   stashDrop as stashDropCmd,
   getStashFiles,
   getStashFileDiff,
+  getTags,
+  createTagCmd,
+  deleteTagCmd,
+  pushTagCmd,
 } from "@/lib/commands";
 
 interface RepoState {
@@ -60,6 +65,9 @@ interface RepoState {
   stashes: StashInfo[];
   selectedStashIndex: number | null;
 
+  // Tags
+  tags: TagInfo[];
+
   // Actions
   openRepository: (path: string) => Promise<void>;
   loadBranches: () => Promise<void>;
@@ -83,6 +91,10 @@ interface RepoState {
   pushStash: (message?: string) => Promise<void>;
   popStash: (index: number) => Promise<void>;
   dropStash: (index: number) => Promise<void>;
+  loadTags: () => Promise<void>;
+  createNewTag: (name: string, commit?: string, message?: string) => Promise<void>;
+  deleteExistingTag: (name: string) => Promise<void>;
+  pushExistingTag: (name: string) => Promise<void>;
 }
 
 async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
@@ -116,6 +128,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   commitMessage: "",
   stashes: [],
   selectedStashIndex: null,
+  tags: [],
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
@@ -125,11 +138,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const name = await openRepo(path);
       set({ repoPath: path, repoName: name });
       await reloadRepoData(set);
-      const [statuses, stashList] = await Promise.all([
+      const [statuses, stashList, tagList] = await Promise.all([
         getFileStatus(),
         getStashes(),
+        getTags(),
       ]);
-      set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
+      set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList });
     } catch (e) {
       const msg = String(e);
       set({ isLoading: false, error: msg });
@@ -392,6 +406,46 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const stashList = await getStashes();
       set({ stashes: stashList });
       toast.success("Stash dropped");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  loadTags: async () => {
+    try {
+      const tagList = await getTags();
+      set({ tags: tagList });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  createNewTag: async (name, commit?, message?) => {
+    try {
+      await createTagCmd(name, commit, message);
+      const tagList = await getTags();
+      set({ tags: tagList });
+      toast.success(`Tag "${name}" created`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  deleteExistingTag: async (name) => {
+    try {
+      await deleteTagCmd(name);
+      const tagList = await getTags();
+      set({ tags: tagList });
+      toast.success(`Tag "${name}" deleted`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  pushExistingTag: async (name) => {
+    try {
+      await pushTagCmd(name);
+      toast.success(`Tag "${name}" pushed`);
     } catch (e) {
       toast.error(String(e));
     }

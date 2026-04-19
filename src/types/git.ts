@@ -74,3 +74,9 @@ export interface StashInfo {
   index: number;
   message: string;
 }
+
+export interface TagInfo {
+  name: string;
+  commit_id: string;
+  message: string | null;
+}

@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::git::graph::assign_lanes;
 use crate::git::types::{
     BranchInfo, CoAuthor, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
-    StashInfo,
+    StashInfo, TagInfo,
 };
 use git2::{BranchType, Repository, Sort, Status};
 use std::collections::HashMap;
@@ -656,6 +656,77 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
     }
 
     Ok(files)
+}
+
+/// List all tags with their commit SHAs and messages.
+pub fn list_tags(path: &str) -> Result<Vec<TagInfo>, AppError> {
+    let output = Command::new("git")
+        .args([
+            "tag",
+            "-l",
+            "--sort=-creatordate",
+            "--format=%(refname:short)\t%(objectname:short)\t%(contents:subject)",
+        ])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut tags = Vec::new();
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        if parts.is_empty() || parts[0].is_empty() {
+            continue;
+        }
+
+        let name = parts[0].to_string();
+        let commit_id = parts.get(1).unwrap_or(&"").to_string();
+        let message = parts
+            .get(2)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        tags.push(TagInfo {
+            name,
+            commit_id,
+            message,
+        });
+    }
+
+    Ok(tags)
+}
+
+/// Create a tag (annotated if message provided, lightweight otherwise).
+pub fn create_tag(
+    path: &str,
+    name: &str,
+    commit: Option<&str>,
+    message: Option<&str>,
+) -> Result<String, AppError> {
+    let mut args = vec!["tag"];
+    if let Some(msg) = message {
+        args.push("-a");
+        args.push(name);
+        args.push("-m");
+        args.push(msg);
+    } else {
+        args.push(name);
+    }
+    if let Some(c) = commit {
+        args.push(c);
+    }
+    run_git(path, &args)
+}
+
+/// Delete a local tag.
+pub fn delete_tag(path: &str, name: &str) -> Result<String, AppError> {
+    run_git(path, &["tag", "-d", name])
+}
+
+/// Push a tag to the remote.
+pub fn push_tag(path: &str, name: &str) -> Result<String, AppError> {
+    run_git(path, &["push", "origin", name])
 }
 
 /// Get the diff for a specific file in a stash entry.

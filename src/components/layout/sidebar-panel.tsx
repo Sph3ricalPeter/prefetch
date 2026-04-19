@@ -1,6 +1,7 @@
 import { useRepoStore } from "@/stores/repo-store";
 import { BranchList } from "@/components/sidebar/branch-list";
 import { StashList } from "@/components/sidebar/stash-list";
+import { TagList } from "@/components/sidebar/tag-list";
 
 export function SidebarPanel() {
   const repoPath = useRepoStore((s) => s.repoPath);
@@ -25,6 +26,12 @@ export function SidebarPanel() {
 
       {/* Stash */}
       <StashList />
+
+      {/* Divider */}
+      <div className="mx-3 my-1 border-t border-border" />
+
+      {/* Tags */}
+      <TagList />
     </div>
   );
 }

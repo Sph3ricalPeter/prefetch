@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Archive, ChevronDown, ChevronRight } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, Tag } from "lucide-react";
 import { FileIcon } from "@/components/ui/file-icon";
 import {
   Tooltip,
@@ -26,6 +26,7 @@ export function DetailPanel() {
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const commitFiles = useRepoStore((s) => s.commitFiles);
+  const tags = useRepoStore((s) => s.tags);
   const selectCommitFile = useRepoStore((s) => s.selectCommitFile);
   const selectStashFile = useRepoStore((s) => s.selectStashFile);
 
@@ -52,6 +53,7 @@ export function DetailPanel() {
         <CommitDetailView
           commit={commit}
           commitFiles={commitFiles}
+          commitTags={tags.filter((t) => commit.id.startsWith(t.commit_id))}
           selectedFilePath={selectedFilePath}
           onFileClick={(path) => selectCommitFile(selectedCommitId, path)}
         />
@@ -90,6 +92,7 @@ export function DetailPanel() {
 function CommitDetailView({
   commit,
   commitFiles,
+  commitTags,
   selectedFilePath,
   onFileClick,
 }: {
@@ -105,6 +108,7 @@ function CommitDetailView({
     parent_ids: string[];
   };
   commitFiles: FileStatus[];
+  commitTags: { name: string; message: string | null }[];
   selectedFilePath: string | null;
   onFileClick: (path: string) => void;
 }) {
@@ -129,10 +133,21 @@ function CommitDetailView({
         onToggle={() => setCommitOpen(!commitOpen)}
       >
         <div className="px-4 pb-4">
-          {/* SHA */}
-          <p className="font-mono text-xs text-muted-foreground mb-2">
-            {commit.short_id}
-          </p>
+          {/* SHA + tag badges */}
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className="font-mono text-xs text-muted-foreground">
+              {commit.short_id}
+            </span>
+            {commitTags.map((t) => (
+              <span
+                key={t.name}
+                className="inline-flex items-center gap-1 rounded-full bg-yellow-500/15 px-2 py-0.5 text-xs text-yellow-400"
+              >
+                <Tag className="h-2.5 w-2.5" />
+                {t.name}
+              </span>
+            ))}
+          </div>
 
           {/* Message */}
           <p className="text-sm text-foreground mb-1">{commit.message}</p>

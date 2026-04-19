@@ -90,3 +90,10 @@ pub struct StashInfo {
     pub index: usize,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TagInfo {
+    pub name: String,
+    pub commit_id: String,
+    pub message: Option<String>,
+}

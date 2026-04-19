@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::git::{
     repository,
-    types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo},
+    types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo, TagInfo},
 };
 use crate::AppState;
 use tauri::State;
@@ -310,4 +310,57 @@ pub fn get_stash_file_diff(
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
     repository::get_stash_file_diff(path, index, &file_path)
+}
+
+#[tauri::command]
+pub fn get_tags(state: State<'_, AppState>) -> Result<Vec<TagInfo>, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::list_tags(path)
+}
+
+#[tauri::command]
+pub fn create_tag(
+    name: String,
+    commit: Option<String>,
+    message: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::create_tag(path, &name, commit.as_deref(), message.as_deref())
+}
+
+#[tauri::command]
+pub fn delete_tag(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::delete_tag(path, &name)
+}
+
+#[tauri::command]
+pub fn push_tag(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::push_tag(path, &name)
 }

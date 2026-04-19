@@ -5,6 +5,7 @@ import type {
   FileStatus,
   GraphData,
   StashInfo,
+  TagInfo,
 } from "@/types/git";
 
 export async function openRepo(path: string): Promise<string> {
@@ -97,4 +98,28 @@ export async function getStashFileDiff(
   filePath: string,
 ): Promise<FileDiff> {
   return invoke<FileDiff>("get_stash_file_diff", { index, filePath });
+}
+
+export async function getTags(): Promise<TagInfo[]> {
+  return invoke<TagInfo[]>("get_tags");
+}
+
+export async function createTagCmd(
+  name: string,
+  commit?: string,
+  message?: string,
+): Promise<string> {
+  return invoke<string>("create_tag", {
+    name,
+    commit: commit ?? null,
+    message: message ?? null,
+  });
+}
+
+export async function deleteTagCmd(name: string): Promise<string> {
+  return invoke<string>("delete_tag", { name });
+}
+
+export async function pushTagCmd(name: string): Promise<string> {
+  return invoke<string>("push_tag", { name });
 }
