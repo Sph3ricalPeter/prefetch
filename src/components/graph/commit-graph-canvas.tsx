@@ -251,7 +251,23 @@ export function CommitGraphCanvas({
     ctx.clearRect(0, 0, width, height);
     ctx.textBaseline = "middle";
 
-    // --- Row highlights ---
+    // --- HEAD row highlight (permanent "you are here") ---
+    const headBranch = branches.find((b) => b.is_head && !b.is_remote);
+    const headCommitIdx = headBranch
+      ? commits.findIndex((c) => c.id.startsWith(headBranch.commit_id))
+      : -1;
+    const headRow = headCommitIdx >= 0 ? headCommitIdx + rowOffset : -1;
+
+    if (headRow >= firstVisibleRow && headRow <= lastVisibleRow) {
+      const headCommit = commits[headCommitIdx];
+      const headColor = headCommit ? getCommitColor(headCommit) : "#ffffff";
+      ctx.fillStyle = headColor;
+      ctx.globalAlpha = 0.08;
+      ctx.fillRect(0, headRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      ctx.globalAlpha = 1;
+    }
+
+    // --- Selected row highlight ---
     const selectedRow = selectedCommitId
       ? commits.findIndex((c) => c.id === selectedCommitId) + rowOffset
       : -1;
@@ -433,7 +449,7 @@ export function CommitGraphCanvas({
       const metaWidth = ctx.measureText(metaText).width;
       ctx.fillText(metaText, width - metaWidth - 16, y);
     }
-  }, [commits, edges, selectedCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor]);
+  }, [commits, edges, selectedCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
