@@ -26,8 +26,22 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
     let repo = Repository::open(path)?;
 
     let mut revwalk = repo.revwalk()?;
-    revwalk.push_head()?;
     revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+
+    // Push all branch tips so commits from all branches are visible,
+    // not just those reachable from HEAD
+    for (branch, _) in repo.branches(Some(BranchType::Local))?.flatten() {
+        if let Some(oid) = branch.get().target() {
+            let _ = revwalk.push(oid);
+        }
+    }
+    for (branch, _) in repo.branches(Some(BranchType::Remote))?.flatten() {
+        if let Some(oid) = branch.get().target() {
+            let _ = revwalk.push(oid);
+        }
+    }
+    // Fallback: also push HEAD in case it's detached
+    let _ = revwalk.push_head();
 
     let mut commits: Vec<CommitInfo> = Vec::new();
 
