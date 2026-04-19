@@ -44,6 +44,8 @@ export interface FileStatus {
   path: string;
   status_type: string;
   is_staged: boolean;
+  additions: number | null;
+  deletions: number | null;
 }
 
 export interface FileDiff {

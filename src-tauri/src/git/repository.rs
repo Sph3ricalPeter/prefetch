@@ -5,6 +5,7 @@ use crate::git::types::{
     StashInfo,
 };
 use git2::{BranchType, Repository, Sort, Status};
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -190,10 +191,40 @@ fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
     })
 }
 
+/// Parse `git diff --numstat` output into a map of path -> (additions, deletions).
+fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .ok();
+
+    let mut stats: HashMap<String, (u32, u32)> = HashMap::new();
+    if let Some(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let add = parts[0].parse::<u32>().ok();
+                let del = parts[1].parse::<u32>().ok();
+                if let (Some(a), Some(d)) = (add, del) {
+                    stats.insert(parts[2].to_string(), (a, d));
+                }
+            }
+        }
+    }
+    stats
+}
+
 /// Get the working tree status (staged + unstaged + untracked files).
 pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
     let repo = Repository::open(path)?;
     let statuses = repo.statuses(None)?;
+
+    // Get line stats for staged and unstaged changes
+    let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
+    let unstaged_stats = parse_numstat(path, &["diff", "--numstat"]);
+
     let mut result: Vec<FileStatus> = Vec::new();
 
     for entry in statuses.iter() {
@@ -207,10 +238,16 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
                 | Status::INDEX_DELETED
                 | Status::INDEX_RENAMED,
         ) {
+            let (additions, deletions) = staged_stats
+                .get(&file_path)
+                .map(|&(a, d)| (Some(a), Some(d)))
+                .unwrap_or((None, None));
             result.push(FileStatus {
                 path: file_path.clone(),
                 status_type: status_type_from_index(s),
                 is_staged: true,
+                additions,
+                deletions,
             });
         }
 
@@ -218,6 +255,10 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         if s.intersects(
             Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_NEW,
         ) {
+            let (additions, deletions) = unstaged_stats
+                .get(&file_path)
+                .map(|&(a, d)| (Some(a), Some(d)))
+                .unwrap_or((None, None));
             result.push(FileStatus {
                 path: file_path,
                 status_type: if s.contains(Status::WT_NEW) {
@@ -226,6 +267,8 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
                     status_type_from_workdir(s)
                 },
                 is_staged: false,
+                additions,
+                deletions,
             });
         }
     }
@@ -419,6 +462,7 @@ pub fn create_commit(path: &str, message: &str, amend: bool) -> Result<String, A
 
 /// Get the list of files changed in a specific commit.
 pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStatus>, AppError> {
+    // Get name-status for file status types
     let output = Command::new("git")
         .args([
             "diff-tree",
@@ -431,12 +475,19 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
 
+    // Get numstat for line counts
+    let numstat = parse_numstat(
+        repo_path,
+        &["diff-tree", "--no-commit-id", "-r", "--numstat", commit_id],
+    );
+
     let text = String::from_utf8_lossy(&output.stdout);
     let mut files = Vec::new();
 
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(2, '\t').collect();
         if parts.len() == 2 {
+            let file_path = parts[1].to_string();
             let status_type = match parts[0] {
                 "A" => "added",
                 "M" => "modified",
@@ -445,10 +496,16 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
                 _ => "modified",
             }
             .to_string();
+            let (additions, deletions) = numstat
+                .get(&file_path)
+                .map(|&(a, d)| (Some(a), Some(d)))
+                .unwrap_or((None, None));
             files.push(FileStatus {
-                path: parts[1].to_string(),
+                path: file_path,
                 status_type,
-                is_staged: true, // historical commits are always "staged"
+                is_staged: true,
+                additions,
+                deletions,
             });
         }
     }
@@ -560,11 +617,14 @@ pub fn stash_drop(path: &str, index: usize) -> Result<String, AppError> {
 /// Get the list of files changed in a stash entry.
 pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
+
     let output = Command::new("git")
         .args(["stash", "show", "--name-status", &stash_ref])
         .current_dir(path)
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    let numstat = parse_numstat(path, &["stash", "show", "--numstat", &stash_ref]);
 
     let text = String::from_utf8_lossy(&output.stdout);
     let mut files = Vec::new();
@@ -572,6 +632,7 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(2, '\t').collect();
         if parts.len() == 2 {
+            let file_path = parts[1].to_string();
             let status_type = match parts[0] {
                 "A" => "added",
                 "M" => "modified",
@@ -580,10 +641,16 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
                 _ => "modified",
             }
             .to_string();
+            let (additions, deletions) = numstat
+                .get(&file_path)
+                .map(|&(a, d)| (Some(a), Some(d)))
+                .unwrap_or((None, None));
             files.push(FileStatus {
-                path: parts[1].to_string(),
+                path: file_path,
                 status_type,
                 is_staged: true,
+                additions,
+                deletions,
             });
         }
     }

@@ -3,11 +3,11 @@ import {
   ChevronRight,
   Plus,
   Minus,
-  FileText,
 } from "lucide-react";
 import { useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
+import { FileIcon } from "@/components/ui/file-icon";
 
 export function FileList() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
@@ -175,7 +175,7 @@ function FileRow({
       }`}
       onClick={onSelect}
     >
-      <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
         {statusLabel}
       </span>
@@ -184,6 +184,12 @@ function FileRow({
         <span className="truncate text-xs text-muted-foreground/50">
           {dirPath}
         </span>
+      )}
+      {file.additions != null && (
+        <span className="shrink-0 text-xs text-green-400">+{file.additions}</span>
+      )}
+      {file.deletions != null && file.deletions > 0 && (
+        <span className="shrink-0 text-xs text-red-400">-{file.deletions}</span>
       )}
       <button
         onClick={(e) => {

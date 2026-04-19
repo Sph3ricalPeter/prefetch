@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Archive, ChevronDown, ChevronRight, FileText } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight } from "lucide-react";
+import { FileIcon } from "@/components/ui/file-icon";
 import {
   Tooltip,
   TooltipTrigger,
@@ -357,7 +358,7 @@ function CommitFileRow({
           : "hover:bg-secondary"
       }`}
     >
-      <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
       <span
         className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}
       >
@@ -368,6 +369,12 @@ function CommitFileRow({
         <span className="truncate text-xs text-muted-foreground/50">
           {dirPath}
         </span>
+      )}
+      {file.additions != null && (
+        <span className="shrink-0 text-xs text-green-400">+{file.additions}</span>
+      )}
+      {file.deletions != null && file.deletions > 0 && (
+        <span className="shrink-0 text-xs text-red-400">-{file.deletions}</span>
       )}
     </button>
   );

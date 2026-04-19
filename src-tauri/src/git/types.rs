@@ -56,6 +56,8 @@ pub struct FileStatus {
     pub path: String,
     pub status_type: String, // "modified", "added", "deleted", "renamed", "untracked"
     pub is_staged: bool,
+    pub additions: Option<u32>,
+    pub deletions: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
