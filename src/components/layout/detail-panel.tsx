@@ -129,7 +129,10 @@ function CommitDetailView({
           </p>
           <div className="flex flex-wrap gap-3">
             {/* Primary author */}
-            <div className="flex items-center gap-1.5">
+            <div
+              className="flex items-center gap-1.5 cursor-default"
+              title={commit.author_email}
+            >
               <div className="h-5 w-5 rounded-full bg-secondary flex items-center justify-center shrink-0">
                 <span className="text-xs font-medium text-foreground">
                   {commit.author_name.charAt(0).toUpperCase()}
@@ -142,7 +145,11 @@ function CommitDetailView({
             {commit.co_authors.map((ca, i) => {
               const isClaude = isClaudeCoAuthor(ca.email);
               return (
-                <div key={i} className="flex items-center gap-1.5">
+                <div
+                  key={i}
+                  className="flex items-center gap-1.5 cursor-default"
+                  title={ca.email || ca.name}
+                >
                   <div
                     className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
                     style={
@@ -281,18 +288,18 @@ function CommitFileRow({
   );
 }
 
-/** Tiny Claude sparkle icon in white */
+/** Claude logomark — the Anthropic calligraphy asterisk */
 function ClaudeIcon() {
   return (
     <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      viewBox="0 0 256 256"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
       <path
-        d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"
+        d="M166.04 86.272L128.854 180.096H153.174L190.232 86.272H166.04ZM89.954 86.272L52.768 180.096H77.088L114.274 86.272H89.954Z"
         fill="white"
       />
     </svg>
