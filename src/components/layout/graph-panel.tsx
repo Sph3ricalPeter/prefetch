@@ -41,6 +41,7 @@ export function GraphPanel() {
   const pushStash = useRepoStore((s) => s.pushStash);
   const popStash = useRepoStore((s) => s.popStash);
   const createBranch = useRepoStore((s) => s.createBranch);
+  const checkout = useRepoStore((s) => s.checkout);
 
   const [showBranchInput, setShowBranchInput] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
@@ -218,6 +219,7 @@ export function GraphPanel() {
             totalLanes={totalLanes}
             selectedCommitId={selectedCommitId}
             onSelectCommit={selectCommit}
+            onCheckoutBranch={checkout}
             branches={branches}
             tags={tags}
             stashes={stashes}

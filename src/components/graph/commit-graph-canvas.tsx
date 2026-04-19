@@ -105,12 +105,23 @@ function drawPill(
   return pillWidth;
 }
 
+/** Stored badge position for hit testing */
+interface BadgeHitArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  branchName: string;
+  row: number;
+}
+
 interface CommitGraphCanvasProps {
   commits: CommitInfo[];
   edges: GraphEdge[];
   totalLanes: number;
   selectedCommitId: string | null;
   onSelectCommit: (id: string | null) => void;
+  onCheckoutBranch: (name: string) => void;
   branches: BranchInfo[];
   tags: TagInfo[];
   stashes: StashInfo[];
@@ -124,6 +135,7 @@ export function CommitGraphCanvas({
   totalLanes,
   selectedCommitId,
   onSelectCommit,
+  onCheckoutBranch,
   branches,
   tags,
   stashes,
@@ -134,6 +146,7 @@ export function CommitGraphCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
   const rafRef = useRef<number>(0);
+  const badgeHitAreasRef = useRef<BadgeHitArea[]>([]);
 
   const hasWip = hasUncommittedChanges;
   const rowOffset = hasWip ? 1 : 0;
@@ -250,6 +263,7 @@ export function CommitGraphCanvas({
 
     ctx.clearRect(0, 0, width, height);
     ctx.textBaseline = "middle";
+    const hitAreas: BadgeHitArea[] = [];
 
     // --- HEAD row highlight (permanent "you are here") ---
     const headBranch = branches.find((b) => b.is_head && !b.is_remote);
@@ -419,7 +433,17 @@ export function CommitGraphCanvas({
             ? `rgba(255,255,255,0.08)`
             : `${bColor}${Math.round(bgAlpha * 255).toString(16).padStart(2, "0")}`;
           const textCol = branch.is_remote ? "hsl(0 0% 55%)" : bColor;
-          const w = drawPill(ctx, labelX + usedWidth, y, displayName, bg, textCol);
+          const pillX = labelX + usedWidth;
+          const w = drawPill(ctx, pillX, y, displayName, bg, textCol);
+          // Store hit area for double-click checkout (use absolute Y with scrollTop)
+          hitAreas.push({
+            x: pillX,
+            y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
+            width: w,
+            height: LABEL_HEIGHT,
+            branchName: branch.name,
+            row: visRow,
+          });
           usedWidth += w + LABEL_GAP;
           labelCount++;
         }
@@ -460,6 +484,8 @@ export function CommitGraphCanvas({
       const metaWidth = ctx.measureText(metaText).width;
       ctx.fillText(metaText, width - metaWidth - 16, y);
     }
+
+    badgeHitAreasRef.current = hitAreas;
   }, [commits, edges, selectedCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches]);
 
   const requestDraw = useCallback(() => {
@@ -491,6 +517,31 @@ export function CommitGraphCanvas({
       }
     },
     [commits, selectedCommitId, onSelectCommit, hasWip, rowOffset, onClickWip],
+  );
+
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      const scroll = scrollRef.current;
+      if (!scroll) return;
+
+      const rect = scroll.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Check if double-click hit a branch badge
+      for (const badge of badgeHitAreasRef.current) {
+        if (
+          clickX >= badge.x &&
+          clickX <= badge.x + badge.width &&
+          clickY >= badge.y &&
+          clickY <= badge.y + badge.height
+        ) {
+          onCheckoutBranch(badge.branchName);
+          return;
+        }
+      }
+    },
+    [onCheckoutBranch],
   );
 
   const handleMouseMove = useCallback(
@@ -531,6 +582,7 @@ export function CommitGraphCanvas({
         className="absolute inset-0 overflow-y-auto overflow-x-hidden"
         onScroll={handleScroll}
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
       >
