@@ -25,6 +25,8 @@ export function GraphPanel() {
   const isLoading = useRepoStore((s) => s.isLoading);
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const stashes = useRepoStore((s) => s.stashes);
+  const branches = useRepoStore((s) => s.branches);
+  const tags = useRepoStore((s) => s.tags);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
 
   const openRepository = useRepoStore((s) => s.openRepository);
@@ -175,6 +177,11 @@ export function GraphPanel() {
             totalLanes={totalLanes}
             selectedCommitId={selectedCommitId}
             onSelectCommit={selectCommit}
+            branches={branches}
+            tags={tags}
+            stashes={stashes}
+            hasUncommittedChanges={fileStatuses.length > 0}
+            onClickWip={clearSelection}
           />
         )}
       </div>
