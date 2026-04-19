@@ -23,6 +23,8 @@ pub fn repo_name(path: &str) -> String {
 pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
     let repo = Repository::open(path)?;
 
+    // testing some stuff
+
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
     revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
