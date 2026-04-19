@@ -457,7 +457,16 @@ export function CommitGraphCanvas({
             }
             break;
           }
-          const w = drawPill(ctx, labelX + usedWidth, y, tag.name, "rgba(255,255,255,0.08)", "hsl(0 0% 60%)", "⬡");
+          const tagPillX = labelX + usedWidth;
+          const w = drawPill(ctx, tagPillX, y, tag.name, "rgba(255,255,255,0.08)", "hsl(0 0% 60%)", "⬡");
+          hitAreas.push({
+            x: tagPillX,
+            y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
+            width: w,
+            height: LABEL_HEIGHT,
+            branchName: tag.name, // reuse branchName field — checkout works for tags too
+            row: visRow,
+          });
           usedWidth += w + LABEL_GAP;
           labelCount++;
         }
