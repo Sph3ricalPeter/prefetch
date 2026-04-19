@@ -257,8 +257,13 @@ export function CommitGraphCanvas({
       : -1;
 
     if (selectedRow >= firstVisibleRow && selectedRow <= lastVisibleRow) {
-      ctx.fillStyle = "hsl(0 0% 14.9%)";
+      const selCommit = commits[selectedRow - rowOffset];
+      const selColor = selCommit ? getCommitColor(selCommit) : "#ffffff";
+      // Parse hex color and draw with low opacity
+      ctx.fillStyle = selColor;
+      ctx.globalAlpha = 0.12;
       ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      ctx.globalAlpha = 1;
     }
 
     if (
