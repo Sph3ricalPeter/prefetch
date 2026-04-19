@@ -18,14 +18,16 @@ const LABEL_GAP = 3;
 const LABEL_RADIUS = 3;
 
 const LANE_COLORS = [
-  "#4ec9b0",
-  "#569cd6",
-  "#c586c0",
-  "#ce9178",
-  "#dcdcaa",
-  "#9cdcfe",
-  "#d7ba7d",
-  "#608b4e",
+  "#00e5ff", // cyan
+  "#76ff03", // lime
+  "#ff4081", // pink
+  "#ffea00", // yellow
+  "#e040fb", // purple
+  "#ff6e40", // deep orange
+  "#64ffda", // teal
+  "#448aff", // blue
+  "#b2ff59", // light green
+  "#ff5252", // red
 ];
 
 function laneColor(lane: number): string {
