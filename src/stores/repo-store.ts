@@ -72,6 +72,7 @@ interface RepoState {
   selectFile: (path: string, staged: boolean) => Promise<void>;
   selectCommitFile: (commitId: string, filePath: string) => Promise<void>;
   clearDiff: () => void;
+  clearSelection: () => void;
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
@@ -252,6 +253,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   clearDiff: () => set({ activeDiff: null, selectedFilePath: null }),
+
+  clearSelection: () =>
+    set({
+      selectedCommitId: null,
+      selectedStashIndex: null,
+      selectedFilePath: null,
+      activeDiff: null,
+      commitFiles: [],
+    }),
 
   stage: async (paths) => {
     try {

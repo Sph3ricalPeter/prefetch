@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Archive,
   ArchiveRestore,
+  FileEdit,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
@@ -27,10 +28,12 @@ export function GraphPanel() {
   const isLoading = useRepoStore((s) => s.isLoading);
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const stashes = useRepoStore((s) => s.stashes);
+  const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
 
   const openRepository = useRepoStore((s) => s.openRepository);
   const selectCommit = useRepoStore((s) => s.selectCommit);
   const clearDiff = useRepoStore((s) => s.clearDiff);
+  const clearSelection = useRepoStore((s) => s.clearSelection);
   const fetchAction = useRepoStore((s) => s.fetch);
   const pullAction = useRepoStore((s) => s.pull);
   const pushAction = useRepoStore((s) => s.push);
@@ -112,6 +115,26 @@ export function GraphPanel() {
 
         {/* Toolbar buttons — right side */}
         <div className="ml-auto flex items-center gap-1">
+          {fileStatuses.length > 0 && (
+            <>
+              <button
+                onClick={clearSelection}
+                className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                  selectedCommitId === null && selectedStashIndex === null
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                }`}
+              >
+                <FileEdit className="h-3.5 w-3.5" />
+                <span>Changes</span>
+                <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-xs leading-none">
+                  {fileStatuses.length}
+                </span>
+              </button>
+              <div className="mx-1 h-4 w-px bg-border" />
+            </>
+          )}
+
           <ToolbarButton
             icon={<RefreshCw className="h-3.5 w-3.5" />}
             label="Fetch"
