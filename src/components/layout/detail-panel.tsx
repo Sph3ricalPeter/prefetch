@@ -114,74 +114,56 @@ function CommitDetailView({
           {/* Message */}
           <p className="text-sm text-foreground mb-1">{commit.message}</p>
 
-          {/* Body (description) */}
+          {/* Body (description) — vertically resizable */}
           {commit.body && (
-            <div className="rounded-md bg-secondary/50 px-3 py-2 mb-2 max-h-20 overflow-y-auto">
+            <div className="rounded-md bg-secondary/50 px-3 py-2 mb-2 min-h-10 h-20 resize-y overflow-auto">
               <p className="text-xs text-muted-foreground whitespace-pre-wrap">
                 {commit.body}
               </p>
             </div>
           )}
 
-          {/* Author */}
+          {/* Authors — inline row */}
           <p className="text-xs text-muted-foreground/50 uppercase tracking-wider mt-3 mb-1">
-            Author
+            {commit.co_authors.length > 0 ? "Authors" : "Author"}
           </p>
-          <div className="flex items-center gap-1.5">
-            <div className="h-5 w-5 rounded-full bg-secondary flex items-center justify-center shrink-0">
-              <span className="text-xs font-medium text-foreground">
-                {commit.author_name.charAt(0).toUpperCase()}
-              </span>
-            </div>
-            <div>
-              <p className="text-xs text-foreground">{commit.author_name}</p>
-              <p className="text-xs text-muted-foreground/60">
-                {commit.author_email}
-              </p>
-            </div>
-          </div>
-
-          {/* Co-authors */}
-          {commit.co_authors.length > 0 && (
-            <>
-              <p className="text-xs text-muted-foreground/50 uppercase tracking-wider mt-3 mb-1">
-                Co-Author{commit.co_authors.length > 1 ? "s" : ""}
-              </p>
-              <div className="space-y-1.5">
-                {commit.co_authors.map((ca, i) => {
-                  const isClaude = isClaudeCoAuthor(ca.email);
-                  return (
-                    <div key={i} className="flex items-center gap-1.5">
-                      <div
-                        className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
-                        style={
-                          isClaude
-                            ? { backgroundColor: CLAUDE_ORANGE }
-                            : undefined
-                        }
-                      >
-                        {isClaude ? (
-                          <ClaudeIcon />
-                        ) : (
-                          <span className="text-xs font-medium text-foreground bg-secondary rounded-full h-5 w-5 flex items-center justify-center">
-                            {ca.name.charAt(0).toUpperCase()}
-                          </span>
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-xs text-foreground">{ca.name}</p>
-                        {ca.email && (
-                          <p className="text-xs text-muted-foreground/60">
-                            {ca.email}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+          <div className="flex flex-wrap gap-3">
+            {/* Primary author */}
+            <div className="flex items-center gap-1.5">
+              <div className="h-5 w-5 rounded-full bg-secondary flex items-center justify-center shrink-0">
+                <span className="text-xs font-medium text-foreground">
+                  {commit.author_name.charAt(0).toUpperCase()}
+                </span>
               </div>
-            </>
-          )}
+              <p className="text-xs text-foreground">{commit.author_name}</p>
+            </div>
+
+            {/* Co-authors inline */}
+            {commit.co_authors.map((ca, i) => {
+              const isClaude = isClaudeCoAuthor(ca.email);
+              return (
+                <div key={i} className="flex items-center gap-1.5">
+                  <div
+                    className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
+                    style={
+                      isClaude
+                        ? { backgroundColor: CLAUDE_ORANGE }
+                        : undefined
+                    }
+                  >
+                    {isClaude ? (
+                      <ClaudeIcon />
+                    ) : (
+                      <span className="text-xs font-medium text-foreground bg-secondary rounded-full h-5 w-5 flex items-center justify-center">
+                        {ca.name.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-foreground">{ca.name}</p>
+                </div>
+              );
+            })}
+          </div>
 
           {/* Date */}
           <p className="text-xs text-muted-foreground/60 mt-3">
