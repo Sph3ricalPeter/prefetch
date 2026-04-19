@@ -130,10 +130,12 @@ mod tests {
             id: id.to_string(),
             short_id: id[..1].to_string(),
             message: format!("Commit {id}"),
+            body: String::new(),
             author_name: "Test".to_string(),
             author_email: "test@test.com".to_string(),
             timestamp: 0,
             parent_ids: parent_ids.iter().map(|s| s.to_string()).collect(),
+            co_authors: vec![],
             lane: 0,
         }
     }

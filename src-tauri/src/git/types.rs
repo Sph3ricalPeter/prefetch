@@ -5,11 +5,19 @@ pub struct CommitInfo {
     pub id: String,
     pub short_id: String,
     pub message: String,
+    pub body: String,
     pub author_name: String,
     pub author_email: String,
     pub timestamp: i64,
     pub parent_ids: Vec<String>,
+    pub co_authors: Vec<CoAuthor>,
     pub lane: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoAuthor {
+    pub name: String,
+    pub email: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

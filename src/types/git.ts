@@ -2,11 +2,18 @@ export interface CommitInfo {
   id: string;
   short_id: string;
   message: string;
+  body: string;
   author_name: string;
   author_email: string;
   timestamp: number;
   parent_ids: string[];
+  co_authors: CoAuthor[];
   lane: number;
+}
+
+export interface CoAuthor {
+  name: string;
+  email: string;
 }
 
 export type EdgeType = "Straight" | "Merge";

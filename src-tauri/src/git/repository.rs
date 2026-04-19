@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::git::graph::assign_lanes;
 use crate::git::types::{
-    BranchInfo, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
+    BranchInfo, CoAuthor, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
 };
 use git2::{BranchType, Repository, Sort, Status};
 use std::path::Path;
@@ -39,6 +39,13 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
 
         let author = commit.author();
         let message = commit.summary().unwrap_or("").to_string();
+        let full_message = commit.message().unwrap_or("").to_string();
+        let body = full_message
+            .strip_prefix(commit.summary().unwrap_or(""))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let co_authors = parse_co_authors(&full_message);
 
         let parent_ids: Vec<String> = commit.parent_ids().map(|p| p.to_string()).collect();
 
@@ -49,10 +56,12 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
             id,
             short_id,
             message,
+            body,
             author_name: author.name().unwrap_or("Unknown").to_string(),
             author_email: author.email().unwrap_or("").to_string(),
             timestamp: commit.time().seconds(),
             parent_ids,
+            co_authors,
             lane: 0, // will be assigned by graph algorithm
         });
     }
@@ -444,6 +453,33 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
     }
 
     Ok(files)
+}
+
+/// Parse "Co-Authored-By: Name <email>" trailers from a commit message.
+fn parse_co_authors(message: &str) -> Vec<CoAuthor> {
+    message
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let rest = trimmed
+                .strip_prefix("Co-Authored-By:")
+                .or_else(|| trimmed.strip_prefix("Co-authored-by:"))?;
+            let rest = rest.trim();
+            if let Some(email_start) = rest.find('<') {
+                let name = rest[..email_start].trim().to_string();
+                let email = rest[email_start + 1..]
+                    .trim_end_matches('>')
+                    .trim()
+                    .to_string();
+                Some(CoAuthor { name, email })
+            } else {
+                Some(CoAuthor {
+                    name: rest.to_string(),
+                    email: String::new(),
+                })
+            }
+        })
+        .collect()
 }
 
 /// Get the diff for a specific file in a historical commit.
