@@ -1,0 +1,24 @@
+use serde::Serialize;
+
+#[allow(dead_code)]
+#[derive(Debug, thiserror::Error)]
+pub enum AppError {
+    #[error("Git error: {0}")]
+    Git(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Other(String),
+}
+
+// Tauri requires command return errors to be Serialize
+impl Serialize for AppError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
