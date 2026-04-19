@@ -1,13 +1,11 @@
 import { useRepoStore } from "@/stores/repo-store";
 
 export function CommitBox() {
-  const {
-    commitMessage,
-    setCommitMessage,
-    commit,
-    fileStatuses,
-    isLoading,
-  } = useRepoStore();
+  const commitMessage = useRepoStore((s) => s.commitMessage);
+  const setCommitMessage = useRepoStore((s) => s.setCommitMessage);
+  const commit = useRepoStore((s) => s.commit);
+  const fileStatuses = useRepoStore((s) => s.fileStatuses);
+  const isLoading = useRepoStore((s) => s.isLoading);
 
   const stagedCount = fileStatuses.filter((f) => f.is_staged).length;
   const canCommit = stagedCount > 0 && commitMessage.trim().length > 0 && !isLoading;

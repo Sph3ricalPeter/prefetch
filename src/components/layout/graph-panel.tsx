@@ -16,7 +16,6 @@ import { DiffViewer } from "@/components/staging/diff-viewer";
 const DEV_REPO_PATH = "C:\\Users\\sph3r\\OneDrive\\Desktop\\prefetch";
 
 export function GraphPanel() {
-  // Use individual selectors to avoid re-rendering on unrelated state changes
   const repoPath = useRepoStore((s) => s.repoPath);
   const repoName = useRepoStore((s) => s.repoName);
   const commits = useRepoStore((s) => s.commits);
@@ -26,8 +25,8 @@ export function GraphPanel() {
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
   const activeDiff = useRepoStore((s) => s.activeDiff);
   const isLoading = useRepoStore((s) => s.isLoading);
-  const fileStatusCount = useRepoStore((s) => s.fileStatuses.length);
-  const stashCount = useRepoStore((s) => s.stashes.length);
+  const fileStatuses = useRepoStore((s) => s.fileStatuses);
+  const stashes = useRepoStore((s) => s.stashes);
 
   const openRepository = useRepoStore((s) => s.openRepository);
   const selectCommit = useRepoStore((s) => s.selectCommit);
@@ -138,13 +137,13 @@ export function GraphPanel() {
           <ToolbarButton
             icon={<Archive className="h-3.5 w-3.5" />}
             label="Stash"
-            disabled={isLoading || fileStatusCount === 0}
+            disabled={isLoading || fileStatuses.length === 0}
             onClick={() => pushStash()}
           />
           <ToolbarButton
             icon={<ArchiveRestore className="h-3.5 w-3.5" />}
             label="Pop"
-            disabled={isLoading || stashCount === 0}
+            disabled={isLoading || stashes.length === 0}
             onClick={() => popStash(0)}
           />
         </div>

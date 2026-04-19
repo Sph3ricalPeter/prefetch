@@ -14,7 +14,10 @@ import {
 import { useRepoStore } from "@/stores/repo-store";
 
 export function StashList() {
-  const { stashes, popStash, dropStash, isLoading } = useRepoStore();
+  const stashes = useRepoStore((s) => s.stashes);
+  const popStash = useRepoStore((s) => s.popStash);
+  const dropStash = useRepoStore((s) => s.dropStash);
+  const isLoading = useRepoStore((s) => s.isLoading);
   const [isOpen, setIsOpen] = useState(true);
 
   return (

@@ -4,7 +4,10 @@ import type { BranchInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 
 export function BranchList() {
-  const { branches, currentBranch, checkout, isLoading } = useRepoStore();
+  const branches = useRepoStore((s) => s.branches);
+  const currentBranch = useRepoStore((s) => s.currentBranch);
+  const checkout = useRepoStore((s) => s.checkout);
+  const isLoading = useRepoStore((s) => s.isLoading);
   const [filter, setFilter] = useState("");
   const [localOpen, setLocalOpen] = useState(true);
   const [remoteOpen, setRemoteOpen] = useState(false);

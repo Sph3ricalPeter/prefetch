@@ -10,14 +10,12 @@ import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 
 export function FileList() {
-  const {
-    fileStatuses,
-    selectedFilePath,
-    stage,
-    unstage,
-    selectFile,
-    isLoading,
-  } = useRepoStore();
+  const fileStatuses = useRepoStore((s) => s.fileStatuses);
+  const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
+  const stage = useRepoStore((s) => s.stage);
+  const unstage = useRepoStore((s) => s.unstage);
+  const selectFile = useRepoStore((s) => s.selectFile);
+  const isLoading = useRepoStore((s) => s.isLoading);
   const [stagedOpen, setStagedOpen] = useState(true);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
 
