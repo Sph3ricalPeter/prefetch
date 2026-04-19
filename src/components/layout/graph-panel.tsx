@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowDownToLine,
@@ -12,9 +12,6 @@ import {
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
-
-// Auto-open this repo during development
-const DEV_REPO_PATH = "C:\\Users\\sph3r\\OneDrive\\Desktop\\prefetch";
 
 export function GraphPanel() {
   const repoPath = useRepoStore((s) => s.repoPath);
@@ -39,13 +36,6 @@ export function GraphPanel() {
   const pushAction = useRepoStore((s) => s.push);
   const pushStash = useRepoStore((s) => s.pushStash);
   const popStash = useRepoStore((s) => s.popStash);
-
-  // Auto-open dev repo on mount
-  useEffect(() => {
-    if (!repoPath && !isLoading) {
-      openRepository(DEV_REPO_PATH);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenRepo = useCallback(async () => {
     const selected = await open({
