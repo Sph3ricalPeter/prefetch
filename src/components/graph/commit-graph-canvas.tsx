@@ -174,6 +174,53 @@ export function CommitGraphCanvas({
   // Stashes don't have commit_id mapping yet — future: map to commits
   void stashes;
 
+  // Assign a color to each commit based on which branch owns it.
+  // Walk backwards from each branch HEAD, coloring commits until
+  // we hit one already owned by another branch.
+  const commitColorMap = useMemo(() => {
+    const colorMap = new Map<string, string>();
+    const commitIndex = new Map<string, number>();
+    commits.forEach((c, i) => commitIndex.set(c.id, i));
+
+    // Sort branches: HEAD branch first so it claims the main line
+    const sorted = [...branches]
+      .filter((b) => !b.is_remote)
+      .sort((a, b) => (b.is_head ? 1 : 0) - (a.is_head ? 1 : 0));
+
+    for (const branch of sorted) {
+      const brColor = nameColor(branch.name);
+      // Find the commit this branch points to
+      const headCommit = commits.find((c) => c.id.startsWith(branch.commit_id));
+      if (!headCommit) continue;
+
+      // Walk backwards through parents
+      const queue = [headCommit.id];
+      while (queue.length > 0) {
+        const cid = queue.shift()!;
+        if (colorMap.has(cid)) continue; // already owned
+        colorMap.set(cid, brColor);
+
+        const idx = commitIndex.get(cid);
+        if (idx === undefined) continue;
+        const commit = commits[idx];
+        // Follow first parent only (main line of this branch)
+        if (commit.parent_ids.length > 0) {
+          queue.push(commit.parent_ids[0]);
+        }
+      }
+    }
+
+    return colorMap;
+  }, [commits, branches]);
+
+  /** Get the color for a commit — branch-owned color or fallback to lane color */
+  const getCommitColor = useCallback(
+    (commit: CommitInfo): string => {
+      return commitColorMap.get(commit.id) ?? laneColor(commit.lane);
+    },
+    [commitColorMap],
+  );
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const scroll = scrollRef.current;
@@ -238,7 +285,9 @@ export function CommitGraphCanvas({
       const toX = laneX(edge.to_lane);
       const toY = toRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
 
-      ctx.strokeStyle = laneColor(edge.from_lane);
+      // Color edge by source commit's branch color
+      const fromCommit = commits[edge.from_row];
+      ctx.strokeStyle = fromCommit ? getCommitColor(fromCommit) : laneColor(edge.from_lane);
       ctx.globalAlpha = 0.7;
       ctx.beginPath();
       ctx.moveTo(fromX, fromY);
@@ -264,7 +313,7 @@ export function CommitGraphCanvas({
       // Connect WIP to first commit with a dashed line
       if (commits.length > 0) {
         const firstCommitY = (0 + rowOffset) * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
-        ctx.strokeStyle = laneColor(commits[0].lane);
+        ctx.strokeStyle = getCommitColor(commits[0]);
         ctx.globalAlpha = 0.4;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
@@ -296,7 +345,7 @@ export function CommitGraphCanvas({
 
       const x = laneX(commit.lane);
       const y = visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
-      const color = laneColor(commit.lane);
+      const color = getCommitColor(commit);
 
       // Node
       ctx.beginPath();
@@ -377,7 +426,7 @@ export function CommitGraphCanvas({
       const metaWidth = ctx.measureText(metaText).width;
       ctx.fillText(metaText, width - metaWidth - 16, y);
     }
-  }, [commits, edges, selectedCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap]);
+  }, [commits, edges, selectedCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
