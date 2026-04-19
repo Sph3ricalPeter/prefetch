@@ -125,8 +125,30 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
 
 /// Checkout a branch using git CLI subprocess.
 pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
+    run_git(path, &["checkout", name])?;
+    Ok(())
+}
+
+/// Fetch all remotes.
+pub fn fetch_all(path: &str) -> Result<String, AppError> {
+    run_git(path, &["fetch", "--all", "--prune"])
+}
+
+/// Pull from the current branch's upstream.
+pub fn pull(path: &str) -> Result<String, AppError> {
+    run_git(path, &["pull"])
+}
+
+/// Push to the current branch's upstream.
+pub fn push(path: &str) -> Result<String, AppError> {
+    run_git(path, &["push"])
+}
+
+/// Run a git CLI command in the given repo directory.
+/// Returns combined stdout+stderr on success, or AppError on failure.
+fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
     let output = Command::new("git")
-        .args(["checkout", name])
+        .args(args)
         .current_dir(path)
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
@@ -136,5 +158,12 @@ pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
         return Err(AppError::Git(stderr.trim().to_string()));
     }
 
-    Ok(())
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}{}", stdout.trim(), stderr.trim());
+    Ok(if combined.is_empty() {
+        "Done".to_string()
+    } else {
+        combined
+    })
 }

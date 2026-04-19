@@ -65,3 +65,45 @@ pub fn checkout_branch(name: String, state: State<'_, AppState>) -> Result<(), A
 
     repository::checkout_branch(path, &name)
 }
+
+#[tauri::command]
+pub fn fetch_repo(state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::fetch_all(path)
+}
+
+#[tauri::command]
+pub fn pull_repo(state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::pull(path)
+}
+
+#[tauri::command]
+pub fn push_repo(state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::push(path)
+}

@@ -16,3 +16,15 @@ export async function getBranches(): Promise<BranchInfo[]> {
 export async function checkoutBranch(name: string): Promise<void> {
   return invoke<void>("checkout_branch", { name });
 }
+
+export async function fetchRepo(): Promise<string> {
+  return invoke<string>("fetch_repo");
+}
+
+export async function pullRepo(): Promise<string> {
+  return invoke<string>("pull_repo");
+}
+
+export async function pushRepo(): Promise<string> {
+  return invoke<string>("push_repo");
+}
