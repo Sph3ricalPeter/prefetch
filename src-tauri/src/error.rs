@@ -13,6 +13,12 @@ pub enum AppError {
     Other(String),
 }
 
+impl From<git2::Error> for AppError {
+    fn from(e: git2::Error) -> Self {
+        AppError::Git(e.message().to_string())
+    }
+}
+
 // Tauri requires command return errors to be Serialize
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

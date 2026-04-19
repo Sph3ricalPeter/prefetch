@@ -3,12 +3,26 @@ mod error;
 mod events;
 mod git;
 
+use std::sync::Mutex;
+
+pub struct AppState {
+    pub repo_path: Mutex<Option<String>>,
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState {
+            repo_path: Mutex::new(None),
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::repo::open_repo,
+            commands::repo::get_commits,
+        ])
         .setup(|_app| {
             // Future: initialize file watcher, background fetch thread
             Ok(())

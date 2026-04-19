@@ -9,6 +9,8 @@
     "sql:allow-execute",
     "sql:allow-select",
     "fs:default",
-    "os:default"
+    "os:default",
+    "dialog:default",
+    "dialog:allow-open"
   ]
 }
