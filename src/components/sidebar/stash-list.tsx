@@ -15,6 +15,8 @@ import { useRepoStore } from "@/stores/repo-store";
 
 export function StashList() {
   const stashes = useRepoStore((s) => s.stashes);
+  const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
+  const selectStash = useRepoStore((s) => s.selectStash);
   const popStash = useRepoStore((s) => s.popStash);
   const dropStash = useRepoStore((s) => s.dropStash);
   const isLoading = useRepoStore((s) => s.isLoading);
@@ -48,7 +50,12 @@ export function StashList() {
           {stashes.map((stash) => (
             <div
               key={stash.index}
-              className="group flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              onClick={() => selectStash(stash.index)}
+              className={`group flex items-center gap-1.5 px-3 py-1 text-xs cursor-pointer transition-colors ${
+                selectedStashIndex === stash.index
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-secondary"
+              }`}
             >
               <Archive className="h-3 w-3 shrink-0" />
               <span className="truncate flex-1">{stash.message}</span>
@@ -57,7 +64,10 @@ export function StashList() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
-                    onClick={() => popStash(stash.index)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      popStash(stash.index);
+                    }}
                     disabled={isLoading}
                     className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground transition-all disabled:opacity-40"
                   >
@@ -71,7 +81,10 @@ export function StashList() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
-                    onClick={() => dropStash(stash.index)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      dropStash(stash.index);
+                    }}
                     disabled={isLoading}
                     className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive-foreground transition-all disabled:opacity-40"
                   >

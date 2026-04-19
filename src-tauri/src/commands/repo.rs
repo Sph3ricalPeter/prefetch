@@ -276,3 +276,38 @@ pub fn stash_drop(index: usize, state: State<'_, AppState>) -> Result<String, Ap
 
     repository::stash_drop(path, index)
 }
+
+#[tauri::command]
+pub fn get_stash_files(
+    index: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileStatus>, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::get_stash_files(path, index)
+}
+
+#[tauri::command]
+pub fn get_stash_file_diff(
+    index: usize,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<FileDiff, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::get_stash_file_diff(path, index, &file_path)
+}

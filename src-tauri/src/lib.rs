@@ -38,6 +38,8 @@ pub fn run() {
             commands::repo::stash_save,
             commands::repo::stash_pop,
             commands::repo::stash_drop,
+            commands::repo::get_stash_files,
+            commands::repo::get_stash_file_diff,
         ])
         .setup(|_app| {
             // Future: initialize file watcher, background fetch thread

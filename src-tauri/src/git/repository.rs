@@ -556,3 +556,73 @@ pub fn stash_drop(path: &str, index: usize) -> Result<String, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
     run_git(path, &["stash", "drop", &stash_ref])
 }
+
+/// Get the list of files changed in a stash entry.
+pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppError> {
+    let stash_ref = format!("stash@{{{index}}}");
+    let output = Command::new("git")
+        .args(["stash", "show", "--name-status", &stash_ref])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut files = Vec::new();
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.splitn(2, '\t').collect();
+        if parts.len() == 2 {
+            let status_type = match parts[0] {
+                "A" => "added",
+                "M" => "modified",
+                "D" => "deleted",
+                "R" => "renamed",
+                _ => "modified",
+            }
+            .to_string();
+            files.push(FileStatus {
+                path: parts[1].to_string(),
+                status_type,
+                is_staged: true,
+            });
+        }
+    }
+
+    Ok(files)
+}
+
+/// Get the diff for a specific file in a stash entry.
+pub fn get_stash_file_diff(
+    repo_path: &str,
+    index: usize,
+    file_path: &str,
+) -> Result<FileDiff, AppError> {
+    let stash_ref = format!("stash@{{{index}}}");
+    let output = Command::new("git")
+        .args([
+            "diff",
+            &format!("{stash_ref}^"),
+            &stash_ref,
+            "--",
+            file_path,
+        ])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
+
+    let diff_text = String::from_utf8_lossy(&output.stdout);
+
+    if diff_text.contains("Binary files") {
+        return Ok(FileDiff {
+            path: file_path.to_string(),
+            hunks: vec![],
+            is_binary: true,
+        });
+    }
+
+    Ok(FileDiff {
+        path: file_path.to_string(),
+        hunks: parse_unified_diff(&diff_text),
+        is_binary: false,
+    })
+}

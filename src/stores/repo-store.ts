@@ -27,6 +27,8 @@ import {
   stashPush as stashPushCmd,
   stashPop as stashPopCmd,
   stashDrop as stashDropCmd,
+  getStashFiles,
+  getStashFileDiff,
 } from "@/lib/commands";
 
 interface RepoState {
@@ -56,6 +58,7 @@ interface RepoState {
 
   // Stash
   stashes: StashInfo[];
+  selectedStashIndex: number | null;
 
   // Actions
   openRepository: (path: string) => Promise<void>;
@@ -74,6 +77,8 @@ interface RepoState {
   commit: (message: string, amend?: boolean) => Promise<void>;
   setCommitMessage: (msg: string) => void;
   loadStashes: () => Promise<void>;
+  selectStash: (index: number) => Promise<void>;
+  selectStashFile: (index: number, filePath: string) => Promise<void>;
   pushStash: (message?: string) => Promise<void>;
   popStash: (index: number) => Promise<void>;
   dropStash: (index: number) => Promise<void>;
@@ -109,6 +114,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   commitFiles: [],
   commitMessage: "",
   stashes: [],
+  selectedStashIndex: null,
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
@@ -210,6 +216,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   selectCommit: async (id) => {
     set({
       selectedCommitId: id,
+      selectedStashIndex: null,
       selectedFilePath: null,
       activeDiff: null,
       commitFiles: [],
@@ -300,6 +307,32 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   setCommitMessage: (msg) => set({ commitMessage: msg }),
+
+  selectStash: async (index) => {
+    set({
+      selectedStashIndex: index,
+      selectedCommitId: null,
+      selectedFilePath: null,
+      activeDiff: null,
+      commitFiles: [],
+    });
+    try {
+      const files = await getStashFiles(index);
+      set({ commitFiles: files });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  selectStashFile: async (index, filePath) => {
+    set({ selectedFilePath: filePath });
+    try {
+      const diff = await getStashFileDiff(index, filePath);
+      set({ activeDiff: diff });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
 
   loadStashes: async () => {
     try {

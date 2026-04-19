@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, FileText } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, FileText } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -20,11 +20,30 @@ function isClaudeCoAuthor(email: string): boolean {
 export function DetailPanel() {
   const commits = useRepoStore((s) => s.commits);
   const selectedCommitId = useRepoStore((s) => s.selectedCommitId);
+  const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
+  const stashes = useRepoStore((s) => s.stashes);
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const commitFiles = useRepoStore((s) => s.commitFiles);
   const selectCommitFile = useRepoStore((s) => s.selectCommitFile);
+  const selectStashFile = useRepoStore((s) => s.selectStashFile);
 
+  // Mode: Stash selected
+  if (selectedStashIndex !== null) {
+    const stash = stashes.find((s) => s.index === selectedStashIndex);
+    if (stash) {
+      return (
+        <StashDetailView
+          stash={stash}
+          stashFiles={commitFiles}
+          selectedFilePath={selectedFilePath}
+          onFileClick={(path) => selectStashFile(selectedStashIndex, path)}
+        />
+      );
+    }
+  }
+
+  // Mode: Commit selected
   if (selectedCommitId) {
     const commit = commits.find((c) => c.id === selectedCommitId);
     if (commit) {
@@ -196,6 +215,64 @@ function CommitDetailView({
         >
           <div className="pb-3">
             {commitFiles.map((file) => (
+              <CommitFileRow
+                key={file.path}
+                file={file}
+                isSelected={selectedFilePath === file.path}
+                onClick={() => onFileClick(file.path)}
+              />
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+    </div>
+  );
+}
+
+function StashDetailView({
+  stash,
+  stashFiles,
+  selectedFilePath,
+  onFileClick,
+}: {
+  stash: { index: number; message: string };
+  stashFiles: FileStatus[];
+  selectedFilePath: string | null;
+  onFileClick: (path: string) => void;
+}) {
+  const [infoOpen, setInfoOpen] = useState(true);
+  const [filesOpen, setFilesOpen] = useState(true);
+
+  return (
+    <div className="flex h-full flex-col bg-card overflow-y-auto">
+      {/* Stash info */}
+      <CollapsibleSection
+        label="Stash"
+        isOpen={infoOpen}
+        onToggle={() => setInfoOpen(!infoOpen)}
+      >
+        <div className="px-4 pb-4">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Archive className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">
+              stash@{"{"}
+              {stash.index}
+              {"}"}
+            </span>
+          </div>
+          <p className="text-sm text-foreground">{stash.message}</p>
+        </div>
+      </CollapsibleSection>
+
+      {/* Changed files */}
+      {stashFiles.length > 0 && (
+        <CollapsibleSection
+          label={`Changed Files (${stashFiles.length})`}
+          isOpen={filesOpen}
+          onToggle={() => setFilesOpen(!filesOpen)}
+        >
+          <div className="pb-3">
+            {stashFiles.map((file) => (
               <CommitFileRow
                 key={file.path}
                 file={file}

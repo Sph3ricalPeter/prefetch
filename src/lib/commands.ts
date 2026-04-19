@@ -87,3 +87,14 @@ export async function stashPop(index: number): Promise<string> {
 export async function stashDrop(index: number): Promise<string> {
   return invoke<string>("stash_drop", { index });
 }
+
+export async function getStashFiles(index: number): Promise<FileStatus[]> {
+  return invoke<FileStatus[]>("get_stash_files", { index });
+}
+
+export async function getStashFileDiff(
+  index: number,
+  filePath: string,
+): Promise<FileDiff> {
+  return invoke<FileDiff>("get_stash_file_diff", { index, filePath });
+}
