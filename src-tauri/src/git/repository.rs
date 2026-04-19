@@ -139,9 +139,19 @@ pub fn pull(path: &str) -> Result<String, AppError> {
     run_git(path, &["pull"])
 }
 
-/// Push to the current branch's upstream.
+/// Push to the current branch's upstream, setting it if needed.
 pub fn push(path: &str) -> Result<String, AppError> {
-    run_git(path, &["push"])
+    // Try normal push first
+    let result = run_git(path, &["push"]);
+    if result.is_ok() {
+        return result;
+    }
+
+    // If it failed, try with --set-upstream for new branches
+    let repo = Repository::open(path)?;
+    let head = repo.head()?;
+    let branch_name = head.shorthand().unwrap_or("HEAD");
+    run_git(path, &["push", "-u", "origin", branch_name])
 }
 
 /// Run a git CLI command in the given repo directory.
