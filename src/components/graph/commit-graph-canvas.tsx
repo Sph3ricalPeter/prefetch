@@ -267,9 +267,13 @@ export function CommitGraphCanvas({
 
     // --- HEAD row highlight (permanent "you are here") ---
     const headBranch = branches.find((b) => b.is_head && !b.is_remote);
-    const headCommitIdx = headBranch
+    let headCommitIdx = headBranch
       ? commits.findIndex((c) => c.id.startsWith(headBranch.commit_id))
       : -1;
+    // Detached HEAD (e.g. tag checkout): HEAD is the first commit in topological walk
+    if (headCommitIdx < 0 && commits.length > 0) {
+      headCommitIdx = 0;
+    }
     const headRow = headCommitIdx >= 0 ? headCommitIdx + rowOffset : -1;
 
     if (headRow >= firstVisibleRow && headRow <= lastVisibleRow) {
