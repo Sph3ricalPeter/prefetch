@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowDownToLine,
@@ -8,6 +8,7 @@ import {
   Archive,
   ArchiveRestore,
   FileEdit,
+  GitBranchPlus,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
@@ -38,6 +39,10 @@ export function GraphPanel() {
   const pushAction = useRepoStore((s) => s.push);
   const pushStash = useRepoStore((s) => s.pushStash);
   const popStash = useRepoStore((s) => s.popStash);
+  const createBranch = useRepoStore((s) => s.createBranch);
+
+  const [showBranchInput, setShowBranchInput] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
 
   const handleOpenRepo = useCallback(async () => {
     const selected = await open({
@@ -161,6 +166,41 @@ export function GraphPanel() {
             disabled={isLoading || stashes.length === 0}
             onClick={() => popStash(0)}
           />
+
+          {/* Separator */}
+          <div className="mx-1 h-4 w-px bg-border" />
+
+          {showBranchInput ? (
+            <input
+              type="text"
+              placeholder="branch name..."
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newBranchName.trim()) {
+                  createBranch(newBranchName.trim());
+                  setNewBranchName("");
+                  setShowBranchInput(false);
+                } else if (e.key === "Escape") {
+                  setShowBranchInput(false);
+                  setNewBranchName("");
+                }
+              }}
+              onBlur={() => {
+                setShowBranchInput(false);
+                setNewBranchName("");
+              }}
+              autoFocus
+              className="w-32 rounded bg-secondary px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
+            />
+          ) : (
+            <ToolbarButton
+              icon={<GitBranchPlus className="h-3.5 w-3.5" />}
+              label="Branch"
+              disabled={isLoading}
+              onClick={() => setShowBranchInput(true)}
+            />
+          )}
         </div>
       </div>
 

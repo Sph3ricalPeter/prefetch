@@ -24,6 +24,10 @@ export async function checkoutBranch(name: string): Promise<void> {
   return invoke<void>("checkout_branch", { name });
 }
 
+export async function createBranchCmd(name: string): Promise<void> {
+  return invoke<void>("create_branch", { name });
+}
+
 export async function fetchRepo(): Promise<string> {
   return invoke<string>("fetch_repo");
 }

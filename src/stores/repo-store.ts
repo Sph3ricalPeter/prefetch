@@ -14,6 +14,7 @@ import {
   getCommits,
   getBranches,
   checkoutBranch,
+  createBranchCmd,
   fetchRepo,
   pullRepo,
   pushRepo,
@@ -73,6 +74,7 @@ interface RepoState {
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
+  createBranch: (name: string) => Promise<void>;
   fetch: () => Promise<void>;
   pull: () => Promise<void>;
   push: () => Promise<void>;
@@ -182,6 +184,18 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Checked out ${name}`);
     } catch (e) {
       set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  createBranch: async (name: string) => {
+    try {
+      await createBranchCmd(name);
+      await reloadRepoData(set);
+      const statuses = await getFileStatus();
+      set({ fileStatuses: statuses });
+      toast.success(`Created and checked out ${name}`);
+    } catch (e) {
       toast.error(String(e));
     }
   },

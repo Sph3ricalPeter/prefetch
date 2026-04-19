@@ -67,6 +67,18 @@ pub fn checkout_branch(name: String, state: State<'_, AppState>) -> Result<(), A
 }
 
 #[tauri::command]
+pub fn create_branch(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::create_branch(path, &name)
+}
+
+#[tauri::command]
 pub fn fetch_repo(state: State<'_, AppState>) -> Result<String, AppError> {
     let repo_path = state
         .repo_path

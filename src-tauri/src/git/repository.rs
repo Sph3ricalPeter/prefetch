@@ -142,6 +142,12 @@ pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Create a new branch and check it out.
+pub fn create_branch(path: &str, name: &str) -> Result<(), AppError> {
+    run_git(path, &["checkout", "-b", name])?;
+    Ok(())
+}
+
 /// Fetch all remotes.
 pub fn fetch_all(path: &str) -> Result<String, AppError> {
     run_git(path, &["fetch", "--all", "--prune"])
