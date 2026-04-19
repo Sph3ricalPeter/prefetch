@@ -185,3 +185,38 @@ pub fn create_commit(
 
     repository::create_commit(path, &message, amend)
 }
+
+#[tauri::command]
+pub fn get_commit_files(
+    commit_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileStatus>, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::get_commit_files(path, &commit_id)
+}
+
+#[tauri::command]
+pub fn get_commit_file_diff(
+    commit_id: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<FileDiff, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::get_commit_file_diff(path, &commit_id, &file_path)
+}

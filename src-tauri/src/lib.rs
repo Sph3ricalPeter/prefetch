@@ -32,6 +32,8 @@ pub fn run() {
             commands::repo::stage_files,
             commands::repo::unstage_files,
             commands::repo::create_commit,
+            commands::repo::get_commit_files,
+            commands::repo::get_commit_file_diff,
         ])
         .setup(|_app| {
             // Future: initialize file watcher, background fetch thread

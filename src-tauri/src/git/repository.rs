@@ -406,3 +406,71 @@ pub fn create_commit(path: &str, message: &str, amend: bool) -> Result<String, A
         run_git(path, &["commit", "-m", message])
     }
 }
+
+/// Get the list of files changed in a specific commit.
+pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStatus>, AppError> {
+    let output = Command::new("git")
+        .args([
+            "diff-tree",
+            "--no-commit-id",
+            "-r",
+            "--name-status",
+            commit_id,
+        ])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut files = Vec::new();
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.splitn(2, '\t').collect();
+        if parts.len() == 2 {
+            let status_type = match parts[0] {
+                "A" => "added",
+                "M" => "modified",
+                "D" => "deleted",
+                "R" => "renamed",
+                _ => "modified",
+            }
+            .to_string();
+            files.push(FileStatus {
+                path: parts[1].to_string(),
+                status_type,
+                is_staged: true, // historical commits are always "staged"
+            });
+        }
+    }
+
+    Ok(files)
+}
+
+/// Get the diff for a specific file in a historical commit.
+pub fn get_commit_file_diff(
+    repo_path: &str,
+    commit_id: &str,
+    file_path: &str,
+) -> Result<FileDiff, AppError> {
+    let output = Command::new("git")
+        .args(["diff", &format!("{commit_id}^"), commit_id, "--", file_path])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
+
+    let diff_text = String::from_utf8_lossy(&output.stdout);
+
+    if diff_text.contains("Binary files") {
+        return Ok(FileDiff {
+            path: file_path.to_string(),
+            hunks: vec![],
+            is_binary: true,
+        });
+    }
+
+    Ok(FileDiff {
+        path: file_path.to_string(),
+        hunks: parse_unified_diff(&diff_text),
+        is_binary: false,
+    })
+}

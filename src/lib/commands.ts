@@ -54,3 +54,14 @@ export async function createCommit(
 ): Promise<string> {
   return invoke<string>("create_commit", { message, amend });
 }
+
+export async function getCommitFiles(commitId: string): Promise<FileStatus[]> {
+  return invoke<FileStatus[]>("get_commit_files", { commitId });
+}
+
+export async function getCommitFileDiff(
+  commitId: string,
+  filePath: string,
+): Promise<FileDiff> {
+  return invoke<FileDiff>("get_commit_file_diff", { commitId, filePath });
+}

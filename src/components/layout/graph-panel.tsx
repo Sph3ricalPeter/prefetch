@@ -1,8 +1,14 @@
 import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ArrowDownToLine, ArrowUpFromLine, RefreshCw } from "lucide-react";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  RefreshCw,
+  ArrowLeft,
+} from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
+import { DiffViewer } from "@/components/staging/diff-viewer";
 
 // Auto-open this repo during development
 const DEV_REPO_PATH = "C:\\Users\\sph3r\\OneDrive\\Desktop\\prefetch";
@@ -27,7 +33,7 @@ export function GraphPanel() {
     }
   };
 
-  // No repo open — show open button
+  // No repo open
   if (!store.repoPath) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-background">
@@ -54,16 +60,35 @@ export function GraphPanel() {
     );
   }
 
+  // Diff is active — show diff viewer in center column
+  const showDiff = store.activeDiff !== null;
+
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header bar with toolbar */}
       <div className="flex h-10 shrink-0 items-center border-b border-border px-4">
-        <span className="text-xs font-medium text-muted-foreground">
-          {store.repoName}
-        </span>
-        <span className="ml-2 text-xs text-muted-foreground/50">
-          {store.commits.length.toLocaleString()} commits
-        </span>
+        {showDiff ? (
+          <>
+            <button
+              onClick={store.clearDiff}
+              className="mr-2 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="truncate text-xs font-medium text-foreground">
+              {store.selectedFilePath}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-xs font-medium text-muted-foreground">
+              {store.repoName}
+            </span>
+            <span className="ml-2 text-xs text-muted-foreground/50">
+              {store.commits.length.toLocaleString()} commits
+            </span>
+          </>
+        )}
 
         {/* Toolbar buttons — right side */}
         <div className="ml-auto flex items-center gap-1">
@@ -88,15 +113,21 @@ export function GraphPanel() {
         </div>
       </div>
 
-      {/* Graph canvas */}
+      {/* Center content: graph or diff */}
       <div className="flex-1 min-h-0">
-        <CommitGraphCanvas
-          commits={store.commits}
-          edges={store.edges}
-          totalLanes={store.totalLanes}
-          selectedCommitId={store.selectedCommitId}
-          onSelectCommit={store.selectCommit}
-        />
+        {showDiff ? (
+          <div className="h-full overflow-auto">
+            <DiffViewer diff={store.activeDiff!} />
+          </div>
+        ) : (
+          <CommitGraphCanvas
+            commits={store.commits}
+            edges={store.edges}
+            totalLanes={store.totalLanes}
+            selectedCommitId={store.selectedCommitId}
+            onSelectCommit={store.selectCommit}
+          />
+        )}
       </div>
     </div>
   );

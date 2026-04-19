@@ -20,6 +20,8 @@ import {
   stageFiles as stageFilesCmd,
   unstageFiles as unstageFilesCmd,
   createCommit,
+  getCommitFiles,
+  getCommitFileDiff,
 } from "@/lib/commands";
 
 interface RepoState {
@@ -34,12 +36,20 @@ interface RepoState {
   isLoading: boolean;
   error: string | null;
 
+  // Staging (working tree)
   fileStatuses: FileStatus[];
   selectedFilePath: string | null;
   selectedFileStaged: boolean;
-  selectedFileDiff: FileDiff | null;
+
+  // Active diff — displayed in center panel
+  activeDiff: FileDiff | null;
+
+  // Historical commit files
+  commitFiles: FileStatus[];
+
   commitMessage: string;
 
+  // Actions
   openRepository: (path: string) => Promise<void>;
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
@@ -47,9 +57,10 @@ interface RepoState {
   fetch: () => Promise<void>;
   pull: () => Promise<void>;
   push: () => Promise<void>;
-  selectCommit: (id: string | null) => void;
+  selectCommit: (id: string | null) => Promise<void>;
   selectFile: (path: string, staged: boolean) => Promise<void>;
-  clearFileSelection: () => void;
+  selectCommitFile: (commitId: string, filePath: string) => Promise<void>;
+  clearDiff: () => void;
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
@@ -65,7 +76,6 @@ async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
     totalLanes: data.total_lanes,
     branches: branchList,
     currentBranch: head?.name ?? null,
-    selectedCommitId: null,
   });
 }
 
@@ -83,7 +93,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   fileStatuses: [],
   selectedFilePath: null,
   selectedFileStaged: false,
-  selectedFileDiff: null,
+  activeDiff: null,
+  commitFiles: [],
   commitMessage: "",
 
   openRepository: async (path: string) => {
@@ -115,11 +126,6 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       const statuses = await getFileStatus();
       set({ fileStatuses: statuses });
-      const { selectedFilePath, selectedFileStaged } = get();
-      if (selectedFilePath) {
-        const diff = await getFileDiff(selectedFilePath, selectedFileStaged);
-        set({ selectedFileDiff: diff });
-      }
     } catch (e) {
       toast.error(String(e));
     }
@@ -183,25 +189,55 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
-  selectCommit: (id) =>
-    set({ selectedCommitId: id, selectedFilePath: null, selectedFileDiff: null }),
+  selectCommit: async (id) => {
+    set({
+      selectedCommitId: id,
+      selectedFilePath: null,
+      activeDiff: null,
+      commitFiles: [],
+    });
+    if (id) {
+      try {
+        const files = await getCommitFiles(id);
+        set({ commitFiles: files });
+      } catch (e) {
+        toast.error(String(e));
+      }
+    }
+  },
 
   selectFile: async (path, staged) => {
-    set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null });
+    set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null, commitFiles: [] });
     try {
       const diff = await getFileDiff(path, staged);
-      set({ selectedFileDiff: diff });
+      set({ activeDiff: diff });
     } catch (e) {
       toast.error(String(e));
     }
   },
 
-  clearFileSelection: () => set({ selectedFilePath: null, selectedFileDiff: null }),
+  selectCommitFile: async (commitId, filePath) => {
+    set({ selectedFilePath: filePath });
+    try {
+      const diff = await getCommitFileDiff(commitId, filePath);
+      set({ activeDiff: diff });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  clearDiff: () => set({ activeDiff: null, selectedFilePath: null }),
 
   stage: async (paths) => {
     try {
       await stageFilesCmd(paths);
       await get().loadStatus();
+      // Refresh diff if the staged file is currently selected
+      const { selectedFilePath } = get();
+      if (selectedFilePath && paths.includes(selectedFilePath)) {
+        const diff = await getFileDiff(selectedFilePath, true);
+        set({ activeDiff: diff, selectedFileStaged: true });
+      }
     } catch (e) {
       toast.error(String(e));
     }
@@ -211,6 +247,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await unstageFilesCmd(paths);
       await get().loadStatus();
+      const { selectedFilePath } = get();
+      if (selectedFilePath && paths.includes(selectedFilePath)) {
+        const diff = await getFileDiff(selectedFilePath, false);
+        set({ activeDiff: diff, selectedFileStaged: false });
+      }
     } catch (e) {
       toast.error(String(e));
     }
@@ -231,7 +272,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         fileStatuses: statuses,
         commitMessage: "",
         selectedFilePath: null,
-        selectedFileDiff: null,
+        activeDiff: null,
       });
       toast.success("Committed successfully");
     } catch (e) {

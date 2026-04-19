@@ -1,45 +1,20 @@
-import { ArrowLeft } from "lucide-react";
+import { FileText } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileList } from "@/components/staging/file-list";
 import { CommitBox } from "@/components/staging/commit-box";
-import { DiffViewer } from "@/components/staging/diff-viewer";
+import type { FileStatus } from "@/types/git";
 
 export function DetailPanel() {
   const {
     commits,
     selectedCommitId,
     selectedFilePath,
-    selectedFileDiff,
     fileStatuses,
-    clearFileSelection,
+    commitFiles,
+    selectCommitFile,
   } = useRepoStore();
 
-  // Mode 1: Viewing a file diff
-  if (selectedFilePath && selectedFileDiff) {
-    return (
-      <div className="flex h-full flex-col bg-card">
-        {/* Diff header */}
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-          <button
-            onClick={clearFileSelection}
-            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-          </button>
-          <span className="truncate text-xs font-medium text-foreground">
-            {selectedFilePath}
-          </span>
-        </div>
-
-        {/* Diff content */}
-        <div className="flex-1 min-h-0 overflow-auto">
-          <DiffViewer diff={selectedFileDiff} />
-        </div>
-      </div>
-    );
-  }
-
-  // Mode 2: Viewing a selected commit from the graph
+  // Mode 1: A commit is selected from the graph — show details + changed files
   if (selectedCommitId) {
     const commit = commits.find((c) => c.id === selectedCommitId);
     if (commit) {
@@ -53,46 +28,46 @@ export function DetailPanel() {
       });
 
       return (
-        <div className="flex h-full flex-col bg-card overflow-y-auto p-4">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-            Commit Details
-          </h2>
-          <div className="mb-3">
-            <label className="text-xs text-muted-foreground">SHA</label>
-            <p className="font-mono text-xs text-foreground break-all">
-              {commit.id}
+        <div className="flex h-full flex-col bg-card overflow-y-auto">
+          {/* Commit info */}
+          <div className="p-4 border-b border-border">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+              Commit
+            </h2>
+            <p className="font-mono text-xs text-muted-foreground mb-2">
+              {commit.short_id}
             </p>
-          </div>
-          <div className="mb-3">
-            <label className="text-xs text-muted-foreground">Author</label>
-            <p className="text-sm text-foreground">{commit.author_name}</p>
-            <p className="text-xs text-muted-foreground">
-              {commit.author_email}
-            </p>
-          </div>
-          <div className="mb-3">
-            <label className="text-xs text-muted-foreground">Date</label>
-            <p className="text-sm text-foreground">{dateStr}</p>
-          </div>
-          <div className="mb-3">
-            <label className="text-xs text-muted-foreground">Message</label>
-            <p className="text-sm text-foreground whitespace-pre-wrap">
+            <p className="text-sm text-foreground whitespace-pre-wrap mb-2">
               {commit.message}
             </p>
+            <p className="text-xs text-muted-foreground">
+              {commit.author_name} &middot; {dateStr}
+            </p>
           </div>
-          {commit.parent_ids.length > 0 && (
-            <div className="mb-3">
-              <label className="text-xs text-muted-foreground">
-                {commit.parent_ids.length === 1 ? "Parent" : "Parents"}
-              </label>
-              {commit.parent_ids.map((pid) => (
-                <p
-                  key={pid}
-                  className="font-mono text-xs text-muted-foreground"
-                >
-                  {pid.slice(0, 7)}
-                </p>
-              ))}
+
+          {/* Changed files in this commit */}
+          {commitFiles.length > 0 && (
+            <div className="flex-1 min-h-0">
+              <div className="flex items-center px-4 py-2 border-b border-border">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Changed Files
+                </span>
+                <span className="ml-2 text-xs text-muted-foreground/50">
+                  {commitFiles.length}
+                </span>
+              </div>
+              <div className="overflow-y-auto">
+                {commitFiles.map((file) => (
+                  <CommitFileRow
+                    key={file.path}
+                    file={file}
+                    isSelected={selectedFilePath === file.path}
+                    onClick={() =>
+                      selectCommitFile(selectedCommitId, file.path)
+                    }
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -100,7 +75,7 @@ export function DetailPanel() {
     }
   }
 
-  // Mode 3: Default — show staging panel (file list + commit box)
+  // Mode 2: No commit selected — show staging panel (file list + commit box)
   if (fileStatuses.length > 0) {
     return (
       <div className="flex h-full flex-col bg-card">
@@ -127,5 +102,60 @@ export function DetailPanel() {
         Select a commit to view details
       </p>
     </div>
+  );
+}
+
+function CommitFileRow({
+  file,
+  isSelected,
+  onClick,
+}: {
+  file: FileStatus;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const statusColor =
+    file.status_type === "added"
+      ? "text-green-400"
+      : file.status_type === "deleted"
+        ? "text-red-400"
+        : file.status_type === "renamed"
+          ? "text-blue-400"
+          : "text-yellow-400";
+
+  const statusLabel =
+    file.status_type === "added"
+      ? "A"
+      : file.status_type === "deleted"
+        ? "D"
+        : file.status_type === "renamed"
+          ? "R"
+          : "M";
+
+  const fileName = file.path.split("/").pop() ?? file.path;
+  const dirPath = file.path.includes("/")
+    ? file.path.slice(0, file.path.lastIndexOf("/"))
+    : "";
+
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center gap-1.5 px-4 py-1 text-left transition-colors ${
+        isSelected
+          ? "bg-accent text-accent-foreground"
+          : "hover:bg-secondary"
+      }`}
+    >
+      <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
+        {statusLabel}
+      </span>
+      <span className="truncate text-xs text-foreground">{fileName}</span>
+      {dirPath && (
+        <span className="truncate text-xs text-muted-foreground/50">
+          {dirPath}
+        </span>
+      )}
+    </button>
   );
 }
