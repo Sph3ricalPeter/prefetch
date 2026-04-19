@@ -32,6 +32,15 @@ function laneColor(lane: number): string {
   return LANE_COLORS[lane % LANE_COLORS.length];
 }
 
+/** Consistent color for a branch name — same name always gets same color */
+function branchColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  }
+  return LANE_COLORS[Math.abs(hash) % LANE_COLORS.length];
+}
+
 function laneX(lane: number): number {
   return GRAPH_PADDING_LEFT + lane * LANE_WIDTH + LANE_WIDTH / 2;
 }
@@ -317,11 +326,12 @@ export function CommitGraphCanvas({
           const displayName = branch.is_remote
             ? branch.name.replace(/^origin\//, "↑")
             : branch.name;
+          const bColor = branchColor(branch.name.replace(/^origin\//, ""));
           const bgAlpha = branch.is_head ? 0.3 : 0.15;
           const bg = branch.is_remote
             ? `rgba(255,255,255,0.08)`
-            : `${color}${Math.round(bgAlpha * 255).toString(16).padStart(2, "0")}`;
-          const textCol = branch.is_remote ? "hsl(0 0% 55%)" : color;
+            : `${bColor}${Math.round(bgAlpha * 255).toString(16).padStart(2, "0")}`;
+          const textCol = branch.is_remote ? "hsl(0 0% 55%)" : bColor;
           const w = drawPill(ctx, labelX + usedWidth, y, displayName, bg, textCol);
           usedWidth += w + LABEL_GAP;
           labelCount++;
