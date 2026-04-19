@@ -309,7 +309,6 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   pushStash: async (message?) => {
-    set({ isLoading: true });
     try {
       await stashPushCmd(message);
       const [statuses, stashList] = await Promise.all([
@@ -317,7 +316,6 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getStashes(),
       ]);
       set({
-        isLoading: false,
         fileStatuses: statuses,
         stashes: stashList,
         selectedFilePath: null,
@@ -325,36 +323,31 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       });
       toast.success("Changes stashed");
     } catch (e) {
-      set({ isLoading: false });
       toast.error(String(e));
     }
   },
 
   popStash: async (index) => {
-    set({ isLoading: true });
     try {
       await stashPopCmd(index);
       const [statuses, stashList] = await Promise.all([
         getFileStatus(),
         getStashes(),
       ]);
-      set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
+      set({ fileStatuses: statuses, stashes: stashList });
       toast.success("Stash applied");
     } catch (e) {
-      set({ isLoading: false });
       toast.error(String(e));
     }
   },
 
   dropStash: async (index) => {
-    set({ isLoading: true });
     try {
       await stashDropCmd(index);
       const stashList = await getStashes();
-      set({ isLoading: false, stashes: stashList });
+      set({ stashes: stashList });
       toast.success("Stash dropped");
     } catch (e) {
-      set({ isLoading: false });
       toast.error(String(e));
     }
   },
