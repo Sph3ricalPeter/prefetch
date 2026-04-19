@@ -293,12 +293,14 @@ export function CommitGraphCanvas({
       ctx.moveTo(fromX, fromY);
 
       if (edge.from_lane === edge.to_lane) {
+        // Straight vertical line
         ctx.lineTo(toX, toY);
       } else {
-        const midY = fromY + ROW_HEIGHT;
-        ctx.lineTo(fromX, midY);
-        ctx.quadraticCurveTo(fromX, midY + 8, toX, midY + 8);
-        ctx.lineTo(toX, toY);
+        // Curved connector between different lanes
+        // Use a cubic bezier: leave source vertically, arrive at target vertically
+        const cp1Y = fromY + (toY - fromY) * 0.4;
+        const cp2Y = fromY + (toY - fromY) * 0.6;
+        ctx.bezierCurveTo(fromX, cp1Y, toX, cp2Y, toX, toY);
       }
 
       ctx.stroke();
