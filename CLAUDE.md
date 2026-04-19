@@ -85,7 +85,8 @@ For every feature or change, follow this cycle:
 1. UNDERSTAND  ->  Read spec, find related code, identify affected files
 2. IMPLEMENT   ->  Write the code, following architecture rules above
 3. VERIFY      ->  Run all checks (see below)
-4. DEMO        ->  Only present to user after verification passes
+4. SCREENSHOT  ->  For UI changes: navigate to localhost:5173, take screenshot, review visually
+5. DEMO        ->  Only present to user after verification + visual check passes
 ```
 
 ### Verification Checklist (run before presenting work)
@@ -110,6 +111,27 @@ npm run build                  # Vite build succeeds
 ```bash
 cargo tauri build --debug      # Full app builds
 ```
+
+**Visual verification (for any UI change):**
+
+After code checks pass, verify the UI looks correct using Playwright MCP:
+
+1. Ensure `npm run tauri dev` is running (the Vite dev server serves at `http://localhost:5173`)
+2. Navigate Playwright to `http://localhost:5173`
+3. Take a screenshot via `mcp__plugin_playwright_playwright__browser_take_screenshot`
+4. Review the screenshot yourself — check for:
+   - Layout correctness (panels visible, correct proportions)
+   - Dark theme applied (dark background, light text, no white flash)
+   - No visual breakage (overlapping elements, missing borders, broken spacing)
+   - Text content renders correctly (no missing fonts, no clipped text)
+5. If the UI looks wrong, fix it before presenting to the user
+6. Include the screenshot when presenting work so the user can see the result
+
+**When to screenshot:**
+- Any change to layout components, CSS, or theme
+- New UI components or panels
+- After adding shadcn/ui components
+- NOT needed for Rust-only backend changes
 
 **Do NOT present work to the user until ALL applicable checks pass.** If a check fails, fix it first. If you can't fix it, explain what's broken and why.
 
