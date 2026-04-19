@@ -1,6 +1,10 @@
+import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
+
+// Auto-open this repo during development
+const DEV_REPO_PATH = "C:\\Users\\sph3r\\OneDrive\\Desktop\\prefetch";
 
 export function GraphPanel() {
   const {
@@ -15,6 +19,13 @@ export function GraphPanel() {
     openRepository,
     selectCommit,
   } = useRepoStore();
+
+  // Auto-open dev repo on mount
+  useEffect(() => {
+    if (!repoPath && !isLoading) {
+      openRepository(DEV_REPO_PATH);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenRepo = async () => {
     const selected = await open({

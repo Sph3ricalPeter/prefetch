@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* Geist Sans */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/Geist-Variable.woff2") format("woff2");
+}
+
+/* Geist Mono */
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
+}
+
 @layer base {
   :root {
     --background: 0 0% 3.9%;
@@ -38,9 +56,39 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: "Geist", system-ui, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
     margin: 0;
   }
+
+  code,
+  pre,
+  kbd {
+    font-family: "Geist Mono", ui-monospace, monospace;
+  }
+}
+
+/* Dark scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(0 0% 25%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(0 0% 35%);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 @theme inline {

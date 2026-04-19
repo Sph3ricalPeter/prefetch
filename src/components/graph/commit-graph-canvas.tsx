@@ -26,20 +26,29 @@ function laneX(lane: number): number {
   return GRAPH_PADDING_LEFT + lane * LANE_WIDTH + LANE_WIDTH / 2;
 }
 
-function rowY(row: number, scrollTop: number): number {
-  return row * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
-}
-
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now() / 1000;
   const diff = now - timestamp;
-
   if (diff < 60) return "just now";
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`;
   if (diff < 31536000) return `${Math.floor(diff / 2592000)}mo ago`;
   return `${Math.floor(diff / 31536000)}y ago`;
+}
+
+function truncateText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string {
+  if (maxWidth <= 0) return "";
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while (t.length > 0 && ctx.measureText(t + "…").width > maxWidth) {
+    t = t.slice(0, -1);
+  }
+  return t + "…";
 }
 
 interface CommitGraphCanvasProps {
@@ -57,10 +66,9 @@ export function CommitGraphCanvas({
   selectedCommitId,
   onSelectCommit,
 }: CommitGraphCanvasProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
-  const scrollTopRef = useRef(0);
   const rafRef = useRef<number>(0);
 
   const textOffset = GRAPH_PADDING_LEFT + totalLanes * LANE_WIDTH + TEXT_GAP;
@@ -68,25 +76,26 @@ export function CommitGraphCanvas({
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
+    const scroll = scrollRef.current;
+    if (!canvas || !scroll) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const rect = container.getBoundingClientRect();
-    const width = rect.width;
-    const height = rect.height;
+    const width = scroll.clientWidth;
+    const height = scroll.clientHeight;
+    const scrollTop = scroll.scrollTop;
 
-    // Size canvas to container
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    ctx.scale(dpr, dpr);
+    // Resize canvas to match the scroll container viewport
+    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const scrollTop = scrollTopRef.current;
     const firstRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1);
     const lastRow = Math.min(
       commits.length - 1,
@@ -96,12 +105,15 @@ export function CommitGraphCanvas({
     // Clear
     ctx.clearRect(0, 0, width, height);
 
+    // Find selected row
+    const selectedRow = selectedCommitId
+      ? commits.findIndex((c) => c.id === selectedCommitId)
+      : -1;
+
     // Draw selected row highlight
-    const selectedRow = commits.findIndex((c) => c.id === selectedCommitId);
     if (selectedRow >= firstRow && selectedRow <= lastRow) {
-      const y = selectedRow * ROW_HEIGHT - scrollTop;
       ctx.fillStyle = "hsl(0 0% 14.9%)";
-      ctx.fillRect(0, y, width, ROW_HEIGHT);
+      ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
     }
 
     // Draw hovered row highlight
@@ -111,9 +123,8 @@ export function CommitGraphCanvas({
       hoveredRow <= lastRow &&
       hoveredRow !== selectedRow
     ) {
-      const y = hoveredRow * ROW_HEIGHT - scrollTop;
       ctx.fillStyle = "hsl(0 0% 10%)";
-      ctx.fillRect(0, y, width, ROW_HEIGHT);
+      ctx.fillRect(0, hoveredRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
     }
 
     // Draw edges
@@ -122,9 +133,9 @@ export function CommitGraphCanvas({
       if (edge.from_row > lastRow + 5 || edge.to_row < firstRow - 5) continue;
 
       const fromX = laneX(edge.from_lane);
-      const fromY = rowY(edge.from_row, scrollTop);
+      const fromY = edge.from_row * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
       const toX = laneX(edge.to_lane);
-      const toY = rowY(edge.to_row, scrollTop);
+      const toY = edge.to_row * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
 
       ctx.strokeStyle = laneColor(edge.from_lane);
       ctx.globalAlpha = 0.7;
@@ -132,10 +143,8 @@ export function CommitGraphCanvas({
       ctx.moveTo(fromX, fromY);
 
       if (edge.from_lane === edge.to_lane) {
-        // Straight vertical line
         ctx.lineTo(toX, toY);
       } else {
-        // Diagonal merge connector with curve
         const midY = fromY + ROW_HEIGHT;
         ctx.lineTo(fromX, midY);
         ctx.quadraticCurveTo(fromX, midY + 8, toX, midY + 8);
@@ -148,153 +157,123 @@ export function CommitGraphCanvas({
 
     // Draw commit nodes and text
     ctx.textBaseline = "middle";
-
     for (let row = firstRow; row <= lastRow; row++) {
       const commit = commits[row];
       if (!commit) continue;
 
       const x = laneX(commit.lane);
-      const y = rowY(row, scrollTop);
+      const y = row * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
       const color = laneColor(commit.lane);
 
-      // Node circle
+      // Node
       ctx.beginPath();
       ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
 
       // Short SHA
-      ctx.font = "11px ui-monospace, monospace";
+      ctx.font = '11px "Geist Mono", ui-monospace, monospace';
       ctx.fillStyle = "hsl(0 0% 63.9%)";
       ctx.fillText(commit.short_id, textOffset, y);
 
-      // Commit message
+      // Message
       const msgX = textOffset + 64;
       const maxMsgWidth = width - msgX - 160;
-      ctx.font = "13px system-ui, sans-serif";
+      ctx.font = '13px "Geist", system-ui, sans-serif';
       ctx.fillStyle = "hsl(0 0% 90%)";
-      const truncatedMsg = truncateText(ctx, commit.message, maxMsgWidth);
-      ctx.fillText(truncatedMsg, msgX, y);
+      ctx.fillText(truncateText(ctx, commit.message, maxMsgWidth), msgX, y);
 
       // Author + time (right-aligned)
-      const timeStr = formatRelativeTime(commit.timestamp);
-      const metaText = `${commit.author_name}  ${timeStr}`;
-      ctx.font = "11px system-ui, sans-serif";
+      const metaText = `${commit.author_name}  ${formatRelativeTime(commit.timestamp)}`;
+      ctx.font = '11px "Geist", system-ui, sans-serif';
       ctx.fillStyle = "hsl(0 0% 50%)";
       const metaWidth = ctx.measureText(metaText).width;
       ctx.fillText(metaText, width - metaWidth - 16, y);
     }
   }, [commits, edges, selectedCommitId, hoveredRow, textOffset]);
 
-  // Redraw on scroll
-  const handleScroll = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    scrollTopRef.current = container.scrollTop;
-
+  // Schedule a draw on next animation frame
+  const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(draw);
   }, [draw]);
 
-  // Handle click
+  // Redraw on scroll
+  const handleScroll = useCallback(() => {
+    requestDraw();
+  }, [requestDraw]);
+
+  // Click to select/deselect
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
-      const container = containerRef.current;
-      if (!container) return;
+      const scroll = scrollRef.current;
+      if (!scroll) return;
 
-      const rect = container.getBoundingClientRect();
-      const y = e.clientY - rect.top + container.scrollTop;
+      const rect = scroll.getBoundingClientRect();
+      const y = e.clientY - rect.top + scroll.scrollTop;
       const row = Math.floor(y / ROW_HEIGHT);
 
       if (row >= 0 && row < commits.length) {
-        const commit = commits[row];
-        onSelectCommit(
-          commit.id === selectedCommitId ? null : commit.id,
-        );
+        const id = commits[row].id;
+        onSelectCommit(id === selectedCommitId ? null : id);
       }
     },
     [commits, selectedCommitId, onSelectCommit],
   );
 
-  // Handle hover
+  // Hover
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      const container = containerRef.current;
-      if (!container) return;
+      const scroll = scrollRef.current;
+      if (!scroll) return;
 
-      const rect = container.getBoundingClientRect();
-      const y = e.clientY - rect.top + container.scrollTop;
+      const rect = scroll.getBoundingClientRect();
+      const y = e.clientY - rect.top + scroll.scrollTop;
       const row = Math.floor(y / ROW_HEIGHT);
 
-      if (row >= 0 && row < commits.length) {
-        setHoveredRow(row);
-      } else {
-        setHoveredRow(null);
-      }
+      setHoveredRow(row >= 0 && row < commits.length ? row : null);
     },
     [commits.length],
   );
 
-  const handleMouseLeave = useCallback(() => {
-    setHoveredRow(null);
-  }, []);
+  const handleMouseLeave = useCallback(() => setHoveredRow(null), []);
 
-  // Initial draw + resize observer
+  // Draw on mount + resize
   useEffect(() => {
-    draw();
+    requestDraw();
 
-    const container = containerRef.current;
-    if (!container) return;
+    const scroll = scrollRef.current;
+    if (!scroll) return;
 
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(draw);
-    });
-    observer.observe(container);
+    const observer = new ResizeObserver(() => requestDraw());
+    observer.observe(scroll);
 
     return () => {
       observer.disconnect();
       cancelAnimationFrame(rafRef.current);
     };
-  }, [draw]);
+  }, [requestDraw]);
 
   return (
-    <div
-      ref={containerRef}
-      className="relative h-full w-full overflow-y-auto overflow-x-hidden"
-      onScroll={handleScroll}
-      onClick={handleClick}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-    >
-      {/* Spacer div to create scrollable area */}
-      <div style={{ height: totalHeight, pointerEvents: "none" }} />
+    <div className="relative h-full w-full">
+      {/* Scrollable area — this is what the user scrolls */}
+      <div
+        ref={scrollRef}
+        className="absolute inset-0 overflow-y-auto overflow-x-hidden"
+        onScroll={handleScroll}
+        onClick={handleClick}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
+        {/* Tall spacer to enable scrolling */}
+        <div style={{ height: Math.max(totalHeight, 1) }} />
+      </div>
 
-      {/* Canvas overlays the visible area */}
+      {/* Canvas overlays on top, ignores pointer events (scroll div handles them) */}
       <canvas
         ref={canvasRef}
-        className="pointer-events-none absolute left-0 top-0"
-        style={{
-          position: "sticky",
-          top: 0,
-        }}
+        className="pointer-events-none absolute inset-0"
       />
     </div>
   );
-}
-
-function truncateText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-): string {
-  if (maxWidth <= 0) return "";
-  const measured = ctx.measureText(text);
-  if (measured.width <= maxWidth) return text;
-
-  let truncated = text;
-  while (truncated.length > 0 && ctx.measureText(truncated + "…").width > maxWidth) {
-    truncated = truncated.slice(0, -1);
-  }
-  return truncated + "…";
 }
