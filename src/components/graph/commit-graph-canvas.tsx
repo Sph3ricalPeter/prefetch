@@ -550,10 +550,18 @@ export function CommitGraphCanvas({
       if (!scroll) return;
 
       const rect = scroll.getBoundingClientRect();
-      const y = e.clientY - rect.top + scroll.scrollTop;
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const y = my + scroll.scrollTop;
       const row = Math.floor(y / ROW_HEIGHT);
 
       setHoveredRow(row >= 0 && row < totalRows ? row : null);
+
+      // Change cursor to pointer when hovering a branch badge
+      const overBadge = badgeHitAreasRef.current.some(
+        (b) => mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height,
+      );
+      scroll.style.cursor = overBadge ? "pointer" : "";
     },
     [totalRows],
   );
