@@ -279,18 +279,20 @@ CC loses context between sessions. A tight `ARCHITECTURE.md` that describes:
 3. Fetch / pull / push with progress + error toasts
 4. Stage/unstage + diff (Shiki) + commit
 5. Stash
-── ship v0.1 ──
-6. Profiles (work/personal) with auto-switch
-7. GitHub/GitLab OAuth + open PR in browser
-8. Cherry-pick & non-interactive rebase
-9. Tags
-10. Command palette (Cmd+K)
-11. Undo via reflog
+── ship v0.1 ── ✅
+6. Tags (create, delete, push)
+7. Cherry-pick & non-interactive rebase
+8. Undo via reflog
+9. Persistence (remember open project, sidebar sizes, UI state)
+10. Projects (add/remove repo folders, switch between them)
+11. Command palette (Cmd+K)
 ── ship v0.2 ──
-12. Conflict resolution (pick ours/theirs)
-13. Branch divergence indicators
-14. Remote management
-15. Git config editor
+12. Profiles (work/personal) with auto-switch
+13. GitHub/GitLab OAuth + open PR in browser
+14. Conflict resolution (pick ours/theirs)
+15. Branch divergence indicators
+16. Remote management
+17. Git config editor
 ```
 
 ---
