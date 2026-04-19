@@ -1,5 +1,8 @@
 use crate::error::AppError;
-use crate::git::{repository, types::GraphData};
+use crate::git::{
+    repository,
+    types::{BranchInfo, GraphData},
+};
 use crate::AppState;
 use tauri::State;
 
@@ -33,4 +36,32 @@ pub fn get_commits(
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
     repository::walk_commits(path, limit.unwrap_or(10_000))
+}
+
+#[tauri::command]
+pub fn get_branches(state: State<'_, AppState>) -> Result<Vec<BranchInfo>, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::list_branches(path)
+}
+
+#[tauri::command]
+pub fn checkout_branch(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::checkout_branch(path, &name)
 }

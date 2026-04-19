@@ -33,3 +33,12 @@ pub struct GraphData {
     pub edges: Vec<GraphEdge>,
     pub total_lanes: usize,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_remote: bool,
+    pub is_head: bool,
+    pub commit_id: String,
+    pub short_commit_id: String,
+}

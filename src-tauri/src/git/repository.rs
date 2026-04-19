@@ -1,8 +1,9 @@
 use crate::error::AppError;
 use crate::git::graph::assign_lanes;
-use crate::git::types::{CommitInfo, GraphData};
-use git2::{Repository, Sort};
+use crate::git::types::{BranchInfo, CommitInfo, GraphData};
+use git2::{BranchType, Repository, Sort};
 use std::path::Path;
+use std::process::Command;
 
 /// Get the repository display name from its path.
 pub fn repo_name(path: &str) -> String {
@@ -61,4 +62,79 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
         edges,
         total_lanes,
     })
+}
+
+/// List all branches (local and remote).
+pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
+    let repo = Repository::open(path)?;
+
+    // Get current HEAD branch name for is_head detection
+    let head_name = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+
+    let mut branches = Vec::new();
+
+    for branch_type in &[BranchType::Local, BranchType::Remote] {
+        let is_remote = *branch_type == BranchType::Remote;
+
+        for result in repo.branches(Some(*branch_type))? {
+            let (branch, _) = result?;
+
+            let name = match branch.name() {
+                Ok(Some(n)) => n.to_string(),
+                _ => continue,
+            };
+
+            // Skip HEAD -> origin/main style refs
+            if name.contains("HEAD") {
+                continue;
+            }
+
+            let commit_id = branch
+                .get()
+                .peel_to_commit()
+                .map(|c| c.id().to_string())
+                .unwrap_or_default();
+
+            let short_commit_id = commit_id.get(..7).unwrap_or(&commit_id).to_string();
+
+            let is_head = !is_remote && head_name.as_deref() == Some(&name);
+
+            branches.push(BranchInfo {
+                name,
+                is_remote,
+                is_head,
+                commit_id,
+                short_commit_id,
+            });
+        }
+    }
+
+    // Sort: HEAD branch first, then local alphabetically, then remote alphabetically
+    branches.sort_by(|a, b| {
+        b.is_head
+            .cmp(&a.is_head)
+            .then(a.is_remote.cmp(&b.is_remote))
+            .then(a.name.cmp(&b.name))
+    });
+
+    Ok(branches)
+}
+
+/// Checkout a branch using git CLI subprocess.
+pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
+    let output = Command::new("git")
+        .args(["checkout", name])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Git(stderr.trim().to_string()));
+    }
+
+    Ok(())
 }

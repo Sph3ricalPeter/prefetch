@@ -22,6 +22,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
             commands::repo::get_commits,
+            commands::repo::get_branches,
+            commands::repo::checkout_branch,
         ])
         .setup(|_app| {
             // Future: initialize file watcher, background fetch thread

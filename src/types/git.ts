@@ -24,3 +24,11 @@ export interface GraphData {
   edges: GraphEdge[];
   total_lanes: number;
 }
+
+export interface BranchInfo {
+  name: string;
+  is_remote: boolean;
+  is_head: boolean;
+  commit_id: string;
+  short_commit_id: string;
+}
