@@ -457,7 +457,7 @@ export function CommitGraphCanvas({
             }
             break;
           }
-          const w = drawPill(ctx, labelX + usedWidth, y, `🏷 ${tag.name}`, "rgba(234,179,8,0.15)", "#eab308");
+          const w = drawPill(ctx, labelX + usedWidth, y, tag.name, "rgba(234,179,8,0.15)", "#eab308", "⬡");
           usedWidth += w + LABEL_GAP;
           labelCount++;
         }

@@ -685,7 +685,8 @@ pub fn list_tags(path: &str) -> Result<Vec<TagInfo>, AppError> {
             "tag",
             "-l",
             "--sort=-creatordate",
-            "--format=%(refname:short)\t%(objectname:short)\t%(contents:subject)",
+            // *objectname = dereferenced commit (annotated tags), objectname = tag/commit SHA
+            "--format=%(refname:short)\t%(*objectname:short)\t%(objectname:short)\t%(contents:subject)",
         ])
         .current_dir(path)
         .output()
@@ -695,15 +696,23 @@ pub fn list_tags(path: &str) -> Result<Vec<TagInfo>, AppError> {
     let mut tags = Vec::new();
 
     for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        let parts: Vec<&str> = line.splitn(4, '\t').collect();
         if parts.is_empty() || parts[0].is_empty() {
             continue;
         }
 
         let name = parts[0].to_string();
-        let commit_id = parts.get(1).unwrap_or(&"").to_string();
+        // For annotated tags: *objectname (deref) is the commit, objectname is the tag object
+        // For lightweight tags: *objectname is empty, objectname is the commit
+        let deref_sha = parts.get(1).unwrap_or(&"");
+        let obj_sha = parts.get(2).unwrap_or(&"");
+        let commit_id = if deref_sha.is_empty() {
+            obj_sha.to_string()
+        } else {
+            deref_sha.to_string()
+        };
         let message = parts
-            .get(2)
+            .get(3)
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
