@@ -5,6 +5,8 @@ import {
   ArrowUpFromLine,
   RefreshCw,
   ArrowLeft,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
@@ -109,6 +111,22 @@ export function GraphPanel() {
             label="Push"
             disabled={store.isLoading}
             onClick={() => store.push()}
+          />
+
+          {/* Separator */}
+          <div className="mx-1 h-4 w-px bg-border" />
+
+          <ToolbarButton
+            icon={<Archive className="h-3.5 w-3.5" />}
+            label="Stash"
+            disabled={store.isLoading || store.fileStatuses.length === 0}
+            onClick={() => store.pushStash()}
+          />
+          <ToolbarButton
+            icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+            label="Pop"
+            disabled={store.isLoading || store.stashes.length === 0}
+            onClick={() => store.popStash(0)}
           />
         </div>
       </div>

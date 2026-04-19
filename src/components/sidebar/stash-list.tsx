@@ -14,11 +14,8 @@ import {
 import { useRepoStore } from "@/stores/repo-store";
 
 export function StashList() {
-  const { stashes, fileStatuses, pushStash, popStash, dropStash, isLoading } =
-    useRepoStore();
+  const { stashes, popStash, dropStash, isLoading } = useRepoStore();
   const [isOpen, setIsOpen] = useState(true);
-
-  const hasChanges = fileStatuses.length > 0;
 
   return (
     <div>
@@ -40,22 +37,6 @@ export function StashList() {
             </span>
           )}
         </button>
-
-        {/* Stash changes button */}
-        {hasChanges && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => pushStash()}
-                disabled={isLoading}
-                className="ml-auto rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-40"
-              >
-                <Archive className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>Stash changes</TooltipContent>
-          </Tooltip>
-        )}
       </div>
 
       {/* Stash entries */}
