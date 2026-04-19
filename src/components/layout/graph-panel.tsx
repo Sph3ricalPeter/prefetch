@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowDownToLine,
@@ -16,35 +16,55 @@ import { DiffViewer } from "@/components/staging/diff-viewer";
 const DEV_REPO_PATH = "C:\\Users\\sph3r\\OneDrive\\Desktop\\prefetch";
 
 export function GraphPanel() {
-  const store = useRepoStore();
+  // Use individual selectors to avoid re-rendering on unrelated state changes
+  const repoPath = useRepoStore((s) => s.repoPath);
+  const repoName = useRepoStore((s) => s.repoName);
+  const commits = useRepoStore((s) => s.commits);
+  const edges = useRepoStore((s) => s.edges);
+  const totalLanes = useRepoStore((s) => s.totalLanes);
+  const selectedCommitId = useRepoStore((s) => s.selectedCommitId);
+  const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
+  const activeDiff = useRepoStore((s) => s.activeDiff);
+  const isLoading = useRepoStore((s) => s.isLoading);
+  const fileStatusCount = useRepoStore((s) => s.fileStatuses.length);
+  const stashCount = useRepoStore((s) => s.stashes.length);
+
+  const openRepository = useRepoStore((s) => s.openRepository);
+  const selectCommit = useRepoStore((s) => s.selectCommit);
+  const clearDiff = useRepoStore((s) => s.clearDiff);
+  const fetchAction = useRepoStore((s) => s.fetch);
+  const pullAction = useRepoStore((s) => s.pull);
+  const pushAction = useRepoStore((s) => s.push);
+  const pushStash = useRepoStore((s) => s.pushStash);
+  const popStash = useRepoStore((s) => s.popStash);
 
   // Auto-open dev repo on mount
   useEffect(() => {
-    if (!store.repoPath && !store.isLoading) {
-      store.openRepository(DEV_REPO_PATH);
+    if (!repoPath && !isLoading) {
+      openRepository(DEV_REPO_PATH);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleOpenRepo = async () => {
+  const handleOpenRepo = useCallback(async () => {
     const selected = await open({
       directory: true,
       title: "Open Git Repository",
     });
     if (selected) {
-      await store.openRepository(selected);
+      await openRepository(selected);
     }
-  };
+  }, [openRepository]);
 
   // No repo open
-  if (!store.repoPath) {
+  if (!repoPath) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-background">
         <button
           onClick={handleOpenRepo}
-          disabled={store.isLoading}
+          disabled={isLoading}
           className="rounded-md bg-secondary px-6 py-3 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent disabled:opacity-50"
         >
-          {store.isLoading ? "Opening..." : "Open Repository"}
+          {isLoading ? "Opening..." : "Open Repository"}
         </button>
         <p className="text-xs text-muted-foreground">
           Select a folder containing a Git repository
@@ -54,7 +74,7 @@ export function GraphPanel() {
   }
 
   // Empty repo
-  if (!store.isLoading && store.commits.length === 0) {
+  if (!isLoading && commits.length === 0) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
         <p className="text-sm text-muted-foreground">No commits yet</p>
@@ -62,8 +82,7 @@ export function GraphPanel() {
     );
   }
 
-  // Diff is active — show diff viewer in center column
-  const showDiff = store.activeDiff !== null;
+  const showDiff = activeDiff !== null;
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -72,22 +91,22 @@ export function GraphPanel() {
         {showDiff ? (
           <>
             <button
-              onClick={store.clearDiff}
+              onClick={clearDiff}
               className="mr-2 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
             </button>
             <span className="truncate text-xs font-medium text-foreground">
-              {store.selectedFilePath}
+              {selectedFilePath}
             </span>
           </>
         ) : (
           <>
             <span className="text-xs font-medium text-muted-foreground">
-              {store.repoName}
+              {repoName}
             </span>
             <span className="ml-2 text-xs text-muted-foreground/50">
-              {store.commits.length.toLocaleString()} commits
+              {commits.length.toLocaleString()} commits
             </span>
           </>
         )}
@@ -97,20 +116,20 @@ export function GraphPanel() {
           <ToolbarButton
             icon={<RefreshCw className="h-3.5 w-3.5" />}
             label="Fetch"
-            disabled={store.isLoading}
-            onClick={() => store.fetch()}
+            disabled={isLoading}
+            onClick={fetchAction}
           />
           <ToolbarButton
             icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
             label="Pull"
-            disabled={store.isLoading}
-            onClick={() => store.pull()}
+            disabled={isLoading}
+            onClick={pullAction}
           />
           <ToolbarButton
             icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
             label="Push"
-            disabled={store.isLoading}
-            onClick={() => store.push()}
+            disabled={isLoading}
+            onClick={pushAction}
           />
 
           {/* Separator */}
@@ -119,14 +138,14 @@ export function GraphPanel() {
           <ToolbarButton
             icon={<Archive className="h-3.5 w-3.5" />}
             label="Stash"
-            disabled={store.isLoading || store.fileStatuses.length === 0}
-            onClick={() => store.pushStash()}
+            disabled={isLoading || fileStatusCount === 0}
+            onClick={() => pushStash()}
           />
           <ToolbarButton
             icon={<ArchiveRestore className="h-3.5 w-3.5" />}
             label="Pop"
-            disabled={store.isLoading || store.stashes.length === 0}
-            onClick={() => store.popStash(0)}
+            disabled={isLoading || stashCount === 0}
+            onClick={() => popStash(0)}
           />
         </div>
       </div>
@@ -135,15 +154,15 @@ export function GraphPanel() {
       <div className="flex-1 min-h-0">
         {showDiff ? (
           <div className="h-full overflow-auto">
-            <DiffViewer diff={store.activeDiff!} />
+            <DiffViewer diff={activeDiff} />
           </div>
         ) : (
           <CommitGraphCanvas
-            commits={store.commits}
-            edges={store.edges}
-            totalLanes={store.totalLanes}
-            selectedCommitId={store.selectedCommitId}
-            onSelectCommit={store.selectCommit}
+            commits={commits}
+            edges={edges}
+            totalLanes={totalLanes}
+            selectedCommitId={selectedCommitId}
+            onSelectCommit={selectCommit}
           />
         )}
       </div>

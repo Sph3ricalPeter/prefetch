@@ -21,8 +21,6 @@ A desktop git client built for developers who want a visual commit graph, profil
 
 ## Getting Started
 
-asdfasdf
-
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 22+

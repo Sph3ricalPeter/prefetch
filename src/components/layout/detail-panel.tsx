@@ -18,14 +18,12 @@ function isClaudeCoAuthor(email: string): boolean {
 }
 
 export function DetailPanel() {
-  const {
-    commits,
-    selectedCommitId,
-    selectedFilePath,
-    fileStatuses,
-    commitFiles,
-    selectCommitFile,
-  } = useRepoStore();
+  const commits = useRepoStore((s) => s.commits);
+  const selectedCommitId = useRepoStore((s) => s.selectedCommitId);
+  const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
+  const fileStatuses = useRepoStore((s) => s.fileStatuses);
+  const commitFiles = useRepoStore((s) => s.commitFiles);
+  const selectCommitFile = useRepoStore((s) => s.selectCommitFile);
 
   if (selectedCommitId) {
     const commit = commits.find((c) => c.id === selectedCommitId);

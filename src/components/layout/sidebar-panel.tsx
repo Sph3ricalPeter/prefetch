@@ -3,7 +3,7 @@ import { BranchList } from "@/components/sidebar/branch-list";
 import { StashList } from "@/components/sidebar/stash-list";
 
 export function SidebarPanel() {
-  const { repoPath } = useRepoStore();
+  const repoPath = useRepoStore((s) => s.repoPath);
 
   if (!repoPath) {
     return (
