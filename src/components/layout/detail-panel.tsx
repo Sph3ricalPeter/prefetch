@@ -1,5 +1,10 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, FileText } from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileList } from "@/components/staging/file-list";
 import { CommitBox } from "@/components/staging/commit-box";
@@ -129,45 +134,50 @@ function CommitDetailView({
           </p>
           <div className="flex flex-wrap gap-3">
             {/* Primary author */}
-            <div
-              className="flex items-center gap-1.5 cursor-default"
-              title={commit.author_email}
-            >
-              <div className="h-5 w-5 rounded-full bg-secondary flex items-center justify-center shrink-0">
-                <span className="text-xs font-medium text-foreground">
-                  {commit.author_name.charAt(0).toUpperCase()}
-                </span>
-              </div>
-              <p className="text-xs text-foreground">{commit.author_name}</p>
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-1.5 cursor-default">
+                  <div className="h-5 w-5 rounded-full bg-secondary flex items-center justify-center shrink-0">
+                    <span className="text-xs font-medium text-foreground">
+                      {commit.author_name.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="text-xs text-foreground">
+                    {commit.author_name}
+                  </p>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>{commit.author_email}</TooltipContent>
+            </Tooltip>
 
             {/* Co-authors inline */}
             {commit.co_authors.map((ca, i) => {
               const isClaude = isClaudeCoAuthor(ca.email);
               return (
-                <div
-                  key={i}
-                  className="flex items-center gap-1.5 cursor-default"
-                  title={ca.email || ca.name}
-                >
-                  <div
-                    className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
-                    style={
-                      isClaude
-                        ? { backgroundColor: CLAUDE_ORANGE }
-                        : undefined
-                    }
-                  >
-                    {isClaude ? (
-                      <ClaudeIcon />
-                    ) : (
-                      <span className="text-xs font-medium text-foreground bg-secondary rounded-full h-5 w-5 flex items-center justify-center">
-                        {ca.name.charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-foreground">{ca.name}</p>
-                </div>
+                <Tooltip key={i}>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1.5 cursor-default">
+                      <div
+                        className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
+                        style={
+                          isClaude
+                            ? { backgroundColor: CLAUDE_ORANGE }
+                            : undefined
+                        }
+                      >
+                        {isClaude ? (
+                          <ClaudeIcon />
+                        ) : (
+                          <span className="text-xs font-medium text-foreground bg-secondary rounded-full h-5 w-5 flex items-center justify-center">
+                            {ca.name.charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-foreground">{ca.name}</p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>{ca.email || ca.name}</TooltipContent>
+                </Tooltip>
               );
             })}
           </div>
