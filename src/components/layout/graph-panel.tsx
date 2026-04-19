@@ -34,6 +34,7 @@ export function GraphPanel() {
   const selectCommit = useRepoStore((s) => s.selectCommit);
   const clearDiff = useRepoStore((s) => s.clearDiff);
   const clearSelection = useRepoStore((s) => s.clearSelection);
+  const loadStatus = useRepoStore((s) => s.loadStatus);
   const fetchAction = useRepoStore((s) => s.fetch);
   const pullAction = useRepoStore((s) => s.pull);
   const pushAction = useRepoStore((s) => s.push);
@@ -115,7 +116,7 @@ export function GraphPanel() {
           {fileStatuses.length > 0 && (
             <>
               <button
-                onClick={clearSelection}
+                onClick={() => { clearSelection(); loadStatus(); }}
                 className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
                   selectedCommitId === null && selectedStashIndex === null
                     ? "bg-accent text-accent-foreground"
