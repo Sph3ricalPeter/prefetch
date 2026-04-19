@@ -141,7 +141,7 @@ function CommitDetailView({
             {commitTags.map((t) => (
               <span
                 key={t.name}
-                className="inline-flex items-center gap-1 rounded-full bg-yellow-500/15 px-2 py-0.5 text-xs text-yellow-400"
+                className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground"
               >
                 <Tag className="h-2.5 w-2.5" />
                 {t.name}
