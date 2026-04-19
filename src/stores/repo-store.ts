@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { toast } from "sonner";
-import type { BranchInfo, CommitInfo, GraphEdge } from "@/types/git";
+import type {
+  BranchInfo,
+  CommitInfo,
+  FileDiff,
+  FileStatus,
+  GraphEdge,
+} from "@/types/git";
 import {
   openRepo,
   getCommits,
@@ -9,6 +15,11 @@ import {
   fetchRepo,
   pullRepo,
   pushRepo,
+  getFileStatus,
+  getFileDiff,
+  stageFiles as stageFilesCmd,
+  unstageFiles as unstageFilesCmd,
+  createCommit,
 } from "@/lib/commands";
 
 interface RepoState {
@@ -23,16 +34,28 @@ interface RepoState {
   isLoading: boolean;
   error: string | null;
 
+  fileStatuses: FileStatus[];
+  selectedFilePath: string | null;
+  selectedFileStaged: boolean;
+  selectedFileDiff: FileDiff | null;
+  commitMessage: string;
+
   openRepository: (path: string) => Promise<void>;
   loadBranches: () => Promise<void>;
+  loadStatus: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
   fetch: () => Promise<void>;
   pull: () => Promise<void>;
   push: () => Promise<void>;
   selectCommit: (id: string | null) => void;
+  selectFile: (path: string, staged: boolean) => Promise<void>;
+  clearFileSelection: () => void;
+  stage: (paths: string[]) => Promise<void>;
+  unstage: (paths: string[]) => Promise<void>;
+  commit: (message: string, amend?: boolean) => Promise<void>;
+  setCommitMessage: (msg: string) => void;
 }
 
-/** Reload commits + branches from the current repo. */
 async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
   const [data, branchList] = await Promise.all([getCommits(), getBranches()]);
   const head = branchList.find((b) => b.is_head);
@@ -57,6 +80,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   selectedCommitId: null,
   isLoading: false,
   error: null,
+  fileStatuses: [],
+  selectedFilePath: null,
+  selectedFileStaged: false,
+  selectedFileDiff: null,
+  commitMessage: "",
 
   openRepository: async (path: string) => {
     set({ isLoading: true, error: null });
@@ -64,7 +92,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const name = await openRepo(path);
       set({ repoPath: path, repoName: name });
       await reloadRepoData(set);
-      set({ isLoading: false });
+      const statuses = await getFileStatus();
+      set({ isLoading: false, fileStatuses: statuses });
     } catch (e) {
       const msg = String(e);
       set({ isLoading: false, error: msg });
@@ -82,15 +111,29 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  loadStatus: async () => {
+    try {
+      const statuses = await getFileStatus();
+      set({ fileStatuses: statuses });
+      const { selectedFilePath, selectedFileStaged } = get();
+      if (selectedFilePath) {
+        const diff = await getFileDiff(selectedFilePath, selectedFileStaged);
+        set({ selectedFileDiff: diff });
+      }
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
   checkout: async (name: string) => {
     const { currentBranch } = get();
     if (name === currentBranch) return;
-
     set({ isLoading: true, error: null });
     try {
       await checkoutBranch(name);
       await reloadRepoData(set);
-      set({ isLoading: false });
+      const statuses = await getFileStatus();
+      set({ isLoading: false, fileStatuses: statuses });
       toast.success(`Checked out ${name}`);
     } catch (e) {
       set({ isLoading: false });
@@ -118,7 +161,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await pullRepo();
       await reloadRepoData(set);
-      set({ isLoading: false });
+      const statuses = await getFileStatus();
+      set({ isLoading: false, fileStatuses: statuses });
       toast.success("Pull complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
@@ -139,5 +183,62 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
-  selectCommit: (id) => set({ selectedCommitId: id }),
+  selectCommit: (id) =>
+    set({ selectedCommitId: id, selectedFilePath: null, selectedFileDiff: null }),
+
+  selectFile: async (path, staged) => {
+    set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null });
+    try {
+      const diff = await getFileDiff(path, staged);
+      set({ selectedFileDiff: diff });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  clearFileSelection: () => set({ selectedFilePath: null, selectedFileDiff: null }),
+
+  stage: async (paths) => {
+    try {
+      await stageFilesCmd(paths);
+      await get().loadStatus();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  unstage: async (paths) => {
+    try {
+      await unstageFilesCmd(paths);
+      await get().loadStatus();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  commit: async (message, amend = false) => {
+    if (!message.trim()) {
+      toast.error("Commit message cannot be empty");
+      return;
+    }
+    set({ isLoading: true });
+    try {
+      await createCommit(message, amend);
+      await reloadRepoData(set);
+      const statuses = await getFileStatus();
+      set({
+        isLoading: false,
+        fileStatuses: statuses,
+        commitMessage: "",
+        selectedFilePath: null,
+        selectedFileDiff: null,
+      });
+      toast.success("Committed successfully");
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  setCommitMessage: (msg) => set({ commitMessage: msg }),
 }));

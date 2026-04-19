@@ -42,3 +42,35 @@ pub struct BranchInfo {
     pub commit_id: String,
     pub short_commit_id: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FileStatus {
+    pub path: String,
+    pub status_type: String, // "modified", "added", "deleted", "renamed", "untracked"
+    pub is_staged: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FileDiff {
+    pub path: String,
+    pub hunks: Vec<DiffHunk>,
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffHunk {
+    pub header: String,
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffLine {
+    pub origin: char,
+    pub content: String,
+    pub old_lineno: Option<u32>,
+    pub new_lineno: Option<u32>,
+}

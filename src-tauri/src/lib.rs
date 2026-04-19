@@ -27,6 +27,11 @@ pub fn run() {
             commands::repo::fetch_repo,
             commands::repo::pull_repo,
             commands::repo::push_repo,
+            commands::repo::get_file_status,
+            commands::repo::get_file_diff,
+            commands::repo::stage_files,
+            commands::repo::unstage_files,
+            commands::repo::create_commit,
         ])
         .setup(|_app| {
             // Future: initialize file watcher, background fetch thread

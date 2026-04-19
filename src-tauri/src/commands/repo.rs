@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::git::{
     repository,
-    types::{BranchInfo, GraphData},
+    types::{BranchInfo, FileDiff, FileStatus, GraphData},
 };
 use crate::AppState;
 use tauri::State;
@@ -106,4 +106,82 @@ pub fn push_repo(state: State<'_, AppState>) -> Result<String, AppError> {
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
     repository::push(path)
+}
+
+#[tauri::command]
+pub fn get_file_status(state: State<'_, AppState>) -> Result<Vec<FileStatus>, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::get_status(path)
+}
+
+#[tauri::command]
+pub fn get_file_diff(
+    file_path: String,
+    staged: bool,
+    state: State<'_, AppState>,
+) -> Result<FileDiff, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::get_file_diff(path, &file_path, staged)
+}
+
+#[tauri::command]
+pub fn stage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::stage_files(path, &paths)
+}
+
+#[tauri::command]
+pub fn unstage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::unstage_files(path, &paths)
+}
+
+#[tauri::command]
+pub fn create_commit(
+    message: String,
+    amend: bool,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::create_commit(path, &message, amend)
 }

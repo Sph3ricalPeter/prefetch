@@ -1,7 +1,9 @@
 use crate::error::AppError;
 use crate::git::graph::assign_lanes;
-use crate::git::types::{BranchInfo, CommitInfo, GraphData};
-use git2::{BranchType, Repository, Sort};
+use crate::git::types::{
+    BranchInfo, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
+};
+use git2::{BranchType, Repository, Sort, Status};
 use std::path::Path;
 use std::process::Command;
 
@@ -176,4 +178,231 @@ fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
     } else {
         combined
     })
+}
+
+/// Get the working tree status (staged + unstaged + untracked files).
+pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
+    let repo = Repository::open(path)?;
+    let statuses = repo.statuses(None)?;
+    let mut result: Vec<FileStatus> = Vec::new();
+
+    for entry in statuses.iter() {
+        let file_path = entry.path().unwrap_or("").to_string();
+        let s = entry.status();
+
+        // Staged changes (index vs HEAD)
+        if s.intersects(
+            Status::INDEX_NEW
+                | Status::INDEX_MODIFIED
+                | Status::INDEX_DELETED
+                | Status::INDEX_RENAMED,
+        ) {
+            result.push(FileStatus {
+                path: file_path.clone(),
+                status_type: status_type_from_index(s),
+                is_staged: true,
+            });
+        }
+
+        // Unstaged changes (workdir vs index) or untracked
+        if s.intersects(
+            Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_NEW,
+        ) {
+            result.push(FileStatus {
+                path: file_path,
+                status_type: if s.contains(Status::WT_NEW) {
+                    "untracked".to_string()
+                } else {
+                    status_type_from_workdir(s)
+                },
+                is_staged: false,
+            });
+        }
+    }
+
+    result.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(result)
+}
+
+fn status_type_from_index(s: Status) -> String {
+    if s.contains(Status::INDEX_NEW) {
+        "added"
+    } else if s.contains(Status::INDEX_MODIFIED) {
+        "modified"
+    } else if s.contains(Status::INDEX_DELETED) {
+        "deleted"
+    } else if s.contains(Status::INDEX_RENAMED) {
+        "renamed"
+    } else {
+        "modified"
+    }
+    .to_string()
+}
+
+fn status_type_from_workdir(s: Status) -> String {
+    if s.contains(Status::WT_MODIFIED) {
+        "modified"
+    } else if s.contains(Status::WT_DELETED) {
+        "deleted"
+    } else if s.contains(Status::WT_RENAMED) {
+        "renamed"
+    } else if s.contains(Status::WT_NEW) {
+        "untracked"
+    } else {
+        "modified"
+    }
+    .to_string()
+}
+
+/// Get the diff for a specific file using git CLI (avoids git2-rs borrow issues).
+pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<FileDiff, AppError> {
+    let args = if staged {
+        vec!["diff", "--cached", "--", file_path]
+    } else {
+        vec!["diff", "--", file_path]
+    };
+
+    let output = Command::new("git")
+        .args(&args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
+
+    let diff_text = String::from_utf8_lossy(&output.stdout);
+
+    // Untracked files won't show in git diff — read file content as all-added
+    if diff_text.trim().is_empty() && !staged {
+        let abs_path = Path::new(repo_path).join(file_path);
+        if abs_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&abs_path) {
+                let lines: Vec<DiffLine> = content
+                    .lines()
+                    .enumerate()
+                    .map(|(i, l)| DiffLine {
+                        origin: '+',
+                        content: l.to_string(),
+                        old_lineno: None,
+                        new_lineno: Some(i as u32 + 1),
+                    })
+                    .collect();
+                if !lines.is_empty() {
+                    return Ok(FileDiff {
+                        path: file_path.to_string(),
+                        hunks: vec![DiffHunk {
+                            header: format!("@@ -0,0 +1,{} @@", lines.len()),
+                            old_start: 0,
+                            old_lines: 0,
+                            new_start: 1,
+                            new_lines: lines.len() as u32,
+                            lines,
+                        }],
+                        is_binary: false,
+                    });
+                }
+            }
+        }
+    }
+
+    if diff_text.contains("Binary files") {
+        return Ok(FileDiff {
+            path: file_path.to_string(),
+            hunks: vec![],
+            is_binary: true,
+        });
+    }
+
+    Ok(FileDiff {
+        path: file_path.to_string(),
+        hunks: parse_unified_diff(&diff_text),
+        is_binary: false,
+    })
+}
+
+fn parse_unified_diff(diff_text: &str) -> Vec<DiffHunk> {
+    let mut hunks: Vec<DiffHunk> = Vec::new();
+
+    for line in diff_text.lines() {
+        if line.starts_with("@@") {
+            let (old_start, old_lines, new_start, new_lines) = parse_hunk_header(line);
+            hunks.push(DiffHunk {
+                header: line.to_string(),
+                old_start,
+                old_lines,
+                new_start,
+                new_lines,
+                lines: Vec::new(),
+            });
+        } else if let Some(hunk) = hunks.last_mut() {
+            let origin = if line.starts_with('+') {
+                '+'
+            } else if line.starts_with('-') {
+                '-'
+            } else {
+                ' '
+            };
+
+            let content =
+                if !line.is_empty() && (origin == '+' || origin == '-' || line.starts_with(' ')) {
+                    line[1..].to_string()
+                } else {
+                    line.to_string()
+                };
+
+            hunk.lines.push(DiffLine {
+                origin,
+                content,
+                old_lineno: None,
+                new_lineno: None,
+            });
+        }
+    }
+
+    hunks
+}
+
+fn parse_hunk_header(line: &str) -> (u32, u32, u32, u32) {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    let (mut old_start, mut old_lines, mut new_start, mut new_lines) = (0u32, 1u32, 0u32, 1u32);
+
+    if parts.len() >= 3 {
+        if let Some(old) = parts[1].strip_prefix('-') {
+            let nums: Vec<&str> = old.split(',').collect();
+            old_start = nums[0].parse().unwrap_or(0);
+            old_lines = nums.get(1).and_then(|n| n.parse().ok()).unwrap_or(1);
+        }
+        if let Some(new) = parts[2].strip_prefix('+') {
+            let nums: Vec<&str> = new.split(',').collect();
+            new_start = nums[0].parse().unwrap_or(0);
+            new_lines = nums.get(1).and_then(|n| n.parse().ok()).unwrap_or(1);
+        }
+    }
+
+    (old_start, old_lines, new_start, new_lines)
+}
+
+/// Stage files using git CLI.
+pub fn stage_files(path: &str, files: &[String]) -> Result<(), AppError> {
+    let mut args = vec!["add", "--"];
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    args.extend(file_refs);
+    run_git(path, &args)?;
+    Ok(())
+}
+
+/// Unstage files using git CLI.
+pub fn unstage_files(path: &str, files: &[String]) -> Result<(), AppError> {
+    let mut args = vec!["reset", "HEAD", "--"];
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    args.extend(file_refs);
+    run_git(path, &args)?;
+    Ok(())
+}
+
+/// Create a commit using git CLI.
+pub fn create_commit(path: &str, message: &str, amend: bool) -> Result<String, AppError> {
+    if amend {
+        run_git(path, &["commit", "--amend", "-m", message])
+    } else {
+        run_git(path, &["commit", "-m", message])
+    }
 }
