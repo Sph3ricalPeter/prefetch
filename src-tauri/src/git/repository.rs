@@ -2,6 +2,7 @@ use crate::error::AppError;
 use crate::git::graph::assign_lanes;
 use crate::git::types::{
     BranchInfo, CoAuthor, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
+    StashInfo,
 };
 use git2::{BranchType, Repository, Sort, Status};
 use std::path::Path;
@@ -509,4 +510,49 @@ pub fn get_commit_file_diff(
         hunks: parse_unified_diff(&diff_text),
         is_binary: false,
     })
+}
+
+/// List all stashes.
+pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
+    let output = Command::new("git")
+        .args(["stash", "list"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut stashes = Vec::new();
+
+    for line in text.lines() {
+        // Parse "stash@{0}: WIP on main: abc1234 message"
+        if let (Some(idx_start), Some(idx_end)) = (line.find('{'), line.find('}')) {
+            let index: usize = line[idx_start + 1..idx_end].parse().unwrap_or(0);
+            let message = line[idx_end + 2..].trim().to_string();
+            stashes.push(StashInfo { index, message });
+        }
+    }
+
+    Ok(stashes)
+}
+
+/// Stash current changes (including untracked files).
+pub fn stash_push(path: &str, message: Option<&str>) -> Result<String, AppError> {
+    let mut args = vec!["stash", "push", "-u"];
+    if let Some(msg) = message {
+        args.push("-m");
+        args.push(msg);
+    }
+    run_git(path, &args)
+}
+
+/// Pop a stash entry (apply and remove from stash list).
+pub fn stash_pop(path: &str, index: usize) -> Result<String, AppError> {
+    let stash_ref = format!("stash@{{{index}}}");
+    run_git(path, &["stash", "pop", &stash_ref])
+}
+
+/// Drop a stash entry without applying.
+pub fn stash_drop(path: &str, index: usize) -> Result<String, AppError> {
+    let stash_ref = format!("stash@{{{index}}}");
+    run_git(path, &["stash", "drop", &stash_ref])
 }

@@ -67,3 +67,8 @@ export interface DiffLine {
   old_lineno: number | null;
   new_lineno: number | null;
 }
+
+export interface StashInfo {
+  index: number;
+  message: string;
+}

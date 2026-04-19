@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::git::{
     repository,
-    types::{BranchInfo, FileDiff, FileStatus, GraphData},
+    types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo},
 };
 use crate::AppState;
 use tauri::State;
@@ -219,4 +219,60 @@ pub fn get_commit_file_diff(
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
     repository::get_commit_file_diff(path, &commit_id, &file_path)
+}
+
+#[tauri::command]
+pub fn get_stashes(state: State<'_, AppState>) -> Result<Vec<StashInfo>, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::list_stashes(path)
+}
+
+#[tauri::command]
+pub fn stash_save(message: Option<String>, state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::stash_push(path, message.as_deref())
+}
+
+#[tauri::command]
+pub fn stash_pop(index: usize, state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::stash_pop(path, index)
+}
+
+#[tauri::command]
+pub fn stash_drop(index: usize, state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::stash_drop(path, index)
 }

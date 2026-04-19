@@ -6,6 +6,7 @@ import type {
   FileDiff,
   FileStatus,
   GraphEdge,
+  StashInfo,
 } from "@/types/git";
 import {
   openRepo,
@@ -22,6 +23,10 @@ import {
   createCommit,
   getCommitFiles,
   getCommitFileDiff,
+  getStashes,
+  stashPush as stashPushCmd,
+  stashPop as stashPopCmd,
+  stashDrop as stashDropCmd,
 } from "@/lib/commands";
 
 interface RepoState {
@@ -49,6 +54,9 @@ interface RepoState {
 
   commitMessage: string;
 
+  // Stash
+  stashes: StashInfo[];
+
   // Actions
   openRepository: (path: string) => Promise<void>;
   loadBranches: () => Promise<void>;
@@ -65,6 +73,10 @@ interface RepoState {
   unstage: (paths: string[]) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
   setCommitMessage: (msg: string) => void;
+  loadStashes: () => Promise<void>;
+  pushStash: (message?: string) => Promise<void>;
+  popStash: (index: number) => Promise<void>;
+  dropStash: (index: number) => Promise<void>;
 }
 
 async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
@@ -96,6 +108,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   activeDiff: null,
   commitFiles: [],
   commitMessage: "",
+  stashes: [],
 
   openRepository: async (path: string) => {
     set({ isLoading: true, error: null });
@@ -103,8 +116,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const name = await openRepo(path);
       set({ repoPath: path, repoName: name });
       await reloadRepoData(set);
-      const statuses = await getFileStatus();
-      set({ isLoading: false, fileStatuses: statuses });
+      const [statuses, stashList] = await Promise.all([
+        getFileStatus(),
+        getStashes(),
+      ]);
+      set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
     } catch (e) {
       const msg = String(e);
       set({ isLoading: false, error: msg });
@@ -282,4 +298,64 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   setCommitMessage: (msg) => set({ commitMessage: msg }),
+
+  loadStashes: async () => {
+    try {
+      const stashList = await getStashes();
+      set({ stashes: stashList });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  pushStash: async (message?) => {
+    set({ isLoading: true });
+    try {
+      await stashPushCmd(message);
+      const [statuses, stashList] = await Promise.all([
+        getFileStatus(),
+        getStashes(),
+      ]);
+      set({
+        isLoading: false,
+        fileStatuses: statuses,
+        stashes: stashList,
+        selectedFilePath: null,
+        activeDiff: null,
+      });
+      toast.success("Changes stashed");
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  popStash: async (index) => {
+    set({ isLoading: true });
+    try {
+      await stashPopCmd(index);
+      const [statuses, stashList] = await Promise.all([
+        getFileStatus(),
+        getStashes(),
+      ]);
+      set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
+      toast.success("Stash applied");
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  dropStash: async (index) => {
+    set({ isLoading: true });
+    try {
+      await stashDropCmd(index);
+      const stashList = await getStashes();
+      set({ isLoading: false, stashes: stashList });
+      toast.success("Stash dropped");
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
 }));

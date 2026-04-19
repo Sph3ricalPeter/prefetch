@@ -82,3 +82,9 @@ pub struct DiffLine {
     pub old_lineno: Option<u32>,
     pub new_lineno: Option<u32>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StashInfo {
+    pub index: usize,
+    pub message: String,
+}

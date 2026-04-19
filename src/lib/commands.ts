@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BranchInfo, FileDiff, FileStatus, GraphData } from "@/types/git";
+import type {
+  BranchInfo,
+  FileDiff,
+  FileStatus,
+  GraphData,
+  StashInfo,
+} from "@/types/git";
 
 export async function openRepo(path: string): Promise<string> {
   return invoke<string>("open_repo", { path });
@@ -64,4 +70,20 @@ export async function getCommitFileDiff(
   filePath: string,
 ): Promise<FileDiff> {
   return invoke<FileDiff>("get_commit_file_diff", { commitId, filePath });
+}
+
+export async function getStashes(): Promise<StashInfo[]> {
+  return invoke<StashInfo[]>("get_stashes");
+}
+
+export async function stashPush(message?: string): Promise<string> {
+  return invoke<string>("stash_save", { message: message ?? null });
+}
+
+export async function stashPop(index: number): Promise<string> {
+  return invoke<string>("stash_pop", { index });
+}
+
+export async function stashDrop(index: number): Promise<string> {
+  return invoke<string>("stash_drop", { index });
 }

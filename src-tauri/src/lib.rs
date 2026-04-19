@@ -34,6 +34,10 @@ pub fn run() {
             commands::repo::create_commit,
             commands::repo::get_commit_files,
             commands::repo::get_commit_file_diff,
+            commands::repo::get_stashes,
+            commands::repo::stash_save,
+            commands::repo::stash_pop,
+            commands::repo::stash_drop,
         ])
         .setup(|_app| {
             // Future: initialize file watcher, background fetch thread
