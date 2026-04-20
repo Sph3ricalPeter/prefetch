@@ -68,6 +68,8 @@ interface RepoState {
 
   // Active diff — displayed in center panel
   activeDiff: FileDiff | null;
+  /** True when a diff is being fetched */
+  diffLoading: boolean;
   /** Set when a large diff is deferred — fetch only when user clicks "Load anyway" */
   largeDiffPending: {
     path: string;
@@ -159,6 +161,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   selectedFilePath: null,
   selectedFileStaged: false,
   activeDiff: null,
+  diffLoading: false,
   largeDiffPending: null,
   commitFiles: [],
   commitMessage: "",
@@ -326,10 +329,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       return;
     }
 
+    set({ diffLoading: true });
     try {
       const diff = await getFileDiff(path, staged);
-      set({ activeDiff: diff });
+      set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
+      set({ diffLoading: false });
       toast.error(String(e));
     }
   },
@@ -345,15 +350,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       return;
     }
 
+    set({ diffLoading: true });
     try {
       const diff = await getCommitFileDiff(commitId, filePath);
-      set({ activeDiff: diff });
+      set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
+      set({ diffLoading: false });
       toast.error(String(e));
     }
   },
 
-  clearDiff: () => set({ activeDiff: null, largeDiffPending: null, selectedFilePath: null }),
+  clearDiff: () => set({ activeDiff: null, largeDiffPending: null, diffLoading: false, selectedFilePath: null }),
 
   clearSelection: () =>
     set({
@@ -369,7 +376,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     const pending = get().largeDiffPending;
     if (!pending) return;
     // Mark as loading — keep the guard visible with a spinner
-    set({ largeDiffPending: { ...pending, loading: true } });
+    set({ largeDiffPending: { ...pending, loading: true }, diffLoading: true });
     try {
       let diff: FileDiff;
       if (pending.stashIndex !== undefined) {
@@ -379,9 +386,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       } else {
         diff = await getFileDiff(pending.path, pending.staged ?? false);
       }
-      set({ activeDiff: diff, largeDiffPending: null });
+      set({ activeDiff: diff, largeDiffPending: null, diffLoading: false });
     } catch (e) {
-      set({ largeDiffPending: null });
+      set({ largeDiffPending: null, diffLoading: false });
       toast.error(String(e));
     }
   },
@@ -467,10 +474,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       return;
     }
 
+    set({ diffLoading: true });
     try {
       const diff = await getStashFileDiff(index, filePath);
-      set({ activeDiff: diff });
+      set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
+      set({ diffLoading: false });
       toast.error(String(e));
     }
   },

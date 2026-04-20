@@ -35,6 +35,7 @@ export function GraphPanel() {
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
   const headCommitId = useRepoStore((s) => s.headCommitId);
   const largeDiffPending = useRepoStore((s) => s.largeDiffPending);
+  const diffLoading = useRepoStore((s) => s.diffLoading);
 
   const openRepository = useRepoStore((s) => s.openRepository);
   const selectCommit = useRepoStore((s) => s.selectCommit);
@@ -52,6 +53,7 @@ export function GraphPanel() {
 
   const [showBranchInput, setShowBranchInput] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
+
 
   const handleOpenRepo = useCallback(async () => {
     const selected = await open({
@@ -137,7 +139,7 @@ export function GraphPanel() {
     <div className="flex h-full flex-col bg-background">
       {/* Header bar with toolbar */}
       <div className="flex h-10 shrink-0 items-center border-b border-border px-4">
-        {showDiff || showLargeDiffGuard ? (
+        {showDiff || showLargeDiffGuard || (diffLoading && selectedFilePath) ? (
           <>
             <button
               onClick={clearDiff}
@@ -148,6 +150,9 @@ export function GraphPanel() {
             <span className="truncate text-xs font-medium text-foreground">
               {selectedFilePath}
             </span>
+            <RefreshCw
+              className={`ml-2 h-3 w-3 shrink-0 text-muted-foreground animate-spin transition-opacity duration-100 ${diffLoading ? "opacity-100" : "opacity-0"}`}
+            />
           </>
         ) : (
           <RepoSwitcher
@@ -259,26 +264,16 @@ export function GraphPanel() {
       <div className="flex-1 min-h-0">
         {showLargeDiffGuard ? (
           <div className="flex h-full flex-col items-center justify-center gap-3">
-            {largeDiffPending.loading ? (
-              <>
-                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                <p className="text-sm text-muted-foreground">
-                  Loading {largeDiffPending.totalChanges.toLocaleString()} lines...
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  Large diff — {largeDiffPending.totalChanges.toLocaleString()} changed lines
-                </p>
-                <button
-                  onClick={loadPendingDiff}
-                  className="rounded-md bg-secondary px-4 py-1.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent"
-                >
-                  Load anyway
-                </button>
-              </>
-            )}
+            <p className="text-sm text-muted-foreground">
+              Large diff — {largeDiffPending.totalChanges.toLocaleString()} changed lines
+            </p>
+            <button
+              onClick={loadPendingDiff}
+              disabled={largeDiffPending.loading}
+              className="rounded-md bg-secondary px-4 py-1.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent disabled:opacity-40"
+            >
+              Load anyway
+            </button>
           </div>
         ) : showDiff ? (
           <div className="h-full overflow-auto">
@@ -432,3 +427,4 @@ function ToolbarButton({
     </button>
   );
 }
+
