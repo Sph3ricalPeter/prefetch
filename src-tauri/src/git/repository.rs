@@ -6,8 +6,9 @@ use crate::git::types::{
 };
 use git2::{BranchType, Repository, Sort, Status};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Get the repository display name from its path.
 pub fn repo_name(path: &str) -> String {
@@ -170,20 +171,24 @@ pub fn create_branch(path: &str, name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Fetch all remotes.
-pub fn fetch_all(path: &str) -> Result<String, AppError> {
-    run_git(path, &["fetch", "--all", "--prune"])
+/// Fetch all remotes with progress streaming.
+pub fn fetch_all<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
+    run_git_with_progress(
+        path,
+        &["fetch", "--all", "--prune", "--progress"],
+        &on_progress,
+    )
 }
 
-/// Pull from the current branch's upstream.
-pub fn pull(path: &str) -> Result<String, AppError> {
-    run_git(path, &["pull"])
+/// Pull from the current branch's upstream with progress streaming.
+pub fn pull<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
+    run_git_with_progress(path, &["pull", "--progress"], &on_progress)
 }
 
-/// Push to the current branch's upstream, setting it if needed.
-pub fn push(path: &str) -> Result<String, AppError> {
+/// Push to the current branch's upstream with progress streaming, setting upstream if needed.
+pub fn push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
     // Try normal push first
-    let result = run_git(path, &["push"]);
+    let result = run_git_with_progress(path, &["push", "--progress"], &on_progress);
     if result.is_ok() {
         return result;
     }
@@ -192,7 +197,11 @@ pub fn push(path: &str) -> Result<String, AppError> {
     let repo = Repository::open(path)?;
     let head = repo.head()?;
     let branch_name = head.shorthand().unwrap_or("HEAD");
-    run_git(path, &["push", "-u", "origin", branch_name])
+    run_git_with_progress(
+        path,
+        &["push", "-u", "origin", branch_name, "--progress"],
+        &on_progress,
+    )
 }
 
 /// Run a git CLI command in the given repo directory.
@@ -216,6 +225,87 @@ fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
         "Done".to_string()
     } else {
         combined
+    })
+}
+
+/// Run a git CLI command with real-time progress streaming.
+///
+/// Git writes progress to stderr using `\r` for in-place updates.
+/// This function reads stderr in chunks, splits on `\r`/`\n`, and calls
+/// `on_progress` with each line. The `--progress` flag must be included
+/// in `args` to force progress output on piped stderr.
+fn run_git_with_progress<F: Fn(&str)>(
+    path: &str,
+    args: &[&str],
+    on_progress: &F,
+) -> Result<String, AppError> {
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    // Read stderr in chunks, splitting on \r or \n for progress lines.
+    // Git uses \r for in-place progress updates (e.g. "Receiving objects: 45%")
+    let mut stderr = child.stderr.take().expect("stderr was piped");
+    let mut buf = [0u8; 4096];
+    let mut all_stderr = String::new();
+    let mut partial_line = String::new();
+
+    loop {
+        match stderr.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let chunk = String::from_utf8_lossy(&buf[..n]);
+                for ch in chunk.chars() {
+                    if ch == '\r' || ch == '\n' {
+                        if !partial_line.is_empty() {
+                            let trimmed = partial_line.trim().to_string();
+                            if !trimmed.is_empty() {
+                                on_progress(&trimmed);
+                            }
+                            all_stderr.push_str(&partial_line);
+                            all_stderr.push('\n');
+                            partial_line.clear();
+                        }
+                    } else {
+                        partial_line.push(ch);
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    // Flush remaining partial line
+    if !partial_line.is_empty() {
+        let trimmed = partial_line.trim().to_string();
+        if !trimmed.is_empty() {
+            on_progress(&trimmed);
+        }
+        all_stderr.push_str(&partial_line);
+    }
+
+    // Read stdout
+    let mut stdout_text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        stdout.read_to_string(&mut stdout_text).ok();
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| AppError::Other(format!("Failed to wait for git: {e}")))?;
+
+    if !status.success() {
+        return Err(AppError::Git(all_stderr.trim().to_string()));
+    }
+
+    let result = stdout_text.trim().to_string();
+    Ok(if result.is_empty() {
+        "Done".to_string()
+    } else {
+        result
     })
 }
 

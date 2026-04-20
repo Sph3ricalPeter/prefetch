@@ -379,13 +379,15 @@ function CommitFileRow({
       >
         {statusLabel}
       </span>
-      <span className="truncate text-xs text-foreground">{fileName}</span>
-      {dirPath && (
-        <span className="truncate text-xs text-muted-foreground/50">
-          {dirPath}
-        </span>
-      )}
-      <span className="ml-auto shrink-0 flex items-center gap-1">
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="truncate text-xs text-foreground">{fileName}</span>
+        {dirPath && (
+          <span className="truncate text-xs text-muted-foreground/50">
+            {dirPath}
+          </span>
+        )}
+      </div>
+      <span className="shrink-0 flex items-center gap-1 tabular-nums text-right min-w-[4rem] justify-end">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}

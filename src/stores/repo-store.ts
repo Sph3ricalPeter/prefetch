@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import type {
   BranchInfo,
@@ -36,6 +37,13 @@ import {
   deleteTagCmd,
   pushTagCmd,
 } from "@/lib/commands";
+import {
+  addRecentRepo,
+  getRecentRepos,
+  removeRecentRepo,
+  setUiState,
+  type RecentRepo,
+} from "@/lib/database";
 
 interface RepoState {
   repoPath: string | null;
@@ -70,8 +78,13 @@ interface RepoState {
   // Tags
   tags: TagInfo[];
 
+  // Recent repos
+  recentRepos: RecentRepo[];
+
   // Actions
   openRepository: (path: string) => Promise<void>;
+  loadRecentRepos: () => Promise<void>;
+  removeFromRecentRepos: (path: string) => Promise<void>;
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
@@ -137,6 +150,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   stashes: [],
   selectedStashIndex: null,
   tags: [],
+  recentRepos: [],
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
@@ -152,6 +166,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getTags(),
       ]);
       set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList });
+      // Track in recent repos + save as last opened (fire-and-forget)
+      Promise.all([
+        addRecentRepo(path, name).then(() => get().loadRecentRepos()),
+        setUiState("last_repo_path", path),
+      ]).catch(() => {});
     } catch (e) {
       const msg = String(e);
       set({ isLoading: false, error: msg });
@@ -209,6 +228,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   fetch: async () => {
     set({ isLoading: true });
     const toastId = toast.loading("Fetching...");
+    const unlisten = await listen<string>("git_progress", (event) => {
+      toast.loading(event.payload, { id: toastId });
+    });
     try {
       await fetchRepo();
       await reloadRepoData(set);
@@ -217,12 +239,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       set({ isLoading: false });
       toast.error(String(e), { id: toastId });
+    } finally {
+      unlisten();
     }
   },
 
   pull: async () => {
     set({ isLoading: true });
     const toastId = toast.loading("Pulling...");
+    const unlisten = await listen<string>("git_progress", (event) => {
+      toast.loading(event.payload, { id: toastId });
+    });
     try {
       await pullRepo();
       await reloadRepoData(set);
@@ -232,12 +259,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       set({ isLoading: false });
       toast.error(String(e), { id: toastId });
+    } finally {
+      unlisten();
     }
   },
 
   push: async () => {
     set({ isLoading: true });
     const toastId = toast.loading("Pushing...");
+    const unlisten = await listen<string>("git_progress", (event) => {
+      toast.loading(event.payload, { id: toastId });
+    });
     try {
       await pushRepo();
       set({ isLoading: false });
@@ -245,6 +277,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       set({ isLoading: false });
       toast.error(String(e), { id: toastId });
+    } finally {
+      unlisten();
     }
   },
 
@@ -466,6 +500,25 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await pushTagCmd(name);
       toast.success(`Tag "${name}" pushed`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  loadRecentRepos: async () => {
+    try {
+      const repos = await getRecentRepos();
+      set({ recentRepos: repos });
+    } catch {
+      // DB not initialized yet — ignore
+    }
+  },
+
+  removeFromRecentRepos: async (path) => {
+    try {
+      await removeRecentRepo(path);
+      const repos = await getRecentRepos();
+      set({ recentRepos: repos });
     } catch (e) {
       toast.error(String(e));
     }

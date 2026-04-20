@@ -4,6 +4,38 @@ import { AppLayout } from "@/components/layout/app-layout";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
+import { initDatabase } from "@/lib/database";
+
+/**
+ * Initializes SQLite database on startup, loads recent repos,
+ * and auto-opens the last repo if available.
+ *
+ * Retries up to 3 times with 1s delay — the Tauri IPC bridge may not
+ * be ready immediately during dev server startup / HMR reloads.
+ */
+function DatabaseInit() {
+  const loadRecentRepos = useRepoStore((s) => s.loadRecentRepos);
+
+  useEffect(() => {
+    let retries = 0;
+    const tryInit = async () => {
+      try {
+        await initDatabase();
+        await loadRecentRepos();
+        // Future: add a setting to auto-open last repo on launch
+        // For now, always show the landing page with recent repos
+      } catch {
+        if (retries < 3) {
+          retries++;
+          setTimeout(tryInit, 1000);
+        }
+      }
+    };
+    tryInit();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return null;
+}
 
 /**
  * Listens for `repo_changed` events from the Rust file watcher / background fetcher.
@@ -45,7 +77,6 @@ function RepoEventListener() {
  *
  * The file watcher handles .git/ changes (stage, checkout, fetch) instantly,
  * but working tree edits (saving a file) don't touch .git/ — they need polling.
- * This is the standard approach used by most git GUIs.
  */
 function WorkingTreePoller() {
   const repoPath = useRepoStore((s) => s.repoPath);
@@ -68,6 +99,7 @@ function App() {
   return (
     <TooltipProvider delayDuration={300}>
       <AppLayout />
+      <DatabaseInit />
       <RepoEventListener />
       <WorkingTreePoller />
       <Toaster />

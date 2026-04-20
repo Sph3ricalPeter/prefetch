@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowDownToLine,
@@ -9,6 +9,10 @@ import {
   ArchiveRestore,
   FileEdit,
   GitBranchPlus,
+  FolderGit2,
+  X,
+  ChevronDown,
+  FolderOpen,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
@@ -57,10 +61,13 @@ export function GraphPanel() {
     }
   }, [openRepository]);
 
+  const recentRepos = useRepoStore((s) => s.recentRepos);
+  const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
+
   // No repo open
   if (!repoPath) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 bg-background">
+      <div className="flex h-full flex-col items-center justify-center gap-6 bg-background">
         <button
           onClick={handleOpenRepo}
           disabled={isLoading}
@@ -71,6 +78,43 @@ export function GraphPanel() {
         <p className="text-xs text-muted-foreground">
           Select a folder containing a Git repository
         </p>
+
+        {recentRepos.length > 0 && (
+          <div className="mt-4 w-full max-w-sm">
+            <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider text-center">
+              Recent Repositories
+            </p>
+            <div className="flex flex-col gap-0.5">
+              {recentRepos.map((repo) => (
+                <div
+                  key={repo.path}
+                  className="group flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors hover:bg-secondary"
+                  onClick={() => openRepository(repo.path)}
+                >
+                  <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="text-sm text-foreground truncate">
+                      {repo.name}
+                    </span>
+                    <span className="text-xs text-muted-foreground/50 truncate">
+                      {repo.path}
+                    </span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeFromRecentRepos(repo.path);
+                    }}
+                    className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                    title="Remove from recent"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -103,14 +147,15 @@ export function GraphPanel() {
             </span>
           </>
         ) : (
-          <>
-            <span className="text-xs font-medium text-muted-foreground">
-              {repoName}
-            </span>
-            <span className="ml-2 text-xs text-muted-foreground/50">
-              {commits.length.toLocaleString()} commits
-            </span>
-          </>
+          <RepoSwitcher
+            repoName={repoName ?? ""}
+            commitCount={commits.length}
+            recentRepos={recentRepos}
+            currentPath={repoPath ?? ""}
+            onOpenRepo={handleOpenRepo}
+            onSwitchRepo={openRepository}
+            onRemoveRepo={removeFromRecentRepos}
+          />
         )}
 
         {/* Toolbar buttons — right side */}
@@ -230,6 +275,110 @@ export function GraphPanel() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function RepoSwitcher({
+  repoName,
+  commitCount,
+  recentRepos,
+  currentPath,
+  onOpenRepo,
+  onSwitchRepo,
+  onRemoveRepo,
+}: {
+  repoName: string;
+  commitCount: number;
+  recentRepos: { path: string; name: string }[];
+  currentPath: string;
+  onOpenRepo: () => void;
+  onSwitchRepo: (path: string) => void;
+  onRemoveRepo: (path: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [isOpen]);
+
+  const otherRepos = recentRepos.filter((r) => r.path !== currentPath);
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1 rounded px-2 py-1 -ml-2 hover:bg-secondary transition-colors"
+      >
+        <span className="text-xs font-medium text-muted-foreground">
+          {repoName}
+        </span>
+        <span className="text-xs text-muted-foreground/50">
+          {commitCount.toLocaleString()} commits
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1 z-50 w-72 rounded-md border border-border bg-popover shadow-lg">
+          {/* Open new repo */}
+          <button
+            onClick={() => {
+              setIsOpen(false);
+              onOpenRepo();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+            Open Repository...
+          </button>
+
+          {/* Recent repos */}
+          {otherRepos.length > 0 && (
+            <>
+              <div className="border-t border-border" />
+              <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground/50 uppercase tracking-wider">
+                Recent
+              </p>
+              {otherRepos.map((repo) => (
+                <div
+                  key={repo.path}
+                  className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-secondary transition-colors"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onSwitchRepo(repo.path);
+                  }}
+                >
+                  <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="text-xs text-foreground truncate">{repo.name}</span>
+                    <span className="text-xs text-muted-foreground/40 truncate">{repo.path}</span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveRepo(repo.path);
+                    }}
+                    className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                    title="Remove from recent"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

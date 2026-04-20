@@ -1,12 +1,13 @@
 use crate::background::BackgroundFetcher;
 use crate::error::AppError;
+use crate::events;
 use crate::git::{
     repository,
     types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo, TagInfo},
 };
 use crate::watcher::RepoWatcher;
 use crate::AppState;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[tauri::command]
 pub fn open_repo(
@@ -111,7 +112,7 @@ pub fn create_branch(name: String, state: State<'_, AppState>) -> Result<(), App
 }
 
 #[tauri::command]
-pub fn fetch_repo(state: State<'_, AppState>) -> Result<String, AppError> {
+pub fn fetch_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, AppError> {
     let repo_path = state
         .repo_path
         .lock()
@@ -121,11 +122,13 @@ pub fn fetch_repo(state: State<'_, AppState>) -> Result<String, AppError> {
         .as_ref()
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
-    repository::fetch_all(path)
+    repository::fetch_all(path, |progress| {
+        app.emit(events::GIT_PROGRESS, progress).ok();
+    })
 }
 
 #[tauri::command]
-pub fn pull_repo(state: State<'_, AppState>) -> Result<String, AppError> {
+pub fn pull_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, AppError> {
     let repo_path = state
         .repo_path
         .lock()
@@ -135,11 +138,13 @@ pub fn pull_repo(state: State<'_, AppState>) -> Result<String, AppError> {
         .as_ref()
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
-    repository::pull(path)
+    repository::pull(path, |progress| {
+        app.emit(events::GIT_PROGRESS, progress).ok();
+    })
 }
 
 #[tauri::command]
-pub fn push_repo(state: State<'_, AppState>) -> Result<String, AppError> {
+pub fn push_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, AppError> {
     let repo_path = state
         .repo_path
         .lock()
@@ -149,7 +154,9 @@ pub fn push_repo(state: State<'_, AppState>) -> Result<String, AppError> {
         .as_ref()
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
-    repository::push(path)
+    repository::push(path, |progress| {
+        app.emit(events::GIT_PROGRESS, progress).ok();
+    })
 }
 
 #[tauri::command]

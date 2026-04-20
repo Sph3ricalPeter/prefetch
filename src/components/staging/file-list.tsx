@@ -179,13 +179,15 @@ function FileRow({
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
         {statusLabel}
       </span>
-      <span className="truncate text-xs text-foreground">{fileName}</span>
-      {dirPath && (
-        <span className="truncate text-xs text-muted-foreground/50">
-          {dirPath}
-        </span>
-      )}
-      <span className="ml-auto shrink-0 flex items-center gap-1">
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="truncate text-xs text-foreground">{fileName}</span>
+        {dirPath && (
+          <span className="truncate text-xs text-muted-foreground/50">
+            {dirPath}
+          </span>
+        )}
+      </div>
+      <span className="shrink-0 flex items-center gap-1 tabular-nums text-right min-w-[4rem] justify-end">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}
@@ -200,7 +202,7 @@ function FileRow({
         }}
         disabled={disabled}
         title={toggleTitle}
-        className="ml-auto shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
+        className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
       >
         {toggleIcon}
       </button>
