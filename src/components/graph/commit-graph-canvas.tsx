@@ -6,10 +6,11 @@ import type {
   StashInfo,
   TagInfo,
 } from "@/types/git";
+import { gravatarUrl } from "@/lib/gravatar";
 
 const ROW_HEIGHT = 32;
-const LANE_WIDTH = 16;
-const NODE_RADIUS = 4;
+const LANE_WIDTH = 20;
+const NODE_RADIUS = 8;
 const GRAPH_PADDING_LEFT = 12;
 const TEXT_GAP = 24;
 const LABEL_HEIGHT = 16;
@@ -30,8 +31,20 @@ const LANE_COLORS = [
   "#ff5252", // red
 ];
 
+// Module-level avatar image cache — persists across renders and remounts.
+// null = load attempted but failed (permanent fallback to initials).
+const avatarCache = new Map<string, HTMLImageElement | null>();
+
 function laneColor(lane: number): string {
   return LANE_COLORS[lane % LANE_COLORS.length];
+}
+
+/** Pick a readable text color (black or white) for a given hex background */
+function contrastText(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b > 140 ? "#000000" : "#ffffff";
 }
 
 /** Consistent color for a branch name — same name always gets same color */
@@ -149,6 +162,8 @@ export function CommitGraphCanvas({
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
   const rafRef = useRef<number>(0);
   const badgeHitAreasRef = useRef<BadgeHitArea[]>([]);
+  // Stable ref so async avatar-load callbacks always reach the latest draw
+  const requestDrawRef = useRef<() => void>(() => {});
 
   const hasWip = hasUncommittedChanges;
   const rowOffset = hasWip ? 1 : 0;
@@ -342,9 +357,15 @@ export function CommitGraphCanvas({
       const toX = laneX(edge.to_lane);
       const toY = toRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
 
-      // Color edge by source commit's branch color
-      const fromCommit = commits[edge.from_row];
-      ctx.strokeStyle = fromCommit ? getCommitColor(fromCommit) : laneColor(edge.from_lane);
+      // Color first-parent edges by source commit (branch continuity),
+      // merge-parent edges by target commit (shows incoming branch)
+      if (edge.edge_type === "Merge") {
+        const toCommit = commits[edge.to_row];
+        ctx.strokeStyle = toCommit ? getCommitColor(toCommit) : laneColor(edge.to_lane);
+      } else {
+        const fromCommit = commits[edge.from_row];
+        ctx.strokeStyle = fromCommit ? getCommitColor(fromCommit) : laneColor(edge.from_lane);
+      }
       ctx.globalAlpha = 0.7;
       ctx.beginPath();
       ctx.moveTo(fromX, fromY);
@@ -406,11 +427,65 @@ export function CommitGraphCanvas({
       const y = visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
       const color = getCommitColor(commit);
 
-      // Node
-      ctx.beginPath();
-      ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
+      // Node — avatar image or fallback initial circle
+      {
+        const email = commit.author_email;
+        let img = avatarCache.get(email);
+        if (img === undefined) {
+          // First encounter — start loading gravatar
+          avatarCache.set(email, null);
+          const loadImg = new Image();
+          loadImg.crossOrigin = "anonymous";
+          loadImg.src = gravatarUrl(email, NODE_RADIUS * 4); // 2x for retina
+          loadImg.onload = () => {
+            avatarCache.set(email, loadImg);
+            requestDrawRef.current();
+          };
+          loadImg.onerror = () => {
+            // Stays null — permanent fallback to initials
+          };
+          img = null;
+        }
+
+        if (img) {
+          // Gravatar — draw circular clipped image
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.drawImage(
+            img,
+            x - NODE_RADIUS,
+            y - NODE_RADIUS,
+            NODE_RADIUS * 2,
+            NODE_RADIUS * 2,
+          );
+          ctx.restore();
+        } else {
+          // Fallback — colored circle with author initial
+          ctx.beginPath();
+          ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+          ctx.save();
+          ctx.fillStyle = contrastText(color);
+          ctx.font = `bold ${Math.round(NODE_RADIUS * 1.2)}px "Geist", system-ui, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.fillText(
+            commit.author_name.charAt(0).toUpperCase(),
+            x,
+            y,
+          );
+          ctx.restore();
+        }
+
+        // Thin ring in branch color for visual separation from edges
+        ctx.beginPath();
+        ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
 
       // --- Labels (branches + tags) ---
       let labelX = textOffset;
@@ -512,6 +587,11 @@ export function CommitGraphCanvas({
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(draw);
   }, [draw]);
+  // Keep a stable ref so async avatar-load callbacks always reach the latest draw.
+  // Must be in an effect, not in render body, per react-hooks/refs rule.
+  useEffect(() => {
+    requestDrawRef.current = requestDraw;
+  }, [requestDraw]);
 
   const handleScroll = useCallback(() => requestDraw(), [requestDraw]);
 

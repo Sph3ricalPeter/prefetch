@@ -21,7 +21,6 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
     // active_lanes[i] = Some(commit_id) means lane i expects that commit next
     let mut active_lanes: Vec<Option<String>> = Vec::new();
     let mut edges: Vec<GraphEdge> = Vec::new();
-    let mut max_lane: usize = 0;
 
     #[allow(clippy::needless_range_loop)]
     for row in 0..commits.len() {
@@ -43,10 +42,15 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
             }
         };
 
-        commits[row].lane = assigned_lane;
-        if assigned_lane >= max_lane {
-            max_lane = assigned_lane + 1;
+        // Clean up zombie lanes: clear any other slots that also expected this commit.
+        // This prevents stale reservations from inflating the total lane count.
+        for slot in active_lanes.iter_mut() {
+            if slot.as_deref() == Some(commit_id.as_str()) {
+                *slot = None;
+            }
         }
+
+        commits[row].lane = assigned_lane;
 
         // Handle parents
         if let Some(first_parent) = parent_ids.first() {
@@ -64,13 +68,17 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
                 });
             }
 
-            // Additional parents (merge commits) get their own lanes
+            // Additional parents (merge commits) — reuse an existing lane
+            // if one already expects this parent, otherwise allocate new.
             for merge_parent in parent_ids.iter().skip(1) {
-                let merge_lane = allocate_free_lane(&mut active_lanes);
-                active_lanes[merge_lane] = Some(merge_parent.clone());
-                if merge_lane >= max_lane {
-                    max_lane = merge_lane + 1;
-                }
+                let merge_lane = match find_lane_for_commit(&active_lanes, merge_parent) {
+                    Some(existing) => existing,
+                    None => {
+                        let new_lane = allocate_free_lane(&mut active_lanes);
+                        active_lanes[new_lane] = Some(merge_parent.clone());
+                        new_lane
+                    }
+                };
 
                 if let Some(&parent_row) = id_to_row.get(merge_parent) {
                     edges.push(GraphEdge {
@@ -91,17 +99,21 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
     // Fix edge to_lane: when we created edges, we didn't know the parent's
     // assigned lane yet. Now that all lanes are assigned, correct the to_lane
     // to match the parent's actual lane.
+    // NOTE: We do NOT overwrite edge_type here. The type was set correctly
+    // at creation time: Straight = first-parent, Merge = second+ parent.
+    // Crossing lanes does not change the semantic edge type.
     for edge in &mut edges {
         if edge.to_row < commits.len() {
             edge.to_lane = commits[edge.to_row].lane;
-            // Update edge type based on whether lanes differ
-            if edge.from_lane != edge.to_lane {
-                edge.edge_type = EdgeType::Merge;
-            }
         }
     }
 
-    (edges, max_lane)
+    // Compute total lanes from actual commit assignments, not peak temporary
+    // allocations. Temporary merge lanes that got zombied/corrected away
+    // should not inflate the width.
+    let total_lanes = commits.iter().map(|c| c.lane + 1).max().unwrap_or(0);
+
+    (edges, total_lanes)
 }
 
 /// Find the lane that is expecting a specific commit id
@@ -233,9 +245,84 @@ mod tests {
 
         let (edges, total_lanes) = assign_lanes(&mut commits);
 
-        // D should be in some lane, B and C in potentially different lanes
-        assert!(total_lanes >= 2);
+        // Diamond merge should need exactly 2 lanes, not more
+        assert_eq!(total_lanes, 2);
         // Should have edges: D->B, D->C, B->A, C->A
         assert_eq!(edges.len(), 4);
+    }
+
+    #[test]
+    fn test_merge_parent_lane_reuse() {
+        // B is a merge commit whose second parent (C) is already expected
+        // by another lane (A's first-parent chain leads to C).
+        // Topological: B, A, C
+        let mut commits = vec![
+            make_commit("bbb", &["aaa", "ccc"]), // merge: first parent A, merge parent C
+            make_commit("aaa", &["ccc"]),        // first parent C
+            make_commit("ccc", &[]),             // root
+        ];
+
+        let (_edges, total_lanes) = assign_lanes(&mut commits);
+
+        // With lane reuse: B gets lane 0, A continues lane 0 toward C.
+        // Merge parent C from B finds C already expected in lane 0 → reuses it.
+        // No extra lane needed. Should be at most 1 lane.
+        assert!(
+            total_lanes <= 1,
+            "Merge parent lane reuse failed: expected <= 1 lanes, got {}",
+            total_lanes
+        );
+    }
+
+    #[test]
+    fn test_no_zombie_lanes() {
+        // Diamond: D merges B and C, both have parent A.
+        // After fix, no zombie lanes should persist.
+        let mut commits = vec![
+            make_commit("ddd", &["bbb", "ccc"]),
+            make_commit("bbb", &["aaa"]),
+            make_commit("ccc", &["aaa"]),
+            make_commit("aaa", &[]),
+        ];
+
+        let (_edges, total_lanes) = assign_lanes(&mut commits);
+        assert_eq!(
+            total_lanes, 2,
+            "Diamond merge should need exactly 2 lanes, got {}",
+            total_lanes
+        );
+    }
+
+    #[test]
+    fn test_edge_types_preserved() {
+        // Merge commit M with parents A (first) and B (second).
+        // Edge M->A should be Straight, M->B should be Merge,
+        // even if the edge crosses lanes after lane correction.
+        let mut commits = vec![
+            make_commit("mmm", &["aaa", "bbb"]),
+            make_commit("bbb", &["ccc"]),
+            make_commit("aaa", &["ccc"]),
+            make_commit("ccc", &[]),
+        ];
+
+        let (edges, _) = assign_lanes(&mut commits);
+
+        // Find edges from M (row 0)
+        let m_edges: Vec<_> = edges.iter().filter(|e| e.from_row == 0).collect();
+        assert_eq!(m_edges.len(), 2);
+
+        // Edge to first parent (aaa, row 2) should be Straight
+        let to_aaa = m_edges.iter().find(|e| e.to_row == 2).unwrap();
+        assert!(
+            matches!(to_aaa.edge_type, EdgeType::Straight),
+            "First-parent edge should be Straight"
+        );
+
+        // Edge to second parent (bbb, row 1) should be Merge
+        let to_bbb = m_edges.iter().find(|e| e.to_row == 1).unwrap();
+        assert!(
+            matches!(to_bbb.edge_type, EdgeType::Merge),
+            "Second-parent edge should be Merge"
+        );
     }
 }

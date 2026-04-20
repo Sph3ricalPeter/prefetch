@@ -24,7 +24,7 @@ export function DiffViewer({ diff }: DiffViewerProps) {
   return (
     <div className="overflow-auto text-xs font-mono leading-5">
       {diff.hunks.map((hunk, hi) => (
-        <div key={hi}>
+        <div key={hi} style={{ contentVisibility: "auto", containIntrinsicSize: `auto ${hunk.lines.length * 20}px` }}>
           {/* Hunk header */}
           <div className="sticky top-0 bg-secondary/80 px-3 py-1 text-muted-foreground backdrop-blur-sm">
             {hunk.header}

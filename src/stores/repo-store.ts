@@ -45,6 +45,9 @@ import {
   type RecentRepo,
 } from "@/lib/database";
 
+/** Files with more than this many changed lines show a "Load anyway" guard */
+const LARGE_DIFF_THRESHOLD = 10_000;
+
 interface RepoState {
   repoPath: string | null;
   repoName: string | null;
@@ -65,6 +68,15 @@ interface RepoState {
 
   // Active diff — displayed in center panel
   activeDiff: FileDiff | null;
+  /** Set when a large diff is deferred — fetch only when user clicks "Load anyway" */
+  largeDiffPending: {
+    path: string;
+    staged?: boolean;
+    commitId?: string;
+    stashIndex?: number;
+    totalChanges: number;
+    loading?: boolean;
+  } | null;
 
   // Historical commit files
   commitFiles: FileStatus[];
@@ -97,6 +109,8 @@ interface RepoState {
   selectCommitFile: (commitId: string, filePath: string) => Promise<void>;
   clearDiff: () => void;
   clearSelection: () => void;
+  /** Load a deferred large diff (user clicked "Load anyway") */
+  loadPendingDiff: () => Promise<void>;
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
@@ -145,6 +159,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   selectedFilePath: null,
   selectedFileStaged: false,
   activeDiff: null,
+  largeDiffPending: null,
   commitFiles: [],
   commitMessage: "",
   stashes: [],
@@ -301,7 +316,16 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   selectFile: async (path, staged) => {
-    set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null, commitFiles: [] });
+    set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null, commitFiles: [], largeDiffPending: null });
+
+    // Check if file is too large before fetching
+    const file = get().fileStatuses.find((f) => f.path === path && f.is_staged === staged);
+    const totalChanges = (file?.additions ?? 0) + (file?.deletions ?? 0);
+    if (totalChanges > LARGE_DIFF_THRESHOLD) {
+      set({ activeDiff: null, largeDiffPending: { path, staged, totalChanges } });
+      return;
+    }
+
     try {
       const diff = await getFileDiff(path, staged);
       set({ activeDiff: diff });
@@ -311,7 +335,16 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   selectCommitFile: async (commitId, filePath) => {
-    set({ selectedFilePath: filePath });
+    set({ selectedFilePath: filePath, largeDiffPending: null });
+
+    // Check if file is too large before fetching
+    const file = get().commitFiles.find((f) => f.path === filePath);
+    const totalChanges = (file?.additions ?? 0) + (file?.deletions ?? 0);
+    if (totalChanges > LARGE_DIFF_THRESHOLD) {
+      set({ activeDiff: null, largeDiffPending: { path: filePath, commitId, totalChanges } });
+      return;
+    }
+
     try {
       const diff = await getCommitFileDiff(commitId, filePath);
       set({ activeDiff: diff });
@@ -320,7 +353,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
-  clearDiff: () => set({ activeDiff: null, selectedFilePath: null }),
+  clearDiff: () => set({ activeDiff: null, largeDiffPending: null, selectedFilePath: null }),
 
   clearSelection: () =>
     set({
@@ -328,8 +361,30 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       selectedStashIndex: null,
       selectedFilePath: null,
       activeDiff: null,
+      largeDiffPending: null,
       commitFiles: [],
     }),
+
+  loadPendingDiff: async () => {
+    const pending = get().largeDiffPending;
+    if (!pending) return;
+    // Mark as loading — keep the guard visible with a spinner
+    set({ largeDiffPending: { ...pending, loading: true } });
+    try {
+      let diff: FileDiff;
+      if (pending.stashIndex !== undefined) {
+        diff = await getStashFileDiff(pending.stashIndex, pending.path);
+      } else if (pending.commitId) {
+        diff = await getCommitFileDiff(pending.commitId, pending.path);
+      } else {
+        diff = await getFileDiff(pending.path, pending.staged ?? false);
+      }
+      set({ activeDiff: diff, largeDiffPending: null });
+    } catch (e) {
+      set({ largeDiffPending: null });
+      toast.error(String(e));
+    }
+  },
 
   stage: async (paths) => {
     try {
@@ -403,7 +458,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   selectStashFile: async (index, filePath) => {
-    set({ selectedFilePath: filePath });
+    set({ selectedFilePath: filePath, largeDiffPending: null });
+
+    const file = get().commitFiles.find((f) => f.path === filePath);
+    const totalChanges = (file?.additions ?? 0) + (file?.deletions ?? 0);
+    if (totalChanges > LARGE_DIFF_THRESHOLD) {
+      set({ activeDiff: null, largeDiffPending: { path: filePath, stashIndex: index, totalChanges } });
+      return;
+    }
+
     try {
       const diff = await getStashFileDiff(index, filePath);
       set({ activeDiff: diff });

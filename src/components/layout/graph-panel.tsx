@@ -34,10 +34,12 @@ export function GraphPanel() {
   const tags = useRepoStore((s) => s.tags);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
   const headCommitId = useRepoStore((s) => s.headCommitId);
+  const largeDiffPending = useRepoStore((s) => s.largeDiffPending);
 
   const openRepository = useRepoStore((s) => s.openRepository);
   const selectCommit = useRepoStore((s) => s.selectCommit);
   const clearDiff = useRepoStore((s) => s.clearDiff);
+  const loadPendingDiff = useRepoStore((s) => s.loadPendingDiff);
   const clearSelection = useRepoStore((s) => s.clearSelection);
   const loadStatus = useRepoStore((s) => s.loadStatus);
   const fetchAction = useRepoStore((s) => s.fetch);
@@ -129,12 +131,13 @@ export function GraphPanel() {
   }
 
   const showDiff = activeDiff !== null;
+  const showLargeDiffGuard = largeDiffPending !== null;
 
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header bar with toolbar */}
       <div className="flex h-10 shrink-0 items-center border-b border-border px-4">
-        {showDiff ? (
+        {showDiff || showLargeDiffGuard ? (
           <>
             <button
               onClick={clearDiff}
@@ -252,9 +255,32 @@ export function GraphPanel() {
         </div>
       </div>
 
-      {/* Center content: graph or diff */}
+      {/* Center content: graph, diff, or large diff guard */}
       <div className="flex-1 min-h-0">
-        {showDiff ? (
+        {showLargeDiffGuard ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3">
+            {largeDiffPending.loading ? (
+              <>
+                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
+                <p className="text-sm text-muted-foreground">
+                  Loading {largeDiffPending.totalChanges.toLocaleString()} lines...
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Large diff — {largeDiffPending.totalChanges.toLocaleString()} changed lines
+                </p>
+                <button
+                  onClick={loadPendingDiff}
+                  className="rounded-md bg-secondary px-4 py-1.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent"
+                >
+                  Load anyway
+                </button>
+              </>
+            )}
+          </div>
+        ) : showDiff ? (
           <div className="h-full overflow-auto">
             <DiffViewer diff={activeDiff} />
           </div>
