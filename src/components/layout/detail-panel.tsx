@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Archive, ChevronDown, ChevronRight, Tag } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, Tag, Trash2 } from "lucide-react";
 import { FileIcon } from "@/components/ui/file-icon";
 import {
   Tooltip,
@@ -29,6 +29,9 @@ export function DetailPanel() {
   const tags = useRepoStore((s) => s.tags);
   const selectCommitFile = useRepoStore((s) => s.selectCommitFile);
   const selectStashFile = useRepoStore((s) => s.selectStashFile);
+  const discardAll = useRepoStore((s) => s.discardAll);
+
+  const [showDiscardAll, setShowDiscardAll] = useState(false);
 
   // Mode: Stash selected
   if (selectedStashIndex !== null) {
@@ -63,25 +66,68 @@ export function DetailPanel() {
 
   if (fileStatuses.length > 0) {
     return (
-      <div className="flex h-full flex-col bg-card">
-        <div className="flex h-10 shrink-0 items-center border-b border-border px-4">
-          <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            Changes
-          </h2>
-          <span className="ml-2 text-xs text-muted-foreground/50">
-            {fileStatuses.length}
-          </span>
+      <div className="relative flex h-full flex-col bg-sidebar-background">
+        <div className="shrink-0">
+          <div className="flex h-10 items-center px-4">
+            <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Changes
+            </h2>
+            <span className="ml-2 text-xs text-muted-foreground/50">
+              {fileStatuses.length}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowDiscardAll(true)}
+                  className="ml-auto rounded p-1 text-muted-foreground/50 hover:bg-destructive/20 hover:text-red-400 transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Discard all changes</TooltipContent>
+            </Tooltip>
+          </div>
+          <div className="mx-3 my-1 border-t border-border" />
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
           <FileList />
         </div>
         <CommitBox />
+
+        {/* Discard all confirmation */}
+        {showDiscardAll && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
+              <p className="text-sm text-foreground mb-1">Discard all changes?</p>
+              <p className="text-xs text-muted-foreground mb-4">
+                This will revert all {fileStatuses.length} file{fileStatuses.length !== 1 ? "s" : ""} to their last committed state. This cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowDiscardAll(false)}
+                  className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    discardAll();
+                    setShowDiscardAll(false);
+                  }}
+                  className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                >
+                  Discard All
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center bg-card p-4">
+    <div className="flex h-full flex-col items-center justify-center bg-sidebar-background p-4">
       <p className="text-sm text-muted-foreground">
         Select a commit to view details
       </p>
@@ -125,7 +171,7 @@ function CommitDetailView({
   });
 
   return (
-    <div className="flex h-full flex-col bg-card overflow-y-auto">
+    <div className="flex h-full flex-col bg-sidebar-background overflow-y-auto">
       {/* Commit section */}
       <CollapsibleSection
         label="Commit"
@@ -154,7 +200,7 @@ function CommitDetailView({
 
           {/* Body (description) — vertically resizable */}
           {commit.body && (
-            <div className="rounded-md bg-secondary/50 px-3 py-2 mb-2 min-h-10 h-20 resize-y overflow-auto">
+            <div className="rounded-md bg-background border border-border px-3 py-2 mb-2 min-h-10 h-20 resize-y overflow-auto">
               <p className="text-xs text-muted-foreground whitespace-pre-wrap">
                 {commit.body}
               </p>
@@ -260,7 +306,7 @@ function StashDetailView({
   const [filesOpen, setFilesOpen] = useState(true);
 
   return (
-    <div className="flex h-full flex-col bg-card overflow-y-auto">
+    <div className="flex h-full flex-col bg-sidebar-background overflow-y-auto">
       {/* Stash info */}
       <CollapsibleSection
         label="Stash"
@@ -315,7 +361,7 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border-b border-border">
+    <div>
       <button
         onClick={onToggle}
         className="flex w-full items-center gap-1.5 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
@@ -328,6 +374,7 @@ function CollapsibleSection({
         {label}
       </button>
       {isOpen && children}
+      <div className="mx-3 my-1 border-t border-border" />
     </div>
   );
 }

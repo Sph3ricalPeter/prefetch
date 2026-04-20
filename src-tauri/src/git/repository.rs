@@ -4,7 +4,7 @@ use crate::git::types::{
     BranchInfo, CoAuthor, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
     StashInfo, TagInfo,
 };
-use git2::{BranchType, Repository, Sort, Status};
+use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
@@ -335,9 +335,17 @@ fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
 }
 
 /// Get the working tree status (staged + unstaged + untracked files).
+///
+/// Uses `git status --porcelain=v1` CLI instead of git2-rs to avoid
+/// false positives from CRLF/autocrlf handling on Windows.
 pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
-    let repo = Repository::open(path)?;
-    let statuses = repo.statuses(None)?;
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "-unormal"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git status: {e}")))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
 
     // Get line stats for staged and unstaged changes
     let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
@@ -345,44 +353,42 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
 
     let mut result: Vec<FileStatus> = Vec::new();
 
-    for entry in statuses.iter() {
-        let file_path = entry.path().unwrap_or("").to_string();
-        let s = entry.status();
+    // Porcelain v1 format: "XY filename" where X=index status, Y=worktree status
+    for line in text.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let index_status = line.as_bytes()[0] as char;
+        let wt_status = line.as_bytes()[1] as char;
+        let file_path = line[3..].to_string();
 
-        // Staged changes (index vs HEAD)
-        if s.intersects(
-            Status::INDEX_NEW
-                | Status::INDEX_MODIFIED
-                | Status::INDEX_DELETED
-                | Status::INDEX_RENAMED,
-        ) {
+        // Staged changes (index column)
+        if index_status != ' ' && index_status != '?' {
             let (additions, deletions) = staged_stats
                 .get(&file_path)
                 .map(|&(a, d)| (Some(a), Some(d)))
                 .unwrap_or((None, None));
             result.push(FileStatus {
                 path: file_path.clone(),
-                status_type: status_type_from_index(s),
+                status_type: porcelain_to_status_type(index_status),
                 is_staged: true,
                 additions,
                 deletions,
             });
         }
 
-        // Unstaged changes (workdir vs index) or untracked
-        if s.intersects(
-            Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_NEW,
-        ) {
+        // Unstaged / untracked changes (worktree column)
+        if wt_status != ' ' {
             let (additions, deletions) = unstaged_stats
                 .get(&file_path)
                 .map(|&(a, d)| (Some(a), Some(d)))
                 .unwrap_or((None, None));
             result.push(FileStatus {
                 path: file_path,
-                status_type: if s.contains(Status::WT_NEW) {
+                status_type: if index_status == '?' {
                     "untracked".to_string()
                 } else {
-                    status_type_from_workdir(s)
+                    porcelain_to_status_type(wt_status)
                 },
                 is_staged: false,
                 additions,
@@ -395,32 +401,15 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
     Ok(result)
 }
 
-fn status_type_from_index(s: Status) -> String {
-    if s.contains(Status::INDEX_NEW) {
-        "added"
-    } else if s.contains(Status::INDEX_MODIFIED) {
-        "modified"
-    } else if s.contains(Status::INDEX_DELETED) {
-        "deleted"
-    } else if s.contains(Status::INDEX_RENAMED) {
-        "renamed"
-    } else {
-        "modified"
-    }
-    .to_string()
-}
-
-fn status_type_from_workdir(s: Status) -> String {
-    if s.contains(Status::WT_MODIFIED) {
-        "modified"
-    } else if s.contains(Status::WT_DELETED) {
-        "deleted"
-    } else if s.contains(Status::WT_RENAMED) {
-        "renamed"
-    } else if s.contains(Status::WT_NEW) {
-        "untracked"
-    } else {
-        "modified"
+fn porcelain_to_status_type(ch: char) -> String {
+    match ch {
+        'A' => "added",
+        'M' => "modified",
+        'D' => "deleted",
+        'R' => "renamed",
+        'C' => "modified", // copied
+        '?' => "untracked",
+        _ => "modified",
     }
     .to_string()
 }
@@ -549,6 +538,40 @@ fn parse_hunk_header(line: &str) -> (u32, u32, u32, u32) {
     }
 
     (old_start, old_lines, new_start, new_lines)
+}
+
+/// Discard changes in specific files (revert to HEAD state).
+/// Handles tracked modified/deleted files via `git checkout`, and
+/// untracked files via `git clean`.
+pub fn discard_files(path: &str, files: &[String]) -> Result<(), AppError> {
+    // Unstage any staged changes first
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    let mut reset_args = vec!["reset", "HEAD", "--"];
+    reset_args.extend(file_refs.clone());
+    let _ = run_git(path, &reset_args);
+
+    // Restore tracked files to HEAD state
+    let mut restore_args = vec!["checkout", "--"];
+    restore_args.extend(file_refs.clone());
+    let _ = run_git(path, &restore_args);
+
+    // Clean untracked files
+    let mut clean_args = vec!["clean", "-f", "--"];
+    clean_args.extend(file_refs);
+    let _ = run_git(path, &clean_args);
+
+    Ok(())
+}
+
+/// Discard ALL changes — revert entire working tree to HEAD.
+pub fn discard_all(path: &str) -> Result<(), AppError> {
+    // Unstage everything
+    let _ = run_git(path, &["reset", "HEAD"]);
+    // Revert all tracked files
+    run_git(path, &["checkout", "--", "."])?;
+    // Remove all untracked files
+    run_git(path, &["clean", "-fd"])?;
+    Ok(())
 }
 
 /// Stage files using git CLI.

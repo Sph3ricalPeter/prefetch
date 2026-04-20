@@ -39,6 +39,8 @@ pub fn run() {
             commands::repo::push_repo,
             commands::repo::get_file_status,
             commands::repo::get_file_diff,
+            commands::repo::discard_files,
+            commands::repo::discard_all_changes,
             commands::repo::stage_files,
             commands::repo::unstage_files,
             commands::repo::create_commit,

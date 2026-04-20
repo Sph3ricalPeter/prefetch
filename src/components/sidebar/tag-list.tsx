@@ -14,8 +14,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 
-export function TagList() {
-  const tags = useRepoStore((s) => s.tags);
+export function TagList({ filter = "" }: { filter?: string }) {
+  const allTags = useRepoStore((s) => s.tags);
   const selectedCommitId = useRepoStore((s) => s.selectedCommitId);
   const createNewTag = useRepoStore((s) => s.createNewTag);
   const deleteExistingTag = useRepoStore((s) => s.deleteExistingTag);
@@ -25,6 +25,12 @@ export function TagList() {
   const [isCreating, setIsCreating] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [newTagMessage, setNewTagMessage] = useState("");
+
+  const tags = filter
+    ? allTags.filter((t) =>
+        t.name.toLowerCase().includes(filter.toLowerCase()),
+      )
+    : allTags;
 
   const handleCreate = async () => {
     if (!newTagName.trim()) return;

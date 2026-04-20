@@ -138,7 +138,8 @@ export function GraphPanel() {
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header bar with toolbar */}
-      <div className="flex h-10 shrink-0 items-center border-b border-border px-4">
+      <div className="shrink-0">
+      <div className="flex h-10 items-center px-4">
         {showDiff || showLargeDiffGuard || (diffLoading && selectedFilePath) ? (
           <>
             <button
@@ -247,7 +248,7 @@ export function GraphPanel() {
                 setNewBranchName("");
               }}
               autoFocus
-              className="w-32 rounded bg-secondary px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
+              className="w-32 rounded bg-background border border-border px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
             />
           ) : (
             <ToolbarButton
@@ -258,6 +259,8 @@ export function GraphPanel() {
             />
           )}
         </div>
+      </div>
+      <div className="mx-3 my-1 border-t border-border" />
       </div>
 
       {/* Center content: graph, diff, or large diff guard */}

@@ -21,6 +21,8 @@ import {
   pushRepo,
   getFileStatus,
   getFileDiff,
+  discardFiles as discardFilesCmd,
+  discardAllChanges as discardAllCmd,
   stageFiles as stageFilesCmd,
   unstageFiles as unstageFilesCmd,
   createCommit,
@@ -84,6 +86,7 @@ interface RepoState {
   commitFiles: FileStatus[];
 
   commitMessage: string;
+  commitDescription: string;
 
   // Stash
   stashes: StashInfo[];
@@ -115,8 +118,11 @@ interface RepoState {
   loadPendingDiff: () => Promise<void>;
   stage: (paths: string[]) => Promise<void>;
   unstage: (paths: string[]) => Promise<void>;
+  discard: (paths: string[]) => Promise<void>;
+  discardAll: () => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
   setCommitMessage: (msg: string) => void;
+  setCommitDescription: (desc: string) => void;
   loadStashes: () => Promise<void>;
   selectStash: (index: number) => Promise<void>;
   selectStashFile: (index: number, filePath: string) => Promise<void>;
@@ -165,6 +171,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   largeDiffPending: null,
   commitFiles: [],
   commitMessage: "",
+  commitDescription: "",
   stashes: [],
   selectedStashIndex: null,
   tags: [],
@@ -173,7 +180,29 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   openRepository: async (path: string) => {
     // Skip if this repo is already open
     if (get().repoPath === path && get().commits.length > 0) return;
-    set({ isLoading: true, error: null });
+    // Clear all previous repo state before loading new one
+    set({
+      isLoading: true,
+      error: null,
+      commits: [],
+      edges: [],
+      totalLanes: 0,
+      headCommitId: null,
+      branches: [],
+      currentBranch: null,
+      fileStatuses: [],
+      stashes: [],
+      tags: [],
+      selectedCommitId: null,
+      selectedStashIndex: null,
+      selectedFilePath: null,
+      activeDiff: null,
+      largeDiffPending: null,
+      diffLoading: false,
+      commitFiles: [],
+      commitMessage: "",
+      commitDescription: "",
+    });
     try {
       const name = await openRepo(path);
       set({ repoPath: path, repoName: name });
@@ -422,20 +451,49 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  discard: async (paths) => {
+    try {
+      await discardFilesCmd(paths);
+      await get().loadStatus();
+      // Clear diff if the discarded file was being viewed
+      const { selectedFilePath } = get();
+      if (selectedFilePath && paths.includes(selectedFilePath)) {
+        set({ activeDiff: null, selectedFilePath: null });
+      }
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  discardAll: async () => {
+    try {
+      await discardAllCmd();
+      await get().loadStatus();
+      set({ activeDiff: null, selectedFilePath: null });
+      toast.success("All changes discarded");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
   commit: async (message, amend = false) => {
     if (!message.trim()) {
       toast.error("Commit message cannot be empty");
       return;
     }
+    // Combine message + description (separated by blank line, git convention)
+    const description = get().commitDescription.trim();
+    const fullMessage = description ? `${message.trim()}\n\n${description}` : message.trim();
     set({ isLoading: true });
     try {
-      await createCommit(message, amend);
+      await createCommit(fullMessage, amend);
       await reloadRepoData(set);
       const statuses = await getFileStatus();
       set({
         isLoading: false,
         fileStatuses: statuses,
         commitMessage: "",
+        commitDescription: "",
         selectedFilePath: null,
         activeDiff: null,
       });
@@ -447,6 +505,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   setCommitMessage: (msg) => set({ commitMessage: msg }),
+  setCommitDescription: (desc) => set({ commitDescription: desc }),
 
   selectStash: async (index) => {
     set({

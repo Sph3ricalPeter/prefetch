@@ -51,6 +51,14 @@ export async function getFileDiff(
   return invoke<FileDiff>("get_file_diff", { filePath, staged });
 }
 
+export async function discardFiles(paths: string[]): Promise<void> {
+  return invoke<void>("discard_files", { paths });
+}
+
+export async function discardAllChanges(): Promise<void> {
+  return invoke<void>("discard_all_changes");
+}
+
 export async function stageFiles(paths: string[]): Promise<void> {
   return invoke<void>("stage_files", { paths });
 }

@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 
-export function StashList() {
+export function StashList({ filter = "" }: { filter?: string }) {
   const stashes = useRepoStore((s) => s.stashes);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
   const selectStash = useRepoStore((s) => s.selectStash);
@@ -21,6 +21,12 @@ export function StashList() {
   const dropStash = useRepoStore((s) => s.dropStash);
   const isLoading = useRepoStore((s) => s.isLoading);
   const [isOpen, setIsOpen] = useState(true);
+
+  const filtered = filter
+    ? stashes.filter((s) =>
+        s.message.toLowerCase().includes(filter.toLowerCase()),
+      )
+    : stashes;
 
   return (
     <div>
@@ -36,18 +42,18 @@ export function StashList() {
             <ChevronRight className="h-3 w-3" />
           )}
           Stash
-          {stashes.length > 0 && (
+          {filtered.length > 0 && (
             <span className="ml-1 normal-case tracking-normal text-muted-foreground/50">
-              {stashes.length}
+              {filtered.length}
             </span>
           )}
         </button>
       </div>
 
       {/* Stash entries */}
-      {isOpen && stashes.length > 0 && (
+      {isOpen && filtered.length > 0 && (
         <div>
-          {stashes.map((stash) => (
+          {filtered.map((stash) => (
             <div
               key={stash.index}
               onClick={() => selectStash(stash.index)}

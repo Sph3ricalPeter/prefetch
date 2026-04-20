@@ -192,6 +192,34 @@ pub fn get_file_diff(
 }
 
 #[tauri::command]
+pub fn discard_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::discard_files(path, &paths)
+}
+
+#[tauri::command]
+pub fn discard_all_changes(state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::discard_all(path)
+}
+
+#[tauri::command]
 pub fn stage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo_path = state
         .repo_path

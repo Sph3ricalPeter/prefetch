@@ -3,19 +3,27 @@ import {
   ChevronRight,
   Plus,
   Minus,
+  Trash2,
 } from "lucide-react";
 import { useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 
 export function FileList() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
   const stage = useRepoStore((s) => s.stage);
   const unstage = useRepoStore((s) => s.unstage);
+  const discard = useRepoStore((s) => s.discard);
   const selectFile = useRepoStore((s) => s.selectFile);
   const isLoading = useRepoStore((s) => s.isLoading);
+  const [confirmDiscard, setConfirmDiscard] = useState<string[] | null>(null);
   const [stagedOpen, setStagedOpen] = useState(true);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
 
@@ -32,6 +40,35 @@ export function FileList() {
 
   return (
     <div className="flex flex-col overflow-y-auto">
+      {/* Unstaged section */}
+      <FileSection
+        label="Unstaged"
+        count={unstaged.length}
+        isOpen={unstagedOpen}
+        onToggle={() => setUnstagedOpen(!unstagedOpen)}
+        actionLabel="Stage All"
+        onAction={
+          unstaged.length > 0
+            ? () => stage(unstaged.map((f) => f.path))
+            : undefined
+        }
+        actionDisabled={isLoading}
+      >
+        {unstaged.map((file) => (
+          <FileRow
+            key={`unstaged-${file.path}`}
+            file={file}
+            isSelected={selectedFilePath === file.path}
+            onSelect={() => selectFile(file.path, false)}
+            onToggle={() => stage([file.path])}
+            toggleIcon={<Plus className="h-3 w-3" />}
+            toggleTitle="Stage"
+            onDiscard={() => setConfirmDiscard([file.path])}
+            disabled={isLoading}
+          />
+        ))}
+      </FileSection>
+
       {/* Staged section */}
       <FileSection
         label="Staged"
@@ -55,38 +92,23 @@ export function FileList() {
             onToggle={() => unstage([file.path])}
             toggleIcon={<Minus className="h-3 w-3" />}
             toggleTitle="Unstage"
+            onDiscard={() => setConfirmDiscard([file.path])}
             disabled={isLoading}
           />
         ))}
       </FileSection>
 
-      {/* Unstaged section */}
-      <FileSection
-        label="Changes"
-        count={unstaged.length}
-        isOpen={unstagedOpen}
-        onToggle={() => setUnstagedOpen(!unstagedOpen)}
-        actionLabel="Stage All"
-        onAction={
-          unstaged.length > 0
-            ? () => stage(unstaged.map((f) => f.path))
-            : undefined
-        }
-        actionDisabled={isLoading}
-      >
-        {unstaged.map((file) => (
-          <FileRow
-            key={`unstaged-${file.path}`}
-            file={file}
-            isSelected={selectedFilePath === file.path}
-            onSelect={() => selectFile(file.path, false)}
-            onToggle={() => stage([file.path])}
-            toggleIcon={<Plus className="h-3 w-3" />}
-            toggleTitle="Stage"
-            disabled={isLoading}
-          />
-        ))}
-      </FileSection>
+      {/* Discard confirmation dialog */}
+      {confirmDiscard && (
+        <DiscardDialog
+          paths={confirmDiscard}
+          onConfirm={() => {
+            discard(confirmDiscard);
+            setConfirmDiscard(null);
+          }}
+          onCancel={() => setConfirmDiscard(null)}
+        />
+      )}
     </div>
   );
 }
@@ -149,6 +171,7 @@ function FileRow({
   onToggle,
   toggleIcon,
   toggleTitle,
+  onDiscard,
   disabled,
 }: {
   file: FileStatus;
@@ -157,6 +180,7 @@ function FileRow({
   onToggle: () => void;
   toggleIcon: React.ReactNode;
   toggleTitle: string;
+  onDiscard: () => void;
   disabled: boolean;
 }) {
   const statusColor = statusTypeColor(file.status_type);
@@ -195,17 +219,36 @@ function FileRow({
           <span className="text-xs text-red-400">-{file.deletions}</span>
         )}
       </span>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        disabled={disabled}
-        title={toggleTitle}
-        className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
-      >
-        {toggleIcon}
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDiscard();
+            }}
+            disabled={disabled}
+            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-red-400 transition-all disabled:opacity-40"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Discard changes</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+            disabled={disabled}
+            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
+          >
+            {toggleIcon}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{toggleTitle}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
@@ -241,4 +284,43 @@ function statusTypeLabel(type: string): string {
     default:
       return "?";
   }
+}
+
+function DiscardDialog({
+  paths,
+  onConfirm,
+  onCancel,
+}: {
+  paths: string[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const fileName = paths.length === 1 ? paths[0].split("/").pop() : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
+        <p className="text-sm text-foreground mb-1">Discard changes?</p>
+        <p className="text-xs text-muted-foreground mb-4">
+          {fileName
+            ? `Revert "${fileName}" to its last committed state. This cannot be undone.`
+            : `Revert ${paths.length} files to their last committed state. This cannot be undone.`}
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+          >
+            Discard
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

@@ -3,12 +3,11 @@ import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
 import type { BranchInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 
-export function BranchList() {
+export function BranchList({ filter = "" }: { filter?: string }) {
   const branches = useRepoStore((s) => s.branches);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const checkout = useRepoStore((s) => s.checkout);
   const isLoading = useRepoStore((s) => s.isLoading);
-  const [filter, setFilter] = useState("");
   const [localOpen, setLocalOpen] = useState(true);
   const [remoteOpen, setRemoteOpen] = useState(false);
 
@@ -27,20 +26,8 @@ export function BranchList() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Search filter */}
-      <div className="px-3 pb-2">
-        <input
-          type="text"
-          placeholder="Filter branches..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="w-full rounded bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
-        />
-      </div>
-
-      {/* Branch sections */}
-      <div className="flex-1 overflow-y-auto">
+    <div className="flex flex-col">
+      <div>
         {/* Local branches */}
         <BranchSection
           label="Local"
@@ -127,9 +114,7 @@ function BranchRow({
   onClick: () => void;
 }) {
   // Strip "origin/" prefix for display on remote branches
-  const displayName = branch.is_remote
-    ? branch.name.replace(/^origin\//, "")
-    : branch.name;
+  const displayName = branch.name;
 
   return (
     <button
