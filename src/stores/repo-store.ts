@@ -9,12 +9,14 @@ import type {
   GraphEdge,
   StashInfo,
   TagInfo,
+  UndoAction,
 } from "@/types/git";
 import {
   openRepo,
   getCommits,
   getBranches,
   checkoutBranch,
+  resetBranchToRemote,
   createBranchCmd,
   fetchRepo,
   pullRepo,
@@ -38,6 +40,8 @@ import {
   createTagCmd,
   deleteTagCmd,
   pushTagCmd,
+  getUndoAction,
+  undoLast,
 } from "@/lib/commands";
 import {
   addRecentRepo,
@@ -95,6 +99,17 @@ interface RepoState {
   // Tags
   tags: TagInfo[];
 
+  // Remote checkout dialog
+  remoteCheckoutPending: {
+    localName: string;
+    remoteName: string;
+  } | null;
+
+  // Undo
+  undoInfo: UndoAction | null;
+  /** Timestamp of last undo — suppresses undo refresh for a few seconds to prevent undo-of-undo loop */
+  lastUndoTime: number;
+
   // Recent repos
   recentRepos: RecentRepo[];
 
@@ -105,6 +120,8 @@ interface RepoState {
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
+  resetLocalToRemote: () => Promise<void>;
+  cancelRemoteCheckout: () => void;
   createBranch: (name: string) => Promise<void>;
   fetch: () => Promise<void>;
   pull: () => Promise<void>;
@@ -133,6 +150,9 @@ interface RepoState {
   createNewTag: (name: string, commit?: string, message?: string) => Promise<void>;
   deleteExistingTag: (name: string) => Promise<void>;
   pushExistingTag: (name: string) => Promise<void>;
+
+  loadUndoAction: () => Promise<void>;
+  undo: () => Promise<void>;
 
   /** Reload all repo data — called by file watcher events */
   reloadAll: () => Promise<void>;
@@ -175,6 +195,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   stashes: [],
   selectedStashIndex: null,
   tags: [],
+  remoteCheckoutPending: null,
+  undoInfo: null,
+  lastUndoTime: 0,
   recentRepos: [],
 
   openRepository: async (path: string) => {
@@ -207,12 +230,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const name = await openRepo(path);
       set({ repoPath: path, repoName: name });
       await reloadRepoData(set);
-      const [statuses, stashList, tagList] = await Promise.all([
+      const [statuses, stashList, tagList, undoAction] = await Promise.all([
         getFileStatus(),
         getStashes(),
         getTags(),
+        getUndoAction(),
       ]);
-      set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList });
+      set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList, undoInfo: undoAction });
       // Track in recent repos + save as last opened (fire-and-forget)
       Promise.all([
         addRecentRepo(path, name).then(() => get().loadRecentRepos()),
@@ -245,8 +269,38 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   checkout: async (name: string) => {
-    const { currentBranch } = get();
+    const { currentBranch, branches } = get();
     if (name === currentBranch) return;
+
+    // Smart remote branch handling: strip origin/ and check for local counterpart
+    const remotePrefix = name.match(/^([^/]+)\//)?.[0];
+    const isRemote = branches.some((b) => b.is_remote && b.name === name);
+
+    if (isRemote && remotePrefix) {
+      const localName = name.slice(remotePrefix.length);
+      const localExists = branches.some((b) => !b.is_remote && b.name === localName);
+
+      if (localExists) {
+        // Local branch exists — show dialog to choose between switch or reset
+        set({ remoteCheckoutPending: { localName, remoteName: name } });
+        return;
+      }
+      // No local branch — checkout by local name, git will auto-create tracking branch
+      set({ isLoading: true, error: null });
+      try {
+        await checkoutBranch(localName);
+        await reloadRepoData(set);
+        const statuses = await getFileStatus();
+        set({ isLoading: false, fileStatuses: statuses });
+        toast.success(`Checked out ${localName} (tracking ${name})`);
+      } catch (e) {
+        set({ isLoading: false });
+        toast.error(String(e));
+      }
+      return;
+    }
+
+    // Local branch or tag — normal checkout
     set({ isLoading: true, error: null });
     try {
       await checkoutBranch(name);
@@ -259,6 +313,24 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.error(String(e));
     }
   },
+
+  resetLocalToRemote: async () => {
+    const pending = get().remoteCheckoutPending;
+    if (!pending) return;
+    set({ remoteCheckoutPending: null, isLoading: true, error: null });
+    try {
+      await resetBranchToRemote(pending.localName, pending.remoteName);
+      await reloadRepoData(set);
+      const statuses = await getFileStatus();
+      set({ isLoading: false, fileStatuses: statuses });
+      toast.success(`Reset ${pending.localName} to ${pending.remoteName}`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  cancelRemoteCheckout: () => set({ remoteCheckoutPending: null }),
 
   createBranch: async (name: string) => {
     try {
@@ -636,6 +708,37 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  loadUndoAction: async () => {
+    if (!get().repoPath) return;
+    try {
+      const action = await getUndoAction();
+      set({ undoInfo: action });
+    } catch {
+      set({ undoInfo: null });
+    }
+  },
+
+  undo: async () => {
+    const info = get().undoInfo;
+    if (!info?.can_undo) return;
+    // Disable undo immediately and record timestamp — the undo itself creates
+    // a reflog entry, so we suppress undo refresh for a few seconds to prevent
+    // an undo-of-undo loop. A new real action will re-enable it.
+    set({ undoInfo: null, lastUndoTime: Date.now() });
+    try {
+      await undoLast();
+      await reloadRepoData(set);
+      const [statuses, stashList] = await Promise.all([
+        getFileStatus(),
+        getStashes(),
+      ]);
+      set({ fileStatuses: statuses, stashes: stashList });
+      toast.success(info.description);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
   loadRecentRepos: async () => {
     try {
       const repos = await getRecentRepos();
@@ -659,12 +762,19 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     if (!get().repoPath) return;
     try {
       await reloadRepoData(set);
-      const [statuses, stashList, tagList] = await Promise.all([
+      // Skip undo refresh for 3s after an undo to prevent undo-of-undo loop
+      const suppressUndo = Date.now() - get().lastUndoTime < 3000;
+      const [statuses, stashList, tagList, undoAction] = await Promise.all([
         getFileStatus(),
         getStashes(),
         getTags(),
+        suppressUndo ? Promise.resolve(null) : getUndoAction(),
       ]);
-      set({ fileStatuses: statuses, stashes: stashList, tags: tagList });
+      const update: Partial<RepoState> = { fileStatuses: statuses, stashes: stashList, tags: tagList };
+      if (undoAction !== null) {
+        update.undoInfo = undoAction;
+      }
+      set(update);
     } catch {
       // Silently handle — these are background refreshes from the file watcher
     }

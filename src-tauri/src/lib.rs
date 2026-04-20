@@ -33,6 +33,7 @@ pub fn run() {
             commands::repo::get_commits,
             commands::repo::get_branches,
             commands::repo::checkout_branch,
+            commands::repo::reset_branch_to_remote,
             commands::repo::create_branch,
             commands::repo::fetch_repo,
             commands::repo::pull_repo,
@@ -56,6 +57,8 @@ pub fn run() {
             commands::repo::create_tag,
             commands::repo::delete_tag,
             commands::repo::push_tag,
+            commands::repo::get_undo_action,
+            commands::repo::undo_last,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

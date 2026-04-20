@@ -5,6 +5,7 @@ import {
   ArrowUpFromLine,
   RefreshCw,
   ArrowLeft,
+  Undo2,
   Archive,
   ArchiveRestore,
   FileEdit,
@@ -50,9 +51,31 @@ export function GraphPanel() {
   const popStash = useRepoStore((s) => s.popStash);
   const createBranch = useRepoStore((s) => s.createBranch);
   const checkout = useRepoStore((s) => s.checkout);
+  const undoInfo = useRepoStore((s) => s.undoInfo);
+  const undoAction = useRepoStore((s) => s.undo);
+  const remoteCheckoutPending = useRepoStore((s) => s.remoteCheckoutPending);
+  const resetLocalToRemote = useRepoStore((s) => s.resetLocalToRemote);
+  const cancelRemoteCheckout = useRepoStore((s) => s.cancelRemoteCheckout);
 
   const [showBranchInput, setShowBranchInput] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
+
+  // Ctrl+Z undo shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        // Don't intercept if focused on an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        if (undoInfo?.can_undo) {
+          e.preventDefault();
+          undoAction();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undoInfo, undoAction]);
 
 
   const handleOpenRepo = useCallback(async () => {
@@ -136,7 +159,7 @@ export function GraphPanel() {
   const showLargeDiffGuard = largeDiffPending !== null;
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="relative flex h-full flex-col bg-background">
       {/* Header bar with toolbar */}
       <div className="shrink-0">
       <div className="flex h-10 items-center px-4">
@@ -185,6 +208,19 @@ export function GraphPanel() {
                   {fileStatuses.length}
                 </span>
               </button>
+              <div className="mx-1 h-4 w-px bg-border" />
+            </>
+          )}
+
+          {undoInfo?.can_undo && (
+            <>
+              <ToolbarButton
+                icon={<Undo2 className="h-3.5 w-3.5" />}
+                label="Undo"
+                disabled={isLoading}
+                onClick={undoAction}
+                title={undoInfo.description}
+              />
               <div className="mx-1 h-4 w-px bg-border" />
             </>
           )}
@@ -299,6 +335,43 @@ export function GraphPanel() {
           />
         )}
       </div>
+
+      {/* Remote checkout dialog */}
+      {remoteCheckoutPending && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-sm">
+            <p className="text-sm text-foreground mb-1">
+              A local &apos;{remoteCheckoutPending.localName}&apos; already exists.
+            </p>
+            <p className="text-xs text-muted-foreground mb-4">
+              Choose how to handle the remote branch checkout.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={cancelRemoteCheckout}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  cancelRemoteCheckout();
+                  checkout(remoteCheckoutPending.localName);
+                }}
+                className="rounded bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-accent transition-colors"
+              >
+                Switch to Local
+              </button>
+              <button
+                onClick={resetLocalToRemote}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Reset Local to Remote
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -412,17 +485,19 @@ function ToolbarButton({
   label,
   disabled,
   onClick,
+  title,
 }: {
   icon: React.ReactNode;
   label: string;
   disabled: boolean;
   onClick: () => void;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      title={label}
+      title={title ?? label}
       className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
     >
       {icon}

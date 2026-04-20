@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::git::graph::assign_lanes;
 use crate::git::types::{
     BranchInfo, CoAuthor, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
-    StashInfo, TagInfo,
+    StashInfo, TagInfo, UndoAction,
 };
 use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
@@ -162,6 +162,14 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
 /// Checkout a branch using git CLI subprocess.
 pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
     run_git(path, &["checkout", name])?;
+    Ok(())
+}
+
+/// Checkout a branch and reset it to match a remote ref.
+/// Used for "Reset Local to Remote" when checking out a remote branch.
+pub fn reset_branch_to_remote(path: &str, branch: &str, remote_ref: &str) -> Result<(), AppError> {
+    run_git(path, &["checkout", branch])?;
+    run_git(path, &["reset", "--hard", remote_ref])?;
     Ok(())
 }
 
@@ -913,4 +921,131 @@ pub fn get_stash_file_diff(
         hunks: parse_unified_diff(&diff_text),
         is_binary: false,
     })
+}
+
+/// Get the last undoable action from the reflog.
+pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
+    let output = Command::new("git")
+        .args(["reflog", "--format=%H %gs", "-n", "1"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to read reflog: {e}")))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.trim();
+
+    if line.is_empty() {
+        return Ok(UndoAction {
+            description: "Nothing to undo".to_string(),
+            can_undo: false,
+        });
+    }
+
+    let action = line.split_once(' ').map(|(_, desc)| desc).unwrap_or(line);
+    let (can_undo, description) = classify_reflog_action(action);
+
+    Ok(UndoAction {
+        description,
+        can_undo,
+    })
+}
+
+/// Classify a reflog action string and return (can_undo, human_description).
+fn classify_reflog_action(action: &str) -> (bool, String) {
+    let action_lower = action.to_lowercase();
+
+    if action_lower.starts_with("checkout: moving from") {
+        let desc = if let Some(rest) = action.strip_prefix("checkout: moving from ") {
+            let parts: Vec<&str> = rest.split(" to ").collect();
+            if parts.len() == 2 {
+                format!("Undo checkout → back to {}", parts[0])
+            } else {
+                "Undo checkout".to_string()
+            }
+        } else {
+            "Undo checkout".to_string()
+        };
+        (true, desc)
+    } else if action_lower.starts_with("commit") && !action_lower.starts_with("commit (initial)") {
+        let msg = action.split(": ").nth(1).unwrap_or("").trim();
+        let desc = if msg.is_empty() {
+            "Undo last commit".to_string()
+        } else {
+            format!("Undo commit: {msg}")
+        };
+        (true, desc)
+    } else if action_lower.starts_with("merge")
+        || action_lower.starts_with("rebase")
+        || action_lower.starts_with("pull")
+        || action_lower.starts_with("reset")
+    {
+        (true, format!("Undo {action}"))
+    } else {
+        (false, format!("Cannot undo: {action}"))
+    }
+}
+
+/// Execute an undo by reading the reflog and performing the inverse operation.
+pub fn undo_last(path: &str) -> Result<String, AppError> {
+    let output = Command::new("git")
+        .args(["reflog", "--format=%H %gs", "-n", "2"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to read reflog: {e}")))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = text.trim().lines().collect();
+
+    if lines.is_empty() {
+        return Err(AppError::Other(
+            "Nothing to undo — reflog is empty".to_string(),
+        ));
+    }
+
+    let current_line = lines[0];
+    let action = current_line
+        .split_once(' ')
+        .map(|(_, desc)| desc)
+        .unwrap_or("");
+    let action_lower = action.to_lowercase();
+
+    if action_lower.starts_with("checkout: moving from") {
+        if let Some(rest) = action.strip_prefix("checkout: moving from ") {
+            let parts: Vec<&str> = rest.split(" to ").collect();
+            if !parts.is_empty() {
+                return run_git(path, &["checkout", parts[0]]);
+            }
+        }
+        Err(AppError::Other(
+            "Could not parse checkout reflog entry".to_string(),
+        ))
+    } else if action_lower.starts_with("commit") && !action_lower.starts_with("commit (initial)") {
+        // Soft reset keeps changes staged
+        run_git(path, &["reset", "--soft", "HEAD~1"])
+    } else if action_lower.starts_with("merge")
+        || action_lower.starts_with("rebase")
+        || action_lower.starts_with("pull")
+    {
+        if lines.len() >= 2 {
+            let prev_sha = lines[1].split_once(' ').map(|(sha, _)| sha).unwrap_or("");
+            if !prev_sha.is_empty() {
+                return run_git(path, &["reset", "--hard", prev_sha]);
+            }
+        }
+        Err(AppError::Other(
+            "Could not determine previous state from reflog".to_string(),
+        ))
+    } else if action_lower.starts_with("reset") {
+        if lines.len() >= 2 {
+            let prev_sha = lines[1].split_once(' ').map(|(sha, _)| sha).unwrap_or("");
+            if !prev_sha.is_empty() {
+                return run_git(path, &["reset", "--hard", prev_sha]);
+            }
+        }
+        Err(AppError::Other(
+            "Could not determine previous state from reflog".to_string(),
+        ))
+    } else {
+        Err(AppError::Other(format!("Cannot undo: {action}")))
+    }
 }

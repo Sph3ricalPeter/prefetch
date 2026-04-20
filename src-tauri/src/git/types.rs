@@ -99,3 +99,12 @@ pub struct TagInfo {
     pub commit_id: String,
     pub message: Option<String>,
 }
+
+/// Describes the last undoable action from the reflog.
+#[derive(Debug, Clone, Serialize)]
+pub struct UndoAction {
+    /// Human-readable description (e.g. "Undo commit: fix bug")
+    pub description: String,
+    /// Whether an undo is possible
+    pub can_undo: bool,
+}

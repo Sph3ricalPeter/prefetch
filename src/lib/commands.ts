@@ -6,6 +6,7 @@ import type {
   GraphData,
   StashInfo,
   TagInfo,
+  UndoAction,
 } from "@/types/git";
 
 export async function openRepo(path: string): Promise<string> {
@@ -22,6 +23,13 @@ export async function getBranches(): Promise<BranchInfo[]> {
 
 export async function checkoutBranch(name: string): Promise<void> {
   return invoke<void>("checkout_branch", { name });
+}
+
+export async function resetBranchToRemote(
+  branch: string,
+  remoteRef: string,
+): Promise<void> {
+  return invoke<void>("reset_branch_to_remote", { branch, remoteRef });
 }
 
 export async function createBranchCmd(name: string): Promise<void> {
@@ -134,4 +142,12 @@ export async function deleteTagCmd(name: string): Promise<string> {
 
 export async function pushTagCmd(name: string): Promise<string> {
   return invoke<string>("push_tag", { name });
+}
+
+export async function getUndoAction(): Promise<UndoAction> {
+  return invoke<UndoAction>("get_undo_action");
+}
+
+export async function undoLast(): Promise<string> {
+  return invoke<string>("undo_last");
 }

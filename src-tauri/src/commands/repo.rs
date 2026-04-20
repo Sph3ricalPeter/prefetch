@@ -3,7 +3,7 @@ use crate::error::AppError;
 use crate::events;
 use crate::git::{
     repository,
-    types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo, TagInfo},
+    types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo, TagInfo, UndoAction},
 };
 use crate::watcher::RepoWatcher;
 use crate::AppState;
@@ -97,6 +97,22 @@ pub fn checkout_branch(name: String, state: State<'_, AppState>) -> Result<(), A
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
     repository::checkout_branch(path, &name)
+}
+
+#[tauri::command]
+pub fn reset_branch_to_remote(
+    branch: String,
+    remote_ref: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::reset_branch_to_remote(path, &branch, &remote_ref)
 }
 
 #[tauri::command]
@@ -442,4 +458,28 @@ pub fn push_tag(name: String, state: State<'_, AppState>) -> Result<String, AppE
         .as_ref()
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
     repository::push_tag(path, &name)
+}
+
+#[tauri::command]
+pub fn get_undo_action(state: State<'_, AppState>) -> Result<UndoAction, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::get_undo_action(path)
+}
+
+#[tauri::command]
+pub fn undo_last(state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::undo_last(path)
 }

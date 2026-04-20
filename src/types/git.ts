@@ -82,3 +82,8 @@ export interface TagInfo {
   commit_id: string;
   message: string | null;
 }
+
+export interface UndoAction {
+  description: string;
+  can_undo: boolean;
+}
