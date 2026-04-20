@@ -43,6 +43,7 @@ interface RepoState {
   commits: CommitInfo[];
   edges: GraphEdge[];
   totalLanes: number;
+  headCommitId: string | null;
   branches: BranchInfo[];
   currentBranch: string | null;
   selectedCommitId: string | null;
@@ -97,6 +98,9 @@ interface RepoState {
   createNewTag: (name: string, commit?: string, message?: string) => Promise<void>;
   deleteExistingTag: (name: string) => Promise<void>;
   pushExistingTag: (name: string) => Promise<void>;
+
+  /** Reload all repo data — called by file watcher events */
+  reloadAll: () => Promise<void>;
 }
 
 async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
@@ -106,6 +110,7 @@ async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
     commits: data.commits,
     edges: data.edges,
     totalLanes: data.total_lanes,
+    headCommitId: data.head_commit_id,
     branches: branchList,
     currentBranch: head?.name ?? null,
   });
@@ -117,6 +122,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   commits: [],
   edges: [],
   totalLanes: 0,
+  headCommitId: null,
   branches: [],
   currentBranch: null,
   selectedCommitId: null,
@@ -462,6 +468,21 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Tag "${name}" pushed`);
     } catch (e) {
       toast.error(String(e));
+    }
+  },
+
+  reloadAll: async () => {
+    if (!get().repoPath) return;
+    try {
+      await reloadRepoData(set);
+      const [statuses, stashList, tagList] = await Promise.all([
+        getFileStatus(),
+        getStashes(),
+        getTags(),
+      ]);
+      set({ fileStatuses: statuses, stashes: stashList, tags: tagList });
+    } catch {
+      // Silently handle — these are background refreshes from the file watcher
     }
   },
 }));

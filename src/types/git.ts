@@ -30,6 +30,8 @@ export interface GraphData {
   commits: CommitInfo[];
   edges: GraphEdge[];
   total_lanes: number;
+  /** The commit SHA that HEAD currently points to (works for both branch and detached HEAD). */
+  head_commit_id: string | null;
 }
 
 export interface BranchInfo {

@@ -84,10 +84,18 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
 
     let (edges, total_lanes) = assign_lanes(&mut commits);
 
+    // Resolve the commit that HEAD points to (works for both branch and detached HEAD)
+    let head_commit_id = repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_commit().ok())
+        .map(|c| c.id().to_string());
+
     Ok(GraphData {
         commits,
         edges,
         total_lanes,
+        head_commit_id,
     })
 }
 

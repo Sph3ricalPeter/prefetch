@@ -1,22 +1,54 @@
+use crate::background::BackgroundFetcher;
 use crate::error::AppError;
 use crate::git::{
     repository,
     types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo, TagInfo},
 };
+use crate::watcher::RepoWatcher;
 use crate::AppState;
 use tauri::State;
 
 #[tauri::command]
-pub fn open_repo(path: String, state: State<'_, AppState>) -> Result<String, AppError> {
+pub fn open_repo(
+    path: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
     // Verify it's a valid git repo by trying to open it
     let _repo = git2::Repository::open(&path)?;
     let name = repository::repo_name(&path);
 
-    let mut repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    *repo_path = Some(path);
+    // Update repo path
+    {
+        let mut repo_path = state
+            .repo_path
+            .lock()
+            .map_err(|e| AppError::Other(e.to_string()))?;
+        *repo_path = Some(path.clone());
+    }
+
+    // Start file watcher for the new repo (drops old watcher if any)
+    {
+        let mut watcher_lock = state
+            .watcher
+            .lock()
+            .map_err(|e| AppError::Other(e.to_string()))?;
+        *watcher_lock = None; // Drop old watcher first
+        match RepoWatcher::start(&path, app.clone()) {
+            Ok(w) => *watcher_lock = Some(w),
+            Err(e) => eprintln!("Warning: failed to start file watcher: {e}"),
+        }
+    }
+
+    // Start background fetcher for the new repo (drops old fetcher if any)
+    {
+        let mut fetcher_lock = state
+            .fetcher
+            .lock()
+            .map_err(|e| AppError::Other(e.to_string()))?;
+        *fetcher_lock = None; // Drop old fetcher first
+        *fetcher_lock = Some(BackgroundFetcher::start(path, app));
+    }
 
     Ok(name)
 }

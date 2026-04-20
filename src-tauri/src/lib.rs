@@ -1,12 +1,19 @@
+mod background;
 mod commands;
 mod error;
 mod events;
 mod git;
+mod watcher;
 
 use std::sync::Mutex;
 
+use background::BackgroundFetcher;
+use watcher::RepoWatcher;
+
 pub struct AppState {
     pub repo_path: Mutex<Option<String>>,
+    pub watcher: Mutex<Option<RepoWatcher>>,
+    pub fetcher: Mutex<Option<BackgroundFetcher>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,6 +25,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             repo_path: Mutex::new(None),
+            watcher: Mutex::new(None),
+            fetcher: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
@@ -46,10 +55,6 @@ pub fn run() {
             commands::repo::delete_tag,
             commands::repo::push_tag,
         ])
-        .setup(|_app| {
-            // Future: initialize file watcher, background fetch thread
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

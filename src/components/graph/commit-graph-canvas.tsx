@@ -120,6 +120,7 @@ interface CommitGraphCanvasProps {
   edges: GraphEdge[];
   totalLanes: number;
   selectedCommitId: string | null;
+  headCommitId: string | null;
   onSelectCommit: (id: string | null) => void;
   onCheckoutBranch: (name: string) => void;
   branches: BranchInfo[];
@@ -134,6 +135,7 @@ export function CommitGraphCanvas({
   edges,
   totalLanes,
   selectedCommitId,
+  headCommitId,
   onSelectCommit,
   onCheckoutBranch,
   branches,
@@ -266,21 +268,28 @@ export function CommitGraphCanvas({
     const hitAreas: BadgeHitArea[] = [];
 
     // --- HEAD row highlight (permanent "you are here") ---
-    const headBranch = branches.find((b) => b.is_head && !b.is_remote);
-    let headCommitIdx = headBranch
-      ? commits.findIndex((c) => c.id.startsWith(headBranch.commit_id))
+    // Use headCommitId from the backend — works for both branch checkout and detached HEAD (tag checkout)
+    let headCommitIdx = headCommitId
+      ? commits.findIndex((c) => c.id === headCommitId || c.id.startsWith(headCommitId))
       : -1;
-    // Detached HEAD (e.g. tag checkout): HEAD is the first commit in topological walk
-    if (headCommitIdx < 0 && commits.length > 0) {
-      headCommitIdx = 0;
+    // Fallback: try via branch is_head flag
+    if (headCommitIdx < 0) {
+      const headBranch = branches.find((b) => b.is_head && !b.is_remote);
+      if (headBranch) {
+        headCommitIdx = commits.findIndex((c) => c.id.startsWith(headBranch.commit_id));
+      }
     }
     const headRow = headCommitIdx >= 0 ? headCommitIdx + rowOffset : -1;
+    const isDetachedHead = !branches.some((b) => b.is_head && !b.is_remote);
+
+    // HEAD highlight color: branch color when on a branch, neutral gray when detached (tag checkout)
+    const headHighlightColor = isDetachedHead
+      ? "hsl(0 0% 70%)"
+      : (commits[headCommitIdx] ? getCommitColor(commits[headCommitIdx]) : "#ffffff");
 
     if (headRow >= firstVisibleRow && headRow <= lastVisibleRow) {
-      const headCommit = commits[headCommitIdx];
-      const headColor = headCommit ? getCommitColor(headCommit) : "#ffffff";
-      ctx.fillStyle = headColor;
-      ctx.globalAlpha = 0.08;
+      ctx.fillStyle = headHighlightColor;
+      ctx.globalAlpha = isDetachedHead ? 0.12 : 0.08;
       ctx.fillRect(0, headRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
       ctx.globalAlpha = 1;
     }
@@ -292,9 +301,8 @@ export function CommitGraphCanvas({
 
     if (selectedRow >= firstVisibleRow && selectedRow <= lastVisibleRow) {
       if (selectedRow === headRow) {
-        const headCommit = commits[headCommitIdx];
-        ctx.fillStyle = headCommit ? getCommitColor(headCommit) : "#ffffff";
-        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = headHighlightColor;
+        ctx.globalAlpha = isDetachedHead ? 0.22 : 0.18;
         ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
         ctx.globalAlpha = 1;
       } else {
@@ -310,9 +318,8 @@ export function CommitGraphCanvas({
       hoveredRow !== selectedRow
     ) {
       if (hoveredRow === headRow) {
-        const headCommit = commits[headCommitIdx];
-        ctx.fillStyle = headCommit ? getCommitColor(headCommit) : "#ffffff";
-        ctx.globalAlpha = 0.14;
+        ctx.fillStyle = headHighlightColor;
+        ctx.globalAlpha = isDetachedHead ? 0.18 : 0.14;
         ctx.fillRect(0, hoveredRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
         ctx.globalAlpha = 1;
       } else {
@@ -499,7 +506,7 @@ export function CommitGraphCanvas({
     }
 
     badgeHitAreasRef.current = hitAreas;
-  }, [commits, edges, selectedCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches]);
+  }, [commits, edges, selectedCommitId, headCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);

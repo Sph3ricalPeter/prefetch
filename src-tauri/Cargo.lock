@@ -3080,6 +3080,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "git2",
+ "notify",
  "serde",
  "serde_json",
  "tauri",

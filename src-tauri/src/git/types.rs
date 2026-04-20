@@ -40,6 +40,8 @@ pub struct GraphData {
     pub commits: Vec<CommitInfo>,
     pub edges: Vec<GraphEdge>,
     pub total_lanes: usize,
+    /// The commit SHA that HEAD currently points to (works for both branch and detached HEAD).
+    pub head_commit_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

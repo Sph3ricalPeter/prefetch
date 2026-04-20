@@ -29,6 +29,7 @@ export function GraphPanel() {
   const branches = useRepoStore((s) => s.branches);
   const tags = useRepoStore((s) => s.tags);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
+  const headCommitId = useRepoStore((s) => s.headCommitId);
 
   const openRepository = useRepoStore((s) => s.openRepository);
   const selectCommit = useRepoStore((s) => s.selectCommit);
@@ -218,6 +219,7 @@ export function GraphPanel() {
             edges={edges}
             totalLanes={totalLanes}
             selectedCommitId={selectedCommitId}
+            headCommitId={headCommitId}
             onSelectCommit={selectCommit}
             onCheckoutBranch={checkout}
             branches={branches}
