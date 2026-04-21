@@ -10,6 +10,26 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+/// Configure a Command to hide the console window on Windows.
+/// Without this, every `git` subprocess opens a visible terminal flash.
+#[cfg(target_os = "windows")]
+fn hide_console_window(cmd: &mut Command) -> &mut Command {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x08000000) // CREATE_NO_WINDOW
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_console_window(cmd: &mut Command) -> &mut Command {
+    cmd
+}
+
+/// Create a `git` command with console window hidden on Windows.
+fn git_cmd() -> Command {
+    let mut cmd = Command::new("git");
+    hide_console_window(&mut cmd);
+    cmd
+}
+
 /// Get the repository display name from its path.
 pub fn repo_name(path: &str) -> String {
     Path::new(path)
@@ -224,7 +244,7 @@ pub fn push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError>
 /// Run a git CLI command in the given repo directory.
 /// Returns combined stdout+stderr on success, or AppError on failure.
 fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(args)
         .current_dir(path)
         .output()
@@ -256,7 +276,7 @@ fn run_git_with_progress<F: Fn(&str)>(
     args: &[&str],
     on_progress: &F,
 ) -> Result<String, AppError> {
-    let mut child = Command::new("git")
+    let mut child = git_cmd()
         .args(args)
         .current_dir(path)
         .stdout(Stdio::piped())
@@ -328,11 +348,7 @@ fn run_git_with_progress<F: Fn(&str)>(
 
 /// Parse `git diff --numstat` output into a map of path -> (additions, deletions).
 fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .output()
-        .ok();
+    let output = git_cmd().args(args).current_dir(path).output().ok();
 
     let mut stats: HashMap<String, (u32, u32)> = HashMap::new();
     if let Some(out) = output {
@@ -356,7 +372,7 @@ fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
 /// Uses `git status --porcelain=v1` CLI instead of git2-rs to avoid
 /// false positives from CRLF/autocrlf handling on Windows.
 pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(["status", "--porcelain=v1", "-unormal"])
         .current_dir(path)
         .output()
@@ -478,7 +494,7 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
         vec!["diff", "--", file_path]
     };
 
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(&args)
         .current_dir(repo_path)
         .output()
@@ -674,7 +690,7 @@ pub fn create_commit(path: &str, message: &str, amend: bool) -> Result<String, A
 /// Get the list of files changed in a specific commit.
 pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStatus>, AppError> {
     // Get name-status for file status types
-    let output = Command::new("git")
+    let output = git_cmd()
         .args([
             "diff-tree",
             "--no-commit-id",
@@ -759,7 +775,7 @@ pub fn get_commit_file_diff(
     commit_id: &str,
     file_path: &str,
 ) -> Result<FileDiff, AppError> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(["diff", &format!("{commit_id}^"), commit_id, "--", file_path])
         .current_dir(repo_path)
         .output()
@@ -784,7 +800,7 @@ pub fn get_commit_file_diff(
 
 /// List all stashes.
 pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(["stash", "list"])
         .current_dir(path)
         .output()
@@ -831,7 +847,7 @@ pub fn stash_drop(path: &str, index: usize) -> Result<String, AppError> {
 pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
 
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(["stash", "show", "--name-status", &stash_ref])
         .current_dir(path)
         .output()
@@ -875,7 +891,7 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
 
 /// List all tags with their commit SHAs and messages.
 pub fn list_tags(path: &str) -> Result<Vec<TagInfo>, AppError> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .args([
             "tag",
             "-l",
@@ -960,7 +976,7 @@ pub fn get_stash_file_diff(
     file_path: &str,
 ) -> Result<FileDiff, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
-    let output = Command::new("git")
+    let output = git_cmd()
         .args([
             "diff",
             &format!("{stash_ref}^"),
@@ -991,7 +1007,7 @@ pub fn get_stash_file_diff(
 
 /// Get the last undoable action from the reflog.
 pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(["reflog", "--format=%H %gs", "-n", "1"])
         .current_dir(path)
         .output()
@@ -1053,7 +1069,7 @@ fn classify_reflog_action(action: &str) -> (bool, String) {
 
 /// Execute an undo by reading the reflog and performing the inverse operation.
 pub fn undo_last(path: &str) -> Result<String, AppError> {
-    let output = Command::new("git")
+    let output = git_cmd()
         .args(["reflog", "--format=%H %gs", "-n", "2"])
         .current_dir(path)
         .output()
