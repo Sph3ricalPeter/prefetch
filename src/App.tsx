@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { initDatabase } from "@/lib/database";
+import { UpdateChecker } from "@/components/updater";
 
 /**
  * Initializes SQLite database on startup, loads recent repos,
@@ -102,6 +103,7 @@ function App() {
       <DatabaseInit />
       <RepoEventListener />
       <WorkingTreePoller />
+      <UpdateChecker />
       <Toaster />
     </TooltipProvider>
   );

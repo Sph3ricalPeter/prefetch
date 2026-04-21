@@ -2,9 +2,11 @@ use crate::background::BackgroundFetcher;
 use crate::error::AppError;
 use crate::events;
 use crate::git::{
+    lfs,
     repository,
     types::{
-        BranchInfo, ConflictState, FileDiff, FileStatus, GraphData, StashInfo, TagInfo, UndoAction,
+        BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData, StashInfo, TagInfo,
+        UndoAction,
     },
 };
 use crate::watcher::RepoWatcher;
@@ -50,7 +52,12 @@ pub fn open_repo(
             .lock()
             .map_err(|e| AppError::Other(e.to_string()))?;
         *fetcher_lock = None; // Drop old fetcher first
-        *fetcher_lock = Some(BackgroundFetcher::start(path, app));
+        *fetcher_lock = Some(BackgroundFetcher::start(path.clone(), app));
+    }
+
+    // Auto-install LFS hooks if this repo uses LFS (non-fatal)
+    if let Err(e) = lfs::ensure_lfs_hooks(&path) {
+        eprintln!("Warning: LFS hook setup failed: {e}");
     }
 
     Ok(name)
@@ -609,4 +616,16 @@ pub fn continue_operation(state: State<'_, AppState>) -> Result<String, AppError
         .as_ref()
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
     repository::continue_operation(path)
+}
+
+#[tauri::command]
+pub fn get_git_identity(state: State<'_, AppState>) -> Result<GitIdentity, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    Ok(repository::get_git_identity(path))
 }

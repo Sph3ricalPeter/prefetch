@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use crate::git::forge;
 use crate::git::graph::assign_lanes;
 use crate::git::types::{
     BranchInfo, CoAuthor, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff, FileStatus,
@@ -24,7 +25,7 @@ fn hide_console_window(cmd: &mut Command) -> &mut Command {
 }
 
 /// Create a `git` command with console window hidden on Windows.
-fn git_cmd() -> Command {
+pub(crate) fn git_cmd() -> Command {
     let mut cmd = Command::new("git");
     hide_console_window(&mut cmd);
     cmd
@@ -37,6 +38,51 @@ pub fn repo_name(path: &str) -> String {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string()
+}
+
+/// Resolve the git user identity (name + email) and determine its source.
+///
+/// Checks local → global → system config in priority order, matching
+/// how git itself resolves `user.name` and `user.email`.
+pub fn get_git_identity(path: &str) -> super::types::GitIdentity {
+    // Try each scope in priority order
+    let scopes = &["--local", "--global", "--system"];
+    let scope_names = &["local", "global", "system"];
+
+    let mut resolved_name: Option<(String, &str)> = None;
+    let mut resolved_email: Option<(String, &str)> = None;
+
+    for (scope_flag, scope_name) in scopes.iter().zip(scope_names.iter()) {
+        if resolved_name.is_none() {
+            if let Ok(val) = run_git(path, &["config", scope_flag, "user.name"]) {
+                let val = val.trim().to_string();
+                if !val.is_empty() {
+                    resolved_name = Some((val, scope_name));
+                }
+            }
+        }
+        if resolved_email.is_none() {
+            if let Ok(val) = run_git(path, &["config", scope_flag, "user.email"]) {
+                let val = val.trim().to_string();
+                if !val.is_empty() {
+                    resolved_email = Some((val, scope_name));
+                }
+            }
+        }
+    }
+
+    // The "source" is whichever scope provided the name (or email if no name)
+    let source = resolved_name
+        .as_ref()
+        .or(resolved_email.as_ref())
+        .map(|(_, s)| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    super::types::GitIdentity {
+        name: resolved_name.map(|(v, _)| v).unwrap_or_default(),
+        email: resolved_email.map(|(v, _)| v).unwrap_or_default(),
+        source,
+    }
 }
 
 /// Walk commits from HEAD, assign lanes, and return the full graph data.
@@ -200,32 +246,62 @@ pub fn create_branch(path: &str, name: &str) -> Result<(), AppError> {
 }
 
 /// Fetch all remotes with progress streaming.
+///
+/// When a forge token is stored for an HTTPS remote, credentials are
+/// injected automatically so the user doesn't need a separate credential
+/// helper.
 pub fn fetch_all<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
-    run_git_with_progress(
-        path,
-        &["fetch", "--all", "--prune", "--progress"],
-        &on_progress,
-    )
+    if let Some(url) = forge::authenticated_remote_url(path) {
+        run_git_with_progress(
+            path,
+            &["fetch", &url, "--prune", "--progress"],
+            &on_progress,
+        )
+    } else {
+        run_git_with_progress(
+            path,
+            &["fetch", "--all", "--prune", "--progress"],
+            &on_progress,
+        )
+    }
 }
 
 /// Force push to remote (used after reset when local diverges from remote).
 pub fn force_push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
-    run_git_with_progress(
-        path,
-        &["push", "--force-with-lease", "--progress"],
-        &on_progress,
-    )
+    if let Some(url) = forge::authenticated_remote_url(path) {
+        run_git_with_progress(
+            path,
+            &["push", &url, "--force-with-lease", "--progress"],
+            &on_progress,
+        )
+    } else {
+        run_git_with_progress(
+            path,
+            &["push", "--force-with-lease", "--progress"],
+            &on_progress,
+        )
+    }
 }
 
 /// Pull from the current branch's upstream with progress streaming.
 pub fn pull<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
-    run_git_with_progress(path, &["pull", "--progress"], &on_progress)
+    if let Some(url) = forge::authenticated_remote_url(path) {
+        run_git_with_progress(path, &["pull", &url, "--progress"], &on_progress)
+    } else {
+        run_git_with_progress(path, &["pull", "--progress"], &on_progress)
+    }
 }
 
 /// Push to the current branch's upstream with progress streaming, setting upstream if needed.
 pub fn push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
+    let authed_url = forge::authenticated_remote_url(path);
+
     // Try normal push first
-    let result = run_git_with_progress(path, &["push", "--progress"], &on_progress);
+    let result = if let Some(ref url) = authed_url {
+        run_git_with_progress(path, &["push", url, "--progress"], &on_progress)
+    } else {
+        run_git_with_progress(path, &["push", "--progress"], &on_progress)
+    };
     if result.is_ok() {
         return result;
     }
@@ -234,16 +310,24 @@ pub fn push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError>
     let repo = Repository::open(path)?;
     let head = repo.head()?;
     let branch_name = head.shorthand().unwrap_or("HEAD");
-    run_git_with_progress(
-        path,
-        &["push", "-u", "origin", branch_name, "--progress"],
-        &on_progress,
-    )
+    if let Some(ref url) = authed_url {
+        run_git_with_progress(
+            path,
+            &["push", "-u", url, branch_name, "--progress"],
+            &on_progress,
+        )
+    } else {
+        run_git_with_progress(
+            path,
+            &["push", "-u", "origin", branch_name, "--progress"],
+            &on_progress,
+        )
+    }
 }
 
 /// Run a git CLI command in the given repo directory.
 /// Returns combined stdout+stderr on success, or AppError on failure.
-fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
+pub(crate) fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
     let output = git_cmd()
         .args(args)
         .current_dir(path)
@@ -271,7 +355,7 @@ fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
 /// This function reads stderr in chunks, splits on `\r`/`\n`, and calls
 /// `on_progress` with each line. The `--progress` flag must be included
 /// in `args` to force progress output on piped stderr.
-fn run_git_with_progress<F: Fn(&str)>(
+pub(crate) fn run_git_with_progress<F: Fn(&str)>(
     path: &str,
     args: &[&str],
     on_progress: &F,
@@ -966,7 +1050,11 @@ pub fn delete_tag(path: &str, name: &str) -> Result<String, AppError> {
 
 /// Push a tag to the remote.
 pub fn push_tag(path: &str, name: &str) -> Result<String, AppError> {
-    run_git(path, &["push", "origin", name])
+    if let Some(url) = forge::authenticated_remote_url(path) {
+        run_git(path, &["push", &url, name])
+    } else {
+        run_git(path, &["push", "origin", name])
+    }
 }
 
 /// Get the diff for a specific file in a stash entry.

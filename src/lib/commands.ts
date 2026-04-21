@@ -4,7 +4,11 @@ import type {
   ConflictState,
   FileDiff,
   FileStatus,
+  ForgeStatus,
+  GitIdentity,
   GraphData,
+  LfsInfo,
+  PrInfo,
   StashInfo,
   TagInfo,
   UndoAction,
@@ -190,4 +194,58 @@ export async function abortOperation(): Promise<string> {
 
 export async function continueOperation(): Promise<string> {
   return invoke<string>("continue_operation");
+}
+
+// ── Git identity ─────────────────────────────────────────────────────────────
+
+export async function getGitIdentity(): Promise<GitIdentity> {
+  return invoke<GitIdentity>("get_git_identity");
+}
+
+// ── Forge (GitHub / GitLab) ───────────────────────────────────────────────────
+
+export async function getForgeStatus(): Promise<ForgeStatus> {
+  return invoke<ForgeStatus>("get_forge_status");
+}
+
+export async function saveForgeToken(host: string, token: string): Promise<void> {
+  return invoke<void>("save_forge_token", { host, token });
+}
+
+export async function deleteForgeToken(host: string): Promise<void> {
+  return invoke<void>("delete_forge_token", { host });
+}
+
+export async function getPrForBranch(branch: string): Promise<PrInfo | null> {
+  return invoke<PrInfo | null>("get_pr_for_branch", { branch });
+}
+
+export async function clearPrCache(): Promise<void> {
+  return invoke<void>("clear_pr_cache");
+}
+
+export async function openUrl(url: string): Promise<void> {
+  return invoke<void>("open_url", { url });
+}
+
+// ── LFS ───────────────────────────────────────────────────────────────────────
+
+export async function lfsGetInfo(): Promise<LfsInfo> {
+  return invoke<LfsInfo>("lfs_get_info");
+}
+
+export async function lfsInitialize(): Promise<string> {
+  return invoke<string>("lfs_initialize");
+}
+
+export async function lfsTrackPattern(pattern: string): Promise<string> {
+  return invoke<string>("lfs_track_pattern", { pattern });
+}
+
+export async function lfsUntrackPattern(pattern: string): Promise<string> {
+  return invoke<string>("lfs_untrack_pattern", { pattern });
+}
+
+export async function lfsPruneObjects(): Promise<string> {
+  return invoke<string>("lfs_prune_objects");
 }

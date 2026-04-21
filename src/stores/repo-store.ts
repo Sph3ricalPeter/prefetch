@@ -7,7 +7,11 @@ import type {
   ConflictState,
   FileDiff,
   FileStatus,
+  ForgeStatus,
+  GitIdentity,
   GraphEdge,
+  LfsInfo,
+  PrInfo,
   StashInfo,
   TagInfo,
   UndoAction,
@@ -52,6 +56,18 @@ import {
   getConflictState,
   abortOperation as abortOperationCmd,
   continueOperation as continueOperationCmd,
+  lfsGetInfo,
+  lfsInitialize,
+  lfsTrackPattern as lfsTrackCmd,
+  lfsUntrackPattern as lfsUntrackCmd,
+  lfsPruneObjects as lfsPruneCmd,
+  getGitIdentity as getGitIdentityCmd,
+  getForgeStatus,
+  saveForgeToken as saveForgeTokenCmd,
+  deleteForgeToken as deleteForgeTokenCmd,
+  getPrForBranch as getPrForBranchCmd,
+  clearPrCache as clearPrCacheCmd,
+  openUrl as openUrlCmd,
 } from "@/lib/commands";
 import {
   addRecentRepo,
@@ -129,6 +145,17 @@ interface RepoState {
   // Recent repos
   recentRepos: RecentRepo[];
 
+  // LFS
+  lfsInfo: LfsInfo | null;
+
+  // Git identity
+  gitIdentity: GitIdentity | null;
+
+  // Forge
+  forgeStatus: ForgeStatus | null;
+  /** branch name → PrInfo (or null = "checked, no open PR") */
+  prCache: Record<string, PrInfo | null>;
+
   // Actions
   openRepository: (path: string) => Promise<void>;
   loadRecentRepos: () => Promise<void>;
@@ -182,6 +209,23 @@ interface RepoState {
 
   /** Reload all repo data — called by file watcher events */
   reloadAll: () => Promise<void>;
+
+  // Git identity
+  loadGitIdentity: () => Promise<void>;
+
+  // Forge actions
+  loadForgeStatus: () => Promise<void>;
+  loadPrForBranch: (branch: string) => Promise<void>;
+  saveForgeToken: (host: string, token: string) => Promise<void>;
+  deleteForgeToken: (host: string) => Promise<void>;
+  openPr: (url: string) => Promise<void>;
+
+  // LFS actions
+  loadLfsInfo: () => Promise<void>;
+  initializeLfs: () => Promise<void>;
+  trackLfsPattern: (pattern: string) => Promise<void>;
+  untrackLfsPattern: (pattern: string) => Promise<void>;
+  pruneLfsObjects: () => Promise<void>;
 }
 
 async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
@@ -227,6 +271,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   undoInfo: null,
   lastUndoTime: 0,
   recentRepos: [],
+  lfsInfo: null,
+  gitIdentity: null,
+  forgeStatus: null,
+  prCache: {},
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
@@ -266,6 +314,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getConflictState(),
       ]);
       set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList, undoInfo: undoAction, conflictState: conflict });
+      // Load LFS, forge, and identity info after core data (non-blocking, fire-and-forget)
+      get().loadLfsInfo().catch(() => {});
+      get().loadForgeStatus().catch(() => {});
+      get().loadGitIdentity().catch(() => {});
       // Track in recent repos + save as last opened (fire-and-forget)
       Promise.all([
         addRecentRepo(path, name).then(() => get().loadRecentRepos()),
@@ -382,7 +434,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await fetchRepo();
       await reloadRepoData(set);
-      set({ isLoading: false });
+      set({ isLoading: false, prCache: {} }); // invalidate PR cache after fetch
+      clearPrCacheCmd().catch(() => {});
       toast.success("Fetch complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
@@ -402,7 +455,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await pullRepo();
       await reloadRepoData(set);
       const statuses = await getFileStatus();
-      set({ isLoading: false, fileStatuses: statuses });
+      set({ isLoading: false, fileStatuses: statuses, prCache: {} }); // invalidate PR cache
+      clearPrCacheCmd().catch(() => {});
       toast.success("Pull complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
@@ -959,6 +1013,131 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set(update);
     } catch {
       // Silently handle — these are background refreshes from the file watcher
+    }
+  },
+
+  // ── Git identity ──────────────────────────────────────────────────────────
+
+  loadGitIdentity: async () => {
+    try {
+      const identity = await getGitIdentityCmd();
+      set({ gitIdentity: identity });
+    } catch {
+      // Non-critical
+    }
+  },
+
+  // ── Forge actions ──────────────────────────────────────────────────────────
+
+  loadForgeStatus: async () => {
+    try {
+      const status = await getForgeStatus();
+      set({ forgeStatus: status });
+    } catch {
+      // Forge detection is non-critical
+    }
+  },
+
+  loadPrForBranch: async (branch: string) => {
+    // Skip if already in cache (value may be null = "no PR", which is valid)
+    if (branch in get().prCache) return;
+    try {
+      const pr = await getPrForBranchCmd(branch);
+      set((state) => ({ prCache: { ...state.prCache, [branch]: pr } }));
+    } catch {
+      // PR lookup is best-effort
+    }
+  },
+
+  saveForgeToken: async (host: string, token: string) => {
+    try {
+      await saveForgeTokenCmd(host, token);
+      toast.success("Token saved");
+      await get().loadForgeStatus();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  deleteForgeToken: async (host: string) => {
+    try {
+      await deleteForgeTokenCmd(host);
+      set({ prCache: {} });
+      toast.success("Token removed");
+      await get().loadForgeStatus();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  openPr: async (url: string) => {
+    try {
+      await openUrlCmd(url);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  // ── LFS actions ────────────────────────────────────────────────────────────
+
+  loadLfsInfo: async () => {
+    try {
+      const info = await lfsGetInfo();
+      set({ lfsInfo: info });
+    } catch {
+      // LFS info is non-critical — silently ignore
+    }
+  },
+
+  initializeLfs: async () => {
+    set({ isLoading: true });
+    try {
+      await lfsInitialize();
+      toast.success("LFS initialised in this repository");
+      await get().loadLfsInfo();
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  trackLfsPattern: async (pattern: string) => {
+    set({ isLoading: true });
+    try {
+      await lfsTrackCmd(pattern);
+      toast.success(`Tracking "${pattern}" with LFS`);
+      await get().loadLfsInfo();
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  untrackLfsPattern: async (pattern: string) => {
+    set({ isLoading: true });
+    try {
+      await lfsUntrackCmd(pattern);
+      toast.success(`Untracked "${pattern}" from LFS`);
+      await get().loadLfsInfo();
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  pruneLfsObjects: async () => {
+    set({ isLoading: true });
+    try {
+      await lfsPruneCmd();
+      toast.success("LFS objects pruned");
+      await get().loadLfsInfo();
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      set({ isLoading: false });
     }
   },
 }));

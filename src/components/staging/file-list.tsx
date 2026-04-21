@@ -16,9 +16,19 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 
+/** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
+function matchesLfsPattern(filePath: string, pattern: string): boolean {
+  const regex = new RegExp(
+    "^" + pattern.replace(/\./g, "\\.").replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*") + "$"
+  );
+  const fileName = filePath.split("/").pop() ?? filePath;
+  return regex.test(fileName) || regex.test(filePath);
+}
+
 export function FileList() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
+  const lfsInfo = useRepoStore((s) => s.lfsInfo);
   const stage = useRepoStore((s) => s.stage);
   const unstage = useRepoStore((s) => s.unstage);
   const discard = useRepoStore((s) => s.discard);
@@ -26,6 +36,11 @@ export function FileList() {
   const resolveTheirs = useRepoStore((s) => s.resolveTheirs);
   const selectFile = useRepoStore((s) => s.selectFile);
   const isLoading = useRepoStore((s) => s.isLoading);
+
+  /** Check if a file is tracked by LFS */
+  const isLfsFile = (filePath: string) =>
+    lfsInfo?.initialized &&
+    lfsInfo.tracked_patterns.some((p) => matchesLfsPattern(filePath, p.pattern));
   const [confirmDiscard, setConfirmDiscard] = useState<string[] | null>(null);
   const [conflictsOpen, setConflictsOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(true);
@@ -89,6 +104,7 @@ export function FileList() {
             key={`unstaged-${file.path}`}
             file={file}
             isSelected={selectedFilePath === file.path}
+            isLfs={!!isLfsFile(file.path)}
             onSelect={() => selectFile(file.path, false)}
             onToggle={() => stage([file.path])}
             toggleIcon={<Plus className="h-3 w-3" />}
@@ -118,6 +134,7 @@ export function FileList() {
             key={`staged-${file.path}`}
             file={file}
             isSelected={selectedFilePath === file.path}
+            isLfs={!!isLfsFile(file.path)}
             onSelect={() => selectFile(file.path, true)}
             onToggle={() => unstage([file.path])}
             toggleIcon={<Minus className="h-3 w-3" />}
@@ -199,6 +216,7 @@ function FileSection({
 function FileRow({
   file,
   isSelected,
+  isLfs,
   onSelect,
   onToggle,
   toggleIcon,
@@ -208,6 +226,7 @@ function FileRow({
 }: {
   file: FileStatus;
   isSelected: boolean;
+  isLfs: boolean;
   onSelect: () => void;
   onToggle: () => void;
   toggleIcon: React.ReactNode;
@@ -237,6 +256,11 @@ function FileRow({
       </span>
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
+        {isLfs && (
+          <span className="shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none bg-blue-500/20 text-blue-400">
+            LFS
+          </span>
+        )}
         {dirPath && (
           <span className="truncate text-xs text-muted-foreground/50">
             {dirPath}

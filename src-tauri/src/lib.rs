@@ -5,15 +5,20 @@ mod events;
 mod git;
 mod watcher;
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use background::BackgroundFetcher;
+use git::types::PrInfo;
 use watcher::RepoWatcher;
 
 pub struct AppState {
     pub repo_path: Mutex<Option<String>>,
     pub watcher: Mutex<Option<RepoWatcher>>,
     pub fetcher: Mutex<Option<BackgroundFetcher>>,
+    /// In-memory cache of branch name → PR info (or None if no open PR).
+    /// Cleared on each successful fetch/pull.
+    pub pr_cache: Mutex<HashMap<String, Option<PrInfo>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,10 +28,12 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             repo_path: Mutex::new(None),
             watcher: Mutex::new(None),
             fetcher: Mutex::new(None),
+            pr_cache: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
@@ -68,6 +75,20 @@ pub fn run() {
             commands::repo::get_conflict_state,
             commands::repo::abort_operation,
             commands::repo::continue_operation,
+            commands::repo::get_git_identity,
+            // Forge (GitHub / GitLab)
+            commands::forge::get_forge_status,
+            commands::forge::save_forge_token,
+            commands::forge::delete_forge_token,
+            commands::forge::get_pr_for_branch,
+            commands::forge::clear_pr_cache,
+            commands::forge::open_url,
+            // LFS
+            commands::lfs::lfs_get_info,
+            commands::lfs::lfs_initialize,
+            commands::lfs::lfs_track_pattern,
+            commands::lfs::lfs_untrack_pattern,
+            commands::lfs::lfs_prune_objects,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

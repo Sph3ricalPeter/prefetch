@@ -119,3 +119,80 @@ pub struct UndoAction {
     /// Whether an undo is possible
     pub can_undo: bool,
 }
+
+// ── Forge (GitHub / GitLab) types ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ForgeKind {
+    GitHub,
+    GitLab,
+}
+
+/// Detected information about the remote forge (GitHub or GitLab instance).
+#[derive(Debug, Clone, Serialize)]
+pub struct ForgeConfig {
+    pub kind: ForgeKind,
+    /// Hostname, e.g. "github.com" or a self-hosted GitLab domain
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+}
+
+/// A pull request / merge request on the remote forge.
+#[derive(Debug, Clone, Serialize)]
+pub struct PrInfo {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    /// "open", "closed", or "merged"
+    pub state: String,
+}
+
+// ── LFS types ─────────────────────────────────────────────────────────────────
+
+/// A single pattern being tracked by git-lfs (from .gitattributes).
+#[derive(Debug, Clone, Serialize)]
+pub struct LfsTrackPattern {
+    /// The glob pattern, e.g. "*.psd"
+    pub pattern: String,
+    /// Which .gitattributes file declares this (usually ".gitattributes")
+    pub source: String,
+}
+
+/// Metadata for a single LFS-managed file.
+#[derive(Debug, Clone, Serialize)]
+pub struct LfsFileInfo {
+    pub oid: String,
+    pub path: String,
+    /// Size in bytes of the actual object (not the pointer file)
+    pub size: u64,
+}
+
+/// Aggregate LFS status for the open repository.
+#[derive(Debug, Clone, Serialize)]
+pub struct LfsInfo {
+    /// Whether the `git-lfs` binary is available on PATH
+    pub installed: bool,
+    /// Whether LFS hooks are installed in this repository (`git lfs install --local` has run)
+    pub initialized: bool,
+    /// Version string from `git lfs version`, e.g. "git-lfs/3.5.1"
+    pub version: Option<String>,
+    /// Patterns declared in .gitattributes with filter=lfs
+    pub tracked_patterns: Vec<LfsTrackPattern>,
+    /// Number of LFS-managed files in the working tree
+    pub file_count: usize,
+    /// Total byte size of all LFS objects on disk
+    pub total_size: u64,
+}
+
+// ── Git identity ─────────────────────────────────────────────────────────────
+
+/// The resolved git user identity and where it came from.
+#[derive(Debug, Clone, Serialize)]
+pub struct GitIdentity {
+    pub name: String,
+    pub email: String,
+    /// Where the identity was resolved from: "local", "global", "system", or "unknown"
+    pub source: String,
+}

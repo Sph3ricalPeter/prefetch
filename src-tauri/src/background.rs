@@ -1,4 +1,5 @@
 use crate::events;
+use crate::git::forge;
 use std::process::Command;
 
 /// Configure a Command to hide the console window on Windows.
@@ -47,10 +48,14 @@ impl BackgroundFetcher {
                     return;
                 }
 
-                // Run git fetch
+                // Run git fetch, injecting forge credentials for HTTPS remotes
                 let mut cmd = Command::new("git");
-                cmd.args(["fetch", "--all", "--prune"])
-                    .current_dir(&repo_path);
+                if let Some(url) = forge::authenticated_remote_url(&repo_path) {
+                    cmd.args(["fetch", &url, "--prune"]);
+                } else {
+                    cmd.args(["fetch", "--all", "--prune"]);
+                }
+                cmd.current_dir(&repo_path);
                 hide_console_window(&mut cmd);
                 let result = cmd.output();
 

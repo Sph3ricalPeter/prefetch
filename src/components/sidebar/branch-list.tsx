@@ -1,8 +1,13 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
-import type { BranchInfo } from "@/types/git";
+import { useState, useEffect } from "react";
+import { ChevronDown, ChevronRight, GitBranch, GitPullRequest } from "lucide-react";
+import type { BranchInfo, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 
 export function BranchList({ filter = "" }: { filter?: string }) {
   const branches = useRepoStore((s) => s.branches);
@@ -10,6 +15,9 @@ export function BranchList({ filter = "" }: { filter?: string }) {
   const checkout = useRepoStore((s) => s.checkout);
   const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
   const isLoading = useRepoStore((s) => s.isLoading);
+  const prCache = useRepoStore((s) => s.prCache);
+  const loadPrForBranch = useRepoStore((s) => s.loadPrForBranch);
+  const openPr = useRepoStore((s) => s.openPr);
   const [localOpen, setLocalOpen] = useState(true);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [branchContextMenu, setBranchContextMenu] = useState<{
@@ -26,6 +34,16 @@ export function BranchList({ filter = "" }: { filter?: string }) {
 
   const localBranches = filtered.filter((b) => !b.is_remote);
   const remoteBranches = filtered.filter((b) => b.is_remote);
+
+  // Lazily load PR info for visible local branches
+  useEffect(() => {
+    if (!localOpen) return;
+    localBranches.forEach((b) => {
+      if (!(b.name in prCache)) {
+        loadPrForBranch(b.name);
+      }
+    });
+  }, [localOpen, localBranches, prCache, loadPrForBranch]);
 
   const handleCheckout = async (name: string) => {
     if (name === currentBranch || isLoading) return;
@@ -47,8 +65,14 @@ export function BranchList({ filter = "" }: { filter?: string }) {
               key={branch.name}
               branch={branch}
               isCurrent={branch.name === currentBranch}
+              pr={prCache[branch.name]}
               disabled={isLoading}
               onClick={() => handleCheckout(branch.name)}
+              onPrClick={
+                prCache[branch.name]
+                  ? () => openPr(prCache[branch.name]!.url)
+                  : undefined
+              }
               onContextMenu={(e) => {
                 e.preventDefault();
                 setBranchContextMenu({ branch, x: e.clientX, y: e.clientY });
@@ -162,17 +186,21 @@ function BranchSection({
 function BranchRow({
   branch,
   isCurrent,
+  pr,
   disabled,
   onClick,
+  onPrClick,
   onContextMenu,
 }: {
   branch: BranchInfo;
   isCurrent: boolean;
+  /** undefined = not yet checked; null = no open PR; PrInfo = has open PR */
+  pr?: PrInfo | null;
   disabled: boolean;
   onClick: () => void;
+  onPrClick?: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  // Strip "origin/" prefix for display on remote branches
   const displayName = branch.name;
 
   return (
@@ -188,8 +216,33 @@ function BranchRow({
     >
       <GitBranch className="h-3 w-3 shrink-0" />
       <span className="truncate">{displayName}</span>
-      {isCurrent && (
+
+      {/* PR badge — only shown when there's an open PR */}
+      {pr && onPrClick && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              role="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPrClick();
+              }}
+              className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            >
+              <GitPullRequest className="h-3 w-3" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            #{pr.number} — {pr.title}
+          </TooltipContent>
+        </Tooltip>
+      )}
+
+      {isCurrent && !pr && (
         <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+      )}
+      {isCurrent && pr && (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
       )}
     </button>
   );

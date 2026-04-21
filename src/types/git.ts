@@ -96,3 +96,59 @@ export interface UndoAction {
   description: string;
   can_undo: boolean;
 }
+
+// ── Forge (GitHub / GitLab) ───────────────────────────────────────────────────
+
+export interface PrInfo {
+  number: number;
+  title: string;
+  url: string;
+  /** "open" | "closed" | "merged" | "opened" */
+  state: string;
+}
+
+export interface ForgeStatus {
+  /** "github" | "gitlab" | null */
+  kind: string | null;
+  host: string | null;
+  owner: string | null;
+  repo: string | null;
+  has_token: boolean;
+}
+
+// ── LFS ───────────────────────────────────────────────────────────────────────
+
+export interface LfsTrackPattern {
+  pattern: string;
+  /** Which .gitattributes file (usually ".gitattributes") */
+  source: string;
+}
+
+export interface LfsFileInfo {
+  oid: string;
+  path: string;
+  /** Size of the actual object in bytes */
+  size: number;
+}
+
+export interface LfsInfo {
+  /** Whether the git-lfs binary is on PATH */
+  installed: boolean;
+  /** Whether LFS hooks are installed in this repo */
+  initialized: boolean;
+  /** Version string, e.g. "git-lfs/3.5.1 ..." */
+  version: string | null;
+  tracked_patterns: LfsTrackPattern[];
+  file_count: number;
+  /** Total byte size of all LFS objects */
+  total_size: number;
+}
+
+// ── Git identity ─────────────────────────────────────────────────────────────
+
+export interface GitIdentity {
+  name: string;
+  email: string;
+  /** Where the identity was resolved from: "local" | "global" | "system" | "unknown" */
+  source: string;
+}

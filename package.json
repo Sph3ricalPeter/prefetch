@@ -1,7 +1,7 @@
 {
   "name": "prefetch",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -27,7 +27,8 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
-    "zustand": "^5.0.12"
+    "zustand": "^5.0.12",
+    "@tauri-apps/plugin-updater": "^2.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
