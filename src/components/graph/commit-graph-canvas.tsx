@@ -141,6 +141,7 @@ interface CommitGraphCanvasProps {
   stashes: StashInfo[];
   hasUncommittedChanges: boolean;
   onClickWip: () => void;
+  onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
 }
 
 export function CommitGraphCanvas({
@@ -156,6 +157,7 @@ export function CommitGraphCanvas({
   stashes,
   hasUncommittedChanges,
   onClickWip,
+  onCommitContextMenu,
 }: CommitGraphCanvasProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -668,6 +670,25 @@ export function CommitGraphCanvas({
 
   const handleMouseLeave = useCallback(() => setHoveredRow(null), []);
 
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!onCommitContextMenu) return;
+      const scroll = scrollRef.current;
+      if (!scroll) return;
+
+      const rect = scroll.getBoundingClientRect();
+      const y = e.clientY - rect.top + scroll.scrollTop;
+      const visRow = Math.floor(y / ROW_HEIGHT);
+      const commitIdx = visRow - rowOffset;
+
+      if (commitIdx >= 0 && commitIdx < commits.length) {
+        e.preventDefault();
+        onCommitContextMenu(commits[commitIdx].id, e.clientX, e.clientY);
+      }
+    },
+    [commits, rowOffset, onCommitContextMenu],
+  );
+
   useEffect(() => {
     requestDraw();
 
@@ -693,6 +714,7 @@ export function CommitGraphCanvas({
         onDoubleClick={handleDoubleClick}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
+        onContextMenu={handleContextMenu}
       >
         <div style={{ height: Math.max(totalHeight, 1) }} />
       </div>

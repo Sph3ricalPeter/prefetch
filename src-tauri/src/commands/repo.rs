@@ -3,7 +3,9 @@ use crate::error::AppError;
 use crate::events;
 use crate::git::{
     repository,
-    types::{BranchInfo, FileDiff, FileStatus, GraphData, StashInfo, TagInfo, UndoAction},
+    types::{
+        BranchInfo, ConflictState, FileDiff, FileStatus, GraphData, StashInfo, TagInfo, UndoAction,
+    },
 };
 use crate::watcher::RepoWatcher;
 use crate::AppState;
@@ -144,6 +146,25 @@ pub fn fetch_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<S
 }
 
 #[tauri::command]
+pub fn force_push_repo(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+
+    repository::force_push(path, |progress| {
+        app.emit(events::GIT_PROGRESS, progress).ok();
+    })
+}
+
+#[tauri::command]
 pub fn pull_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, AppError> {
     let repo_path = state
         .repo_path
@@ -205,6 +226,36 @@ pub fn get_file_diff(
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
 
     repository::get_file_diff(path, &file_path, staged)
+}
+
+#[tauri::command]
+pub fn resolve_conflict_ours(
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::resolve_ours(path, &file_path)
+}
+
+#[tauri::command]
+pub fn resolve_conflict_theirs(
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::resolve_theirs(path, &file_path)
 }
 
 #[tauri::command]
@@ -482,4 +533,80 @@ pub fn undo_last(state: State<'_, AppState>) -> Result<String, AppError> {
         .as_ref()
         .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
     repository::undo_last(path)
+}
+
+#[tauri::command]
+pub fn reset_to_commit(
+    commit_id: String,
+    mode: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::reset_to_commit(path, &commit_id, &mode)
+}
+
+#[tauri::command]
+pub fn cherry_pick(commit_id: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::cherry_pick(path, &commit_id)
+}
+
+#[tauri::command]
+pub fn rebase_onto(target: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::rebase_onto(path, &target)
+}
+
+#[tauri::command]
+pub fn get_conflict_state(state: State<'_, AppState>) -> Result<ConflictState, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::get_conflict_state(path)
+}
+
+#[tauri::command]
+pub fn abort_operation(state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::abort_operation(path)
+}
+
+#[tauri::command]
+pub fn continue_operation(state: State<'_, AppState>) -> Result<String, AppError> {
+    let repo_path = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path
+        .as_ref()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+    repository::continue_operation(path)
 }

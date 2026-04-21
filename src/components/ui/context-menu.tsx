@@ -1,0 +1,68 @@
+import { useEffect, useRef } from "react";
+
+export interface ContextMenuItem {
+  label: string;
+  onClick: () => void;
+  destructive?: boolean;
+  disabled?: boolean;
+}
+
+interface ContextMenuProps {
+  x: number;
+  y: number;
+  items: ContextMenuItem[];
+  onClose: () => void;
+}
+
+export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  // Adjust position to stay within viewport
+  const style: React.CSSProperties = {
+    left: `${x}px`,
+    top: `${y}px`,
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 min-w-44 rounded-md border border-border bg-popover py-1 shadow-lg"
+      style={style}
+    >
+      {items.map((item, i) => (
+        <button
+          key={i}
+          onClick={() => {
+            item.onClick();
+            onClose();
+          }}
+          disabled={item.disabled}
+          className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors disabled:opacity-40 ${
+            item.destructive
+              ? "text-red-400 hover:bg-destructive/20"
+              : "text-foreground hover:bg-secondary"
+          }`}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BranchInfo,
+  ConflictState,
   FileDiff,
   FileStatus,
   GraphData,
@@ -46,6 +47,10 @@ export async function pullRepo(): Promise<string> {
 
 export async function pushRepo(): Promise<string> {
   return invoke<string>("push_repo");
+}
+
+export async function forcePushRepo(): Promise<string> {
+  return invoke<string>("force_push_repo");
 }
 
 export async function getFileStatus(): Promise<FileStatus[]> {
@@ -150,4 +155,39 @@ export async function getUndoAction(): Promise<UndoAction> {
 
 export async function undoLast(): Promise<string> {
   return invoke<string>("undo_last");
+}
+
+export async function resolveConflictOurs(filePath: string): Promise<void> {
+  return invoke<void>("resolve_conflict_ours", { filePath });
+}
+
+export async function resolveConflictTheirs(filePath: string): Promise<void> {
+  return invoke<void>("resolve_conflict_theirs", { filePath });
+}
+
+export async function resetToCommit(
+  commitId: string,
+  mode: string,
+): Promise<string> {
+  return invoke<string>("reset_to_commit", { commitId, mode });
+}
+
+export async function cherryPickCommit(commitId: string): Promise<string> {
+  return invoke<string>("cherry_pick", { commitId });
+}
+
+export async function rebaseOnto(target: string): Promise<string> {
+  return invoke<string>("rebase_onto", { target });
+}
+
+export async function getConflictState(): Promise<ConflictState> {
+  return invoke<ConflictState>("get_conflict_state");
+}
+
+export async function abortOperation(): Promise<string> {
+  return invoke<string>("abort_operation");
+}
+
+export async function continueOperation(): Promise<string> {
+  return invoke<string>("continue_operation");
 }

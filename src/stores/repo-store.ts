@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type {
   BranchInfo,
   CommitInfo,
+  ConflictState,
   FileDiff,
   FileStatus,
   GraphEdge,
@@ -21,6 +22,7 @@ import {
   fetchRepo,
   pullRepo,
   pushRepo,
+  forcePushRepo,
   getFileStatus,
   getFileDiff,
   discardFiles as discardFilesCmd,
@@ -42,6 +44,14 @@ import {
   pushTagCmd,
   getUndoAction,
   undoLast,
+  resolveConflictOurs as resolveOursCmd,
+  resolveConflictTheirs as resolveTheirsCmd,
+  resetToCommit as resetToCommitCmd,
+  cherryPickCommit,
+  rebaseOnto as rebaseOntoCmd,
+  getConflictState,
+  abortOperation as abortOperationCmd,
+  continueOperation as continueOperationCmd,
 } from "@/lib/commands";
 import {
   addRecentRepo,
@@ -99,6 +109,12 @@ interface RepoState {
   // Tags
   tags: TagInfo[];
 
+  // Force push
+  forcePushPending: boolean;
+
+  // Conflict state
+  conflictState: ConflictState | null;
+
   // Remote checkout dialog
   remoteCheckoutPending: {
     localName: string;
@@ -137,6 +153,8 @@ interface RepoState {
   unstage: (paths: string[]) => Promise<void>;
   discard: (paths: string[]) => Promise<void>;
   discardAll: () => Promise<void>;
+  resolveOurs: (filePath: string) => Promise<void>;
+  resolveTheirs: (filePath: string) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
   setCommitMessage: (msg: string) => void;
   setCommitDescription: (desc: string) => void;
@@ -151,6 +169,14 @@ interface RepoState {
   deleteExistingTag: (name: string) => Promise<void>;
   pushExistingTag: (name: string) => Promise<void>;
 
+  forcePush: () => Promise<void>;
+  cancelForcePush: () => void;
+  resetTo: (commitId: string, mode: "soft" | "hard") => Promise<void>;
+  cherryPick: (commitId: string) => Promise<void>;
+  rebaseOnto: (targetBranch: string) => Promise<void>;
+  abortOperation: () => Promise<void>;
+  continueOperation: () => Promise<void>;
+  loadConflictState: () => Promise<void>;
   loadUndoAction: () => Promise<void>;
   undo: () => Promise<void>;
 
@@ -195,6 +221,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   stashes: [],
   selectedStashIndex: null,
   tags: [],
+  forcePushPending: false,
+  conflictState: null,
   remoteCheckoutPending: null,
   undoInfo: null,
   lastUndoTime: 0,
@@ -230,13 +258,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const name = await openRepo(path);
       set({ repoPath: path, repoName: name });
       await reloadRepoData(set);
-      const [statuses, stashList, tagList, undoAction] = await Promise.all([
+      const [statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
         getFileStatus(),
         getStashes(),
         getTags(),
         getUndoAction(),
+        getConflictState(),
       ]);
-      set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList, undoInfo: undoAction });
+      set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList, undoInfo: undoAction, conflictState: conflict });
       // Track in recent repos + save as last opened (fire-and-forget)
       Promise.all([
         addRecentRepo(path, name).then(() => get().loadRecentRepos()),
@@ -395,11 +424,38 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Push complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
+      const errMsg = String(e);
+      // Detect rejected push (diverged history after reset)
+      if (errMsg.includes("rejected") || errMsg.includes("non-fast-forward") || errMsg.includes("fetch first")) {
+        toast.error("Push rejected — remote has diverged", { id: toastId });
+        set({ forcePushPending: true });
+      } else {
+        toast.error(errMsg, { id: toastId });
+      }
+    } finally {
+      unlisten();
+    }
+  },
+
+  forcePush: async () => {
+    set({ forcePushPending: false, isLoading: true });
+    const toastId = toast.loading("Force pushing...");
+    const unlisten = await listen<string>("git_progress", (event) => {
+      toast.loading(event.payload, { id: toastId });
+    });
+    try {
+      await forcePushRepo();
+      set({ isLoading: false });
+      toast.success("Force push complete", { id: toastId });
+    } catch (e) {
+      set({ isLoading: false });
       toast.error(String(e), { id: toastId });
     } finally {
       unlisten();
     }
   },
+
+  cancelForcePush: () => set({ forcePushPending: false }),
 
   selectCommit: async (id) => {
     set({
@@ -543,6 +599,26 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await get().loadStatus();
       set({ activeDiff: null, selectedFilePath: null });
       toast.success("All changes discarded");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  resolveOurs: async (filePath) => {
+    try {
+      await resolveOursCmd(filePath);
+      await get().loadStatus();
+      toast.success(`Resolved ${filePath.split("/").pop()} — kept ours`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  resolveTheirs: async (filePath) => {
+    try {
+      await resolveTheirsCmd(filePath);
+      await get().loadStatus();
+      toast.success(`Resolved ${filePath.split("/").pop()} — kept theirs`);
     } catch (e) {
       toast.error(String(e));
     }
@@ -708,6 +784,111 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  resetTo: async (commitId, mode) => {
+    set({ isLoading: true });
+    try {
+      await resetToCommitCmd(commitId, `--${mode}`);
+      await reloadRepoData(set);
+      const statuses = await getFileStatus();
+      set({ isLoading: false, fileStatuses: statuses });
+      toast.success(mode === "soft" ? "Reset (soft) — changes kept staged" : "Reset (hard) — working tree clean");
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  cherryPick: async (commitId) => {
+    set({ isLoading: true });
+    try {
+      await cherryPickCommit(commitId);
+      await reloadRepoData(set);
+      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
+      set({ isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      if (conflict.in_progress) {
+        toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
+      } else {
+        toast.success("Cherry-pick successful");
+      }
+    } catch (e) {
+      set({ isLoading: false });
+      // Check if the error is a conflict (git cherry-pick exits non-zero on conflict)
+      const conflict = await getConflictState().catch(() => null);
+      if (conflict?.in_progress) {
+        await reloadRepoData(set);
+        const statuses = await getFileStatus().catch(() => []);
+        set({ fileStatuses: statuses, conflictState: conflict });
+        toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
+      } else {
+        toast.error(String(e));
+      }
+    }
+  },
+
+  rebaseOnto: async (targetBranch) => {
+    set({ isLoading: true });
+    try {
+      await rebaseOntoCmd(targetBranch);
+      await reloadRepoData(set);
+      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
+      set({ isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      if (conflict.in_progress) {
+        toast.error("Rebase has conflicts — resolve them, then continue or abort");
+      } else {
+        toast.success(`Rebased onto ${targetBranch}`);
+      }
+    } catch (e) {
+      set({ isLoading: false });
+      const conflict = await getConflictState().catch(() => null);
+      if (conflict?.in_progress) {
+        await reloadRepoData(set);
+        const statuses = await getFileStatus().catch(() => []);
+        set({ fileStatuses: statuses, conflictState: conflict });
+        toast.error("Rebase has conflicts — resolve them, then continue or abort");
+      } else {
+        toast.error(String(e));
+      }
+    }
+  },
+
+  abortOperation: async () => {
+    try {
+      await abortOperationCmd();
+      await reloadRepoData(set);
+      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
+      set({ fileStatuses: statuses, conflictState: conflict });
+      toast.success("Operation aborted");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  continueOperation: async () => {
+    try {
+      await continueOperationCmd();
+      await reloadRepoData(set);
+      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
+      set({ fileStatuses: statuses, conflictState: conflict });
+      if (conflict.in_progress) {
+        toast.error("Still has conflicts — resolve remaining files");
+      } else {
+        toast.success("Operation completed");
+      }
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  loadConflictState: async () => {
+    if (!get().repoPath) return;
+    try {
+      const conflict = await getConflictState();
+      set({ conflictState: conflict });
+    } catch {
+      set({ conflictState: null });
+    }
+  },
+
   loadUndoAction: async () => {
     if (!get().repoPath) return;
     try {
@@ -764,13 +945,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await reloadRepoData(set);
       // Skip undo refresh for 3s after an undo to prevent undo-of-undo loop
       const suppressUndo = Date.now() - get().lastUndoTime < 3000;
-      const [statuses, stashList, tagList, undoAction] = await Promise.all([
+      const [statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
         getFileStatus(),
         getStashes(),
         getTags(),
         suppressUndo ? Promise.resolve(null) : getUndoAction(),
+        getConflictState(),
       ]);
-      const update: Partial<RepoState> = { fileStatuses: statuses, stashes: stashList, tags: tagList };
+      const update: Partial<RepoState> = { fileStatuses: statuses, stashes: stashList, tags: tagList, conflictState: conflict };
       if (undoAction !== null) {
         update.undoInfo = undoAction;
       }

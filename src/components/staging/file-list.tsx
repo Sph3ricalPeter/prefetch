@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
   Plus,
@@ -21,14 +22,18 @@ export function FileList() {
   const stage = useRepoStore((s) => s.stage);
   const unstage = useRepoStore((s) => s.unstage);
   const discard = useRepoStore((s) => s.discard);
+  const resolveOurs = useRepoStore((s) => s.resolveOurs);
+  const resolveTheirs = useRepoStore((s) => s.resolveTheirs);
   const selectFile = useRepoStore((s) => s.selectFile);
   const isLoading = useRepoStore((s) => s.isLoading);
   const [confirmDiscard, setConfirmDiscard] = useState<string[] | null>(null);
+  const [conflictsOpen, setConflictsOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(true);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
 
-  const staged = fileStatuses.filter((f) => f.is_staged);
-  const unstaged = fileStatuses.filter((f) => !f.is_staged);
+  const conflicted = fileStatuses.filter((f) => f.is_conflicted);
+  const staged = fileStatuses.filter((f) => f.is_staged && !f.is_conflicted);
+  const unstaged = fileStatuses.filter((f) => !f.is_staged && !f.is_conflicted);
 
   if (fileStatuses.length === 0) {
     return (
@@ -40,6 +45,31 @@ export function FileList() {
 
   return (
     <div className="flex flex-col overflow-y-auto">
+      {/* Conflicts section */}
+      {conflicted.length > 0 && (
+        <FileSection
+          label="Conflicts"
+          count={conflicted.length}
+          isOpen={conflictsOpen}
+          onToggle={() => setConflictsOpen(!conflictsOpen)}
+          actionLabel=""
+          actionDisabled={true}
+          labelClassName="text-red-400 hover:text-red-300"
+        >
+          {conflicted.map((file) => (
+            <ConflictRow
+              key={`conflict-${file.path}`}
+              file={file}
+              isSelected={selectedFilePath === file.path}
+              onSelect={() => selectFile(file.path, false)}
+              onResolveOurs={() => resolveOurs(file.path)}
+              onResolveTheirs={() => resolveTheirs(file.path)}
+              disabled={isLoading}
+            />
+          ))}
+        </FileSection>
+      )}
+
       {/* Unstaged section */}
       <FileSection
         label="Unstaged"
@@ -121,6 +151,7 @@ function FileSection({
   actionLabel,
   onAction,
   actionDisabled,
+  labelClassName,
   children,
 }: {
   label: string;
@@ -130,6 +161,7 @@ function FileSection({
   actionLabel: string;
   onAction?: () => void;
   actionDisabled: boolean;
+  labelClassName?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -137,7 +169,7 @@ function FileSection({
       <div className="flex items-center px-3 py-1.5">
         <button
           onClick={onToggle}
-          className="flex items-center gap-1 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+          className={`flex items-center gap-1 text-xs font-medium uppercase tracking-wider transition-colors ${labelClassName ?? "text-muted-foreground hover:text-foreground"}`}
         >
           {isOpen ? (
             <ChevronDown className="h-3 w-3" />
@@ -248,6 +280,89 @@ function FileRow({
           </button>
         </TooltipTrigger>
         <TooltipContent>{toggleTitle}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+function ConflictRow({
+  file,
+  isSelected,
+  onSelect,
+  onResolveOurs,
+  onResolveTheirs,
+  disabled,
+}: {
+  file: FileStatus;
+  isSelected: boolean;
+  onSelect: () => void;
+  onResolveOurs: () => void;
+  onResolveTheirs: () => void;
+  disabled: boolean;
+}) {
+  const fileName = file.path.split("/").pop() ?? file.path;
+  const dirPath = file.path.includes("/")
+    ? file.path.slice(0, file.path.lastIndexOf("/"))
+    : "";
+
+  const conflictLabel = (() => {
+    switch (file.conflict_type) {
+      case "both_modified": return "Both modified";
+      case "both_added": return "Both added";
+      case "both_deleted": return "Both deleted";
+      case "added_by_us": return "We added";
+      case "added_by_them": return "They added";
+      case "deleted_by_us": return "We deleted";
+      case "deleted_by_them": return "They deleted";
+      default: return "Conflicted";
+    }
+  })();
+
+  return (
+    <div
+      className={`group flex items-center gap-1.5 px-3 py-0.5 cursor-pointer transition-colors ${
+        isSelected
+          ? "bg-accent text-accent-foreground"
+          : "hover:bg-secondary"
+      }`}
+      onClick={onSelect}
+    >
+      <AlertTriangle className="h-3 w-3 shrink-0 text-red-400" />
+      <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="truncate text-xs text-foreground">{fileName}</span>
+        {dirPath && (
+          <span className="truncate text-xs text-muted-foreground/50">
+            {dirPath}
+          </span>
+        )}
+      </div>
+      <span className="shrink-0 text-xs text-red-400/70">
+        {conflictLabel}
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={(e) => { e.stopPropagation(); onResolveOurs(); }}
+            disabled={disabled}
+            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
+          >
+            Ours
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Keep your version</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={(e) => { e.stopPropagation(); onResolveTheirs(); }}
+            disabled={disabled}
+            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-green-400 hover:bg-green-500/20 transition-all disabled:opacity-40"
+          >
+            Theirs
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Keep their version</TooltipContent>
       </Tooltip>
     </div>
   );

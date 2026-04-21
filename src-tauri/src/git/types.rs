@@ -56,10 +56,13 @@ pub struct BranchInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct FileStatus {
     pub path: String,
-    pub status_type: String, // "modified", "added", "deleted", "renamed", "untracked"
+    pub status_type: String, // "modified", "added", "deleted", "renamed", "untracked", "conflicted"
     pub is_staged: bool,
     pub additions: Option<u32>,
     pub deletions: Option<u32>,
+    pub is_conflicted: bool,
+    /// "both_modified", "both_added", "deleted_by_us", "deleted_by_them", etc.
+    pub conflict_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +101,14 @@ pub struct TagInfo {
     pub name: String,
     pub commit_id: String,
     pub message: Option<String>,
+}
+
+/// State of an in-progress merge, rebase, or cherry-pick.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConflictState {
+    pub in_progress: bool,
+    /// "rebase", "cherry-pick", "merge", or ""
+    pub operation: String,
 }
 
 /// Describes the last undoable action from the reflog.

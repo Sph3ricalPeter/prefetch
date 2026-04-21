@@ -38,8 +38,11 @@ pub fn run() {
             commands::repo::fetch_repo,
             commands::repo::pull_repo,
             commands::repo::push_repo,
+            commands::repo::force_push_repo,
             commands::repo::get_file_status,
             commands::repo::get_file_diff,
+            commands::repo::resolve_conflict_ours,
+            commands::repo::resolve_conflict_theirs,
             commands::repo::discard_files,
             commands::repo::discard_all_changes,
             commands::repo::stage_files,
@@ -59,6 +62,12 @@ pub fn run() {
             commands::repo::push_tag,
             commands::repo::get_undo_action,
             commands::repo::undo_last,
+            commands::repo::reset_to_commit,
+            commands::repo::cherry_pick,
+            commands::repo::rebase_onto,
+            commands::repo::get_conflict_state,
+            commands::repo::abort_operation,
+            commands::repo::continue_operation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

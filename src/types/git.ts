@@ -48,6 +48,9 @@ export interface FileStatus {
   is_staged: boolean;
   additions: number | null;
   deletions: number | null;
+  is_conflicted: boolean;
+  /** "both_modified", "both_added", "deleted_by_us", "deleted_by_them", etc. */
+  conflict_type: string | null;
 }
 
 export interface FileDiff {
@@ -81,6 +84,12 @@ export interface TagInfo {
   name: string;
   commit_id: string;
   message: string | null;
+}
+
+export interface ConflictState {
+  in_progress: boolean;
+  /** "rebase", "cherry-pick", "merge", or "" */
+  operation: string;
 }
 
 export interface UndoAction {

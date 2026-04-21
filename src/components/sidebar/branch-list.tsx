@@ -2,14 +2,21 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
 import type { BranchInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
+import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 
 export function BranchList({ filter = "" }: { filter?: string }) {
   const branches = useRepoStore((s) => s.branches);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const checkout = useRepoStore((s) => s.checkout);
+  const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
   const isLoading = useRepoStore((s) => s.isLoading);
   const [localOpen, setLocalOpen] = useState(true);
   const [remoteOpen, setRemoteOpen] = useState(false);
+  const [branchContextMenu, setBranchContextMenu] = useState<{
+    branch: BranchInfo;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const filtered = filter
     ? branches.filter((b) =>
@@ -42,6 +49,10 @@ export function BranchList({ filter = "" }: { filter?: string }) {
               isCurrent={branch.name === currentBranch}
               disabled={isLoading}
               onClick={() => handleCheckout(branch.name)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setBranchContextMenu({ branch, x: e.clientX, y: e.clientY });
+              }}
             />
           ))}
         </BranchSection>
@@ -60,12 +71,58 @@ export function BranchList({ filter = "" }: { filter?: string }) {
               isCurrent={false}
               disabled={isLoading}
               onClick={() => handleCheckout(branch.name)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setBranchContextMenu({ branch, x: e.clientX, y: e.clientY });
+              }}
             />
           ))}
         </BranchSection>
       </div>
+
+      {/* Branch context menu */}
+      {branchContextMenu && (
+        <ContextMenu
+          x={branchContextMenu.x}
+          y={branchContextMenu.y}
+          items={buildBranchContextMenuItems(
+            branchContextMenu.branch,
+            currentBranch,
+            rebaseOnto,
+            checkout,
+          )}
+          onClose={() => setBranchContextMenu(null)}
+        />
+      )}
     </div>
   );
+}
+
+function buildBranchContextMenuItems(
+  branch: BranchInfo,
+  currentBranch: string | null,
+  rebaseOnto: (target: string) => void,
+  checkout: (name: string) => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+
+  // Checkout option (if not already current)
+  if (branch.name !== currentBranch) {
+    items.push({
+      label: `Checkout ${branch.name}`,
+      onClick: () => checkout(branch.name),
+    });
+  }
+
+  // Rebase option (only for local branches that aren't current)
+  if (!branch.is_remote && branch.name !== currentBranch && currentBranch) {
+    items.push({
+      label: `Rebase ${currentBranch} onto ${branch.name}`,
+      onClick: () => rebaseOnto(branch.name),
+    });
+  }
+
+  return items;
 }
 
 function BranchSection({
@@ -107,11 +164,13 @@ function BranchRow({
   isCurrent,
   disabled,
   onClick,
+  onContextMenu,
 }: {
   branch: BranchInfo;
   isCurrent: boolean;
   disabled: boolean;
   onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   // Strip "origin/" prefix for display on remote branches
   const displayName = branch.name;
@@ -119,6 +178,7 @@ function BranchRow({
   return (
     <button
       onDoubleClick={onClick}
+      onContextMenu={onContextMenu}
       disabled={disabled && !isCurrent}
       className={`flex w-full items-center gap-2 px-3 py-1 text-left text-xs transition-colors ${
         isCurrent

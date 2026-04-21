@@ -1,8 +1,8 @@
 use crate::error::AppError;
 use crate::git::graph::assign_lanes;
 use crate::git::types::{
-    BranchInfo, CoAuthor, CommitInfo, DiffHunk, DiffLine, FileDiff, FileStatus, GraphData,
-    StashInfo, TagInfo, UndoAction,
+    BranchInfo, CoAuthor, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff, FileStatus,
+    GraphData, StashInfo, TagInfo, UndoAction,
 };
 use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
@@ -184,6 +184,15 @@ pub fn fetch_all<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppE
     run_git_with_progress(
         path,
         &["fetch", "--all", "--prune", "--progress"],
+        &on_progress,
+    )
+}
+
+/// Force push to remote (used after reset when local diverges from remote).
+pub fn force_push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
+    run_git_with_progress(
+        path,
+        &["push", "--force-with-lease", "--progress"],
         &on_progress,
     )
 }
@@ -370,6 +379,41 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         let wt_status = line.as_bytes()[1] as char;
         let file_path = line[3..].to_string();
 
+        // Check for merge conflicts (both columns have U, or specific conflict combos)
+        let is_conflict = matches!(
+            (index_status, wt_status),
+            ('U', 'U')
+                | ('A', 'A')
+                | ('D', 'D')
+                | ('A', 'U')
+                | ('U', 'A')
+                | ('D', 'U')
+                | ('U', 'D')
+        );
+
+        if is_conflict {
+            let conflict_type = match (index_status, wt_status) {
+                ('U', 'U') => "both_modified",
+                ('A', 'A') => "both_added",
+                ('D', 'D') => "both_deleted",
+                ('A', 'U') => "added_by_us",
+                ('U', 'A') => "added_by_them",
+                ('D', 'U') => "deleted_by_us",
+                ('U', 'D') => "deleted_by_them",
+                _ => "conflicted",
+            };
+            result.push(FileStatus {
+                path: file_path,
+                status_type: "conflicted".to_string(),
+                is_staged: false,
+                additions: None,
+                deletions: None,
+                is_conflicted: true,
+                conflict_type: Some(conflict_type.to_string()),
+            });
+            continue;
+        }
+
         // Staged changes (index column)
         if index_status != ' ' && index_status != '?' {
             let (additions, deletions) = staged_stats
@@ -382,6 +426,8 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
                 is_staged: true,
                 additions,
                 deletions,
+                is_conflicted: false,
+                conflict_type: None,
             });
         }
 
@@ -401,6 +447,8 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
                 is_staged: false,
                 additions,
                 deletions,
+                is_conflicted: false,
+                conflict_type: None,
             });
         }
     }
@@ -551,6 +599,20 @@ fn parse_hunk_header(line: &str) -> (u32, u32, u32, u32) {
 /// Discard changes in specific files (revert to HEAD state).
 /// Handles tracked modified/deleted files via `git checkout`, and
 /// untracked files via `git clean`.
+/// Resolve a conflict by accepting our version of the file.
+pub fn resolve_ours(path: &str, file_path: &str) -> Result<(), AppError> {
+    run_git(path, &["checkout", "--ours", "--", file_path])?;
+    run_git(path, &["add", file_path])?;
+    Ok(())
+}
+
+/// Resolve a conflict by accepting their version of the file.
+pub fn resolve_theirs(path: &str, file_path: &str) -> Result<(), AppError> {
+    run_git(path, &["checkout", "--theirs", "--", file_path])?;
+    run_git(path, &["add", file_path])?;
+    Ok(())
+}
+
 pub fn discard_files(path: &str, files: &[String]) -> Result<(), AppError> {
     // Unstage any staged changes first
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
@@ -655,6 +717,8 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
                 is_staged: true,
                 additions,
                 deletions,
+                is_conflicted: false,
+                conflict_type: None,
             });
         }
     }
@@ -800,6 +864,8 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
                 is_staged: true,
                 additions,
                 deletions,
+                is_conflicted: false,
+                conflict_type: None,
             });
         }
     }
@@ -1047,5 +1113,74 @@ pub fn undo_last(path: &str) -> Result<String, AppError> {
         ))
     } else {
         Err(AppError::Other(format!("Cannot undo: {action}")))
+    }
+}
+
+/// Reset the current branch to a specific commit.
+/// `mode` should be "--soft" or "--hard".
+pub fn reset_to_commit(path: &str, commit_id: &str, mode: &str) -> Result<String, AppError> {
+    run_git(path, &["reset", mode, commit_id])
+}
+
+/// Cherry-pick a commit onto the current branch.
+pub fn cherry_pick(path: &str, commit_id: &str) -> Result<String, AppError> {
+    run_git(path, &["cherry-pick", commit_id])
+}
+
+/// Rebase the current branch onto a target branch (non-interactive).
+pub fn rebase_onto(path: &str, target: &str) -> Result<String, AppError> {
+    run_git(path, &["rebase", target])
+}
+
+/// Detect if a merge, rebase, or cherry-pick is in progress.
+pub fn get_conflict_state(path: &str) -> Result<ConflictState, AppError> {
+    let git_dir = Path::new(path).join(".git");
+
+    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        return Ok(ConflictState {
+            in_progress: true,
+            operation: "rebase".to_string(),
+        });
+    }
+
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Ok(ConflictState {
+            in_progress: true,
+            operation: "cherry-pick".to_string(),
+        });
+    }
+
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Ok(ConflictState {
+            in_progress: true,
+            operation: "merge".to_string(),
+        });
+    }
+
+    Ok(ConflictState {
+        in_progress: false,
+        operation: String::new(),
+    })
+}
+
+/// Abort the current in-progress operation (rebase, cherry-pick, or merge).
+pub fn abort_operation(path: &str) -> Result<String, AppError> {
+    let state = get_conflict_state(path)?;
+    match state.operation.as_str() {
+        "rebase" => run_git(path, &["rebase", "--abort"]),
+        "cherry-pick" => run_git(path, &["cherry-pick", "--abort"]),
+        "merge" => run_git(path, &["merge", "--abort"]),
+        _ => Err(AppError::Other("No operation in progress".to_string())),
+    }
+}
+
+/// Continue the current in-progress operation after conflict resolution.
+pub fn continue_operation(path: &str) -> Result<String, AppError> {
+    let state = get_conflict_state(path)?;
+    match state.operation.as_str() {
+        "rebase" => run_git(path, &["rebase", "--continue"]),
+        "cherry-pick" => run_git(path, &["cherry-pick", "--continue"]),
+        "merge" => run_git(path, &["merge", "--continue"]),
+        _ => Err(AppError::Other("No operation in progress".to_string())),
     }
 }

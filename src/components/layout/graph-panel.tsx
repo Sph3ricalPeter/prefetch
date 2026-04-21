@@ -14,10 +14,12 @@ import {
   X,
   ChevronDown,
   FolderOpen,
+  AlertTriangle,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
+import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 
 export function GraphPanel() {
   const repoPath = useRepoStore((s) => s.repoPath);
@@ -56,9 +58,25 @@ export function GraphPanel() {
   const remoteCheckoutPending = useRepoStore((s) => s.remoteCheckoutPending);
   const resetLocalToRemote = useRepoStore((s) => s.resetLocalToRemote);
   const cancelRemoteCheckout = useRepoStore((s) => s.cancelRemoteCheckout);
+  const forcePushPending = useRepoStore((s) => s.forcePushPending);
+  const forcePush = useRepoStore((s) => s.forcePush);
+  const cancelForcePush = useRepoStore((s) => s.cancelForcePush);
+  const conflictState = useRepoStore((s) => s.conflictState);
+  const cherryPick = useRepoStore((s) => s.cherryPick);
+  const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
+  const resetTo = useRepoStore((s) => s.resetTo);
+  const abortOp = useRepoStore((s) => s.abortOperation);
+  const continueOp = useRepoStore((s) => s.continueOperation);
+  const currentBranch = useRepoStore((s) => s.currentBranch);
 
   const [showBranchInput, setShowBranchInput] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
+  const [commitContextMenu, setCommitContextMenu] = useState<{
+    commitId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [confirmResetHard, setConfirmResetHard] = useState<string | null>(null);
 
   // Ctrl+Z undo shortcut
   useEffect(() => {
@@ -299,6 +317,35 @@ export function GraphPanel() {
       <div className="mx-3 my-1 border-t border-border" />
       </div>
 
+      {/* Conflict banner */}
+      {conflictState?.in_progress && (() => {
+        const unresolvedCount = fileStatuses.filter((f) => f.is_conflicted).length;
+        return (
+          <div className="flex items-center gap-2 border-b border-yellow-500/30 bg-yellow-500/10 px-4 py-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
+            <span className="flex-1 text-xs text-yellow-200">
+              {conflictState.operation.charAt(0).toUpperCase() + conflictState.operation.slice(1)} in progress
+              {unresolvedCount > 0 && (
+                <> — <span className="font-medium text-yellow-100">{unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""} to resolve</span></>
+              )}
+            </span>
+            <button
+              onClick={continueOp}
+              disabled={unresolvedCount > 0}
+              className="rounded px-2 py-0.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Continue
+            </button>
+            <button
+              onClick={abortOp}
+              className="rounded px-2 py-0.5 text-xs font-medium text-red-400 hover:bg-destructive/20 transition-colors"
+            >
+              Abort
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Center content: graph, diff, or large diff guard */}
       <div className="flex-1 min-h-0">
         {showLargeDiffGuard ? (
@@ -332,9 +379,32 @@ export function GraphPanel() {
             stashes={stashes}
             hasUncommittedChanges={fileStatuses.length > 0}
             onClickWip={clearSelection}
+            onCommitContextMenu={(commitId, x, y) => setCommitContextMenu({ commitId, x, y })}
           />
         )}
       </div>
+
+      {/* Commit context menu */}
+      {commitContextMenu && (
+        <ContextMenu
+          x={commitContextMenu.x}
+          y={commitContextMenu.y}
+          items={buildCommitContextMenuItems(
+            commitContextMenu.commitId,
+            currentBranch,
+            cherryPick,
+            (id, mode) => {
+              if (mode === "hard") {
+                setConfirmResetHard(id);
+              } else {
+                resetTo(id, mode);
+              }
+            },
+            rebaseOnto,
+          )}
+          onClose={() => setCommitContextMenu(null)}
+        />
+      )}
 
       {/* Remote checkout dialog */}
       {remoteCheckoutPending && (
@@ -367,6 +437,61 @@ export function GraphPanel() {
                 className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
               >
                 Reset Local to Remote
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset hard confirmation */}
+      {confirmResetHard && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Reset hard?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              This will discard all changes and move the branch to {confirmResetHard.slice(0, 7)}. This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmResetHard(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  resetTo(confirmResetHard, "hard");
+                  setConfirmResetHard(null);
+                }}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Reset Hard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Force push confirmation */}
+      {forcePushPending && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Force push?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              The remote branch has diverged from your local branch. Force pushing will overwrite the remote history. This uses --force-with-lease for safety.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={cancelForcePush}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={forcePush}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Force Push
               </button>
             </div>
           </div>
@@ -478,6 +603,46 @@ function RepoSwitcher({
       )}
     </div>
   );
+}
+
+function buildCommitContextMenuItems(
+  commitId: string,
+  currentBranch: string | null,
+  cherryPick: (id: string) => void,
+  resetTo: (id: string, mode: "soft" | "hard") => void,
+  rebaseOnto: (target: string) => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+
+  items.push({
+    label: `Cherry-pick onto ${currentBranch ?? "HEAD"}`,
+    onClick: () => cherryPick(commitId),
+  });
+
+  if (currentBranch) {
+    items.push({
+      label: `Rebase ${currentBranch} onto here`,
+      onClick: () => rebaseOnto(commitId),
+    });
+  }
+
+  items.push({
+    label: "Reset soft to here (keep changes)",
+    onClick: () => resetTo(commitId, "soft"),
+  });
+
+  items.push({
+    label: "Reset hard to here",
+    onClick: () => resetTo(commitId, "hard"),
+    destructive: true,
+  });
+
+  items.push({
+    label: `Copy SHA: ${commitId.slice(0, 7)}`,
+    onClick: () => navigator.clipboard.writeText(commitId),
+  });
+
+  return items;
 }
 
 function ToolbarButton({
