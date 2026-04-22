@@ -73,7 +73,7 @@ export function LfsPanel() {
       <div className="flex items-center px-3 py-1.5">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+          className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
         >
           {isOpen ? (
             <ChevronDown className="h-3 w-3" />
@@ -90,13 +90,13 @@ export function LfsPanel() {
               ? "bg-green-500"
               : lfsInfo.installed
                 ? "bg-yellow-500"
-                : "bg-muted-foreground/40"
+                : "bg-faint"
           }`}
         />
 
         {/* Object count badge */}
         {lfsInfo.initialized && lfsInfo.file_count > 0 && (
-          <span className="ml-1 text-xs text-muted-foreground/50 normal-case tracking-normal">
+          <span className="ml-1 text-xs text-faint normal-case tracking-normal">
             {lfsInfo.file_count}
           </span>
         )}
@@ -182,7 +182,7 @@ export function LfsPanel() {
                     value={newPattern}
                     onChange={(e) => setNewPattern(e.target.value)}
                     onKeyDown={handlePatternKeyDown}
-                    className="flex-1 rounded bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+                    className="flex-1 rounded bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
                   />
                   <button
                     onClick={handleAddPattern}

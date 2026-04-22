@@ -5,8 +5,12 @@ import {
   Plus,
   Minus,
   Trash2,
+  List,
+  FolderTree,
+  Folder,
+  FolderOpen,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -15,6 +19,8 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { buildFileTree, collectFilePaths } from "@/lib/file-tree";
+import type { FileTreeNode } from "@/lib/file-tree";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
 function matchesLfsPattern(filePath: string, pattern: string): boolean {
@@ -24,6 +30,8 @@ function matchesLfsPattern(filePath: string, pattern: string): boolean {
   const fileName = filePath.split("/").pop() ?? filePath;
   return regex.test(fileName) || regex.test(filePath);
 }
+
+type ViewMode = "flat" | "tree";
 
 export function FileList() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
@@ -38,6 +46,9 @@ export function FileList() {
   const isLoading = useRepoStore((s) => s.isLoading);
 
   /** Check if a file is tracked by LFS */
+  const fileViewMode = useRepoStore((s) => s.fileViewMode);
+  const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
+
   const isLfsFile = (filePath: string) =>
     lfsInfo?.initialized &&
     lfsInfo.tracked_patterns.some((p) => matchesLfsPattern(filePath, p.pattern));
@@ -45,10 +56,13 @@ export function FileList() {
   const [conflictsOpen, setConflictsOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(true);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
+  const viewMode = fileViewMode;
 
   const conflicted = fileStatuses.filter((f) => f.is_conflicted);
   const staged = fileStatuses.filter((f) => f.is_staged && !f.is_conflicted);
   const unstaged = fileStatuses.filter((f) => !f.is_staged && !f.is_conflicted);
+
+  const toggleViewMode = () => setFileViewMode(viewMode === "flat" ? "tree" : "flat");
 
   if (fileStatuses.length === 0) {
     return (
@@ -70,6 +84,8 @@ export function FileList() {
           actionLabel=""
           actionDisabled={true}
           labelClassName="text-red-400 hover:text-red-300"
+          viewMode={viewMode}
+          onToggleViewMode={toggleViewMode}
         >
           {conflicted.map((file) => (
             <ConflictRow
@@ -98,21 +114,39 @@ export function FileList() {
             : undefined
         }
         actionDisabled={isLoading}
+        viewMode={viewMode}
+        onToggleViewMode={toggleViewMode}
       >
-        {unstaged.map((file) => (
-          <FileRow
-            key={`unstaged-${file.path}`}
-            file={file}
-            isSelected={selectedFilePath === file.path}
-            isLfs={!!isLfsFile(file.path)}
-            onSelect={() => selectFile(file.path, false)}
-            onToggle={() => stage([file.path])}
+        {viewMode === "tree" ? (
+          <FileTreeView
+            files={unstaged}
+            selectedFilePath={selectedFilePath}
+            isLfsFile={isLfsFile}
+            onSelect={(path) => selectFile(path, false)}
+            onToggle={(path) => stage([path])}
             toggleIcon={<Plus className="h-3 w-3" />}
             toggleTitle="Stage"
-            onDiscard={() => setConfirmDiscard([file.path])}
+            onDiscard={(path) => setConfirmDiscard([path])}
+            onToggleBatch={(paths) => stage(paths)}
+            onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading}
           />
-        ))}
+        ) : (
+          unstaged.map((file) => (
+            <FileRow
+              key={`unstaged-${file.path}`}
+              file={file}
+              isSelected={selectedFilePath === file.path}
+              isLfs={!!isLfsFile(file.path)}
+              onSelect={() => selectFile(file.path, false)}
+              onToggle={() => stage([file.path])}
+              toggleIcon={<Plus className="h-3 w-3" />}
+              toggleTitle="Stage"
+              onDiscard={() => setConfirmDiscard([file.path])}
+              disabled={isLoading}
+            />
+          ))
+        )}
       </FileSection>
 
       {/* Staged section */}
@@ -128,21 +162,39 @@ export function FileList() {
             : undefined
         }
         actionDisabled={isLoading}
+        viewMode={viewMode}
+        onToggleViewMode={toggleViewMode}
       >
-        {staged.map((file) => (
-          <FileRow
-            key={`staged-${file.path}`}
-            file={file}
-            isSelected={selectedFilePath === file.path}
-            isLfs={!!isLfsFile(file.path)}
-            onSelect={() => selectFile(file.path, true)}
-            onToggle={() => unstage([file.path])}
+        {viewMode === "tree" ? (
+          <FileTreeView
+            files={staged}
+            selectedFilePath={selectedFilePath}
+            isLfsFile={isLfsFile}
+            onSelect={(path) => selectFile(path, true)}
+            onToggle={(path) => unstage([path])}
             toggleIcon={<Minus className="h-3 w-3" />}
             toggleTitle="Unstage"
-            onDiscard={() => setConfirmDiscard([file.path])}
+            onDiscard={(path) => setConfirmDiscard([path])}
+            onToggleBatch={(paths) => unstage(paths)}
+            onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading}
           />
-        ))}
+        ) : (
+          staged.map((file) => (
+            <FileRow
+              key={`staged-${file.path}`}
+              file={file}
+              isSelected={selectedFilePath === file.path}
+              isLfs={!!isLfsFile(file.path)}
+              onSelect={() => selectFile(file.path, true)}
+              onToggle={() => unstage([file.path])}
+              toggleIcon={<Minus className="h-3 w-3" />}
+              toggleTitle="Unstage"
+              onDiscard={() => setConfirmDiscard([file.path])}
+              disabled={isLoading}
+            />
+          ))
+        )}
       </FileSection>
 
       {/* Discard confirmation dialog */}
@@ -169,6 +221,8 @@ function FileSection({
   onAction,
   actionDisabled,
   labelClassName,
+  viewMode,
+  onToggleViewMode,
   children,
 }: {
   label: string;
@@ -179,6 +233,8 @@ function FileSection({
   onAction?: () => void;
   actionDisabled: boolean;
   labelClassName?: string;
+  viewMode: ViewMode;
+  onToggleViewMode: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -186,7 +242,7 @@ function FileSection({
       <div className="flex items-center px-3 py-1.5">
         <button
           onClick={onToggle}
-          className={`flex items-center gap-1 text-xs font-medium uppercase tracking-wider transition-colors ${labelClassName ?? "text-muted-foreground hover:text-foreground"}`}
+          className={`flex items-center gap-1 text-label font-semibold uppercase tracking-[0.06em] transition-colors ${labelClassName ?? "text-muted-foreground hover:text-foreground"}`}
         >
           {isOpen ? (
             <ChevronDown className="h-3 w-3" />
@@ -194,21 +250,267 @@ function FileSection({
             <ChevronRight className="h-3 w-3" />
           )}
           {label}
-          <span className="ml-1 normal-case tracking-normal text-muted-foreground/50">
+          <span className="ml-1 normal-case tracking-normal text-faint">
             {count}
           </span>
         </button>
-        {onAction && count > 0 && (
-          <button
-            onClick={onAction}
-            disabled={actionDisabled}
-            className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-          >
-            {actionLabel}
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* View mode toggle */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleViewMode}
+                className="rounded p-0.5 text-faint hover:text-muted-foreground transition-colors"
+              >
+                {viewMode === "flat" ? (
+                  <FolderTree className="h-3 w-3" />
+                ) : (
+                  <List className="h-3 w-3" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {viewMode === "flat" ? "Tree view" : "Flat view"}
+            </TooltipContent>
+          </Tooltip>
+          {onAction && count > 0 && (
+            <button
+              onClick={onAction}
+              disabled={actionDisabled}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+            >
+              {actionLabel}
+            </button>
+          )}
+        </div>
       </div>
       {isOpen && <div>{children}</div>}
+    </div>
+  );
+}
+
+// --- Tree view ---
+
+function FileTreeView({
+  files,
+  selectedFilePath,
+  isLfsFile,
+  onSelect,
+  onToggle,
+  toggleIcon,
+  toggleTitle,
+  onDiscard,
+  onToggleBatch,
+  onDiscardBatch,
+  disabled,
+}: {
+  files: FileStatus[];
+  selectedFilePath: string | null;
+  isLfsFile: (path: string) => boolean | undefined;
+  onSelect: (path: string) => void;
+  onToggle: (path: string) => void;
+  toggleIcon: React.ReactNode;
+  toggleTitle: string;
+  onDiscard: (path: string) => void;
+  onToggleBatch: (paths: string[]) => void;
+  onDiscardBatch: (paths: string[]) => void;
+  disabled: boolean;
+}) {
+  const tree = useMemo(() => buildFileTree(files), [files]);
+
+  return (
+    <div>
+      {tree.map((node) => (
+        <TreeNodeView
+          key={node.path}
+          node={node}
+          depth={0}
+          selectedFilePath={selectedFilePath}
+          isLfsFile={isLfsFile}
+          onSelect={onSelect}
+          onToggle={onToggle}
+          toggleIcon={toggleIcon}
+          toggleTitle={toggleTitle}
+          onDiscard={onDiscard}
+          onToggleBatch={onToggleBatch}
+          onDiscardBatch={onDiscardBatch}
+          disabled={disabled}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TreeNodeView({
+  node,
+  depth,
+  selectedFilePath,
+  isLfsFile,
+  onSelect,
+  onToggle,
+  toggleIcon,
+  toggleTitle,
+  onDiscard,
+  onToggleBatch,
+  onDiscardBatch,
+  disabled,
+}: {
+  node: FileTreeNode;
+  depth: number;
+  selectedFilePath: string | null;
+  isLfsFile: (path: string) => boolean | undefined;
+  onSelect: (path: string) => void;
+  onToggle: (path: string) => void;
+  toggleIcon: React.ReactNode;
+  toggleTitle: string;
+  onDiscard: (path: string) => void;
+  onToggleBatch: (paths: string[]) => void;
+  onDiscardBatch: (paths: string[]) => void;
+  disabled: boolean;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const indent = depth * 16;
+
+  if (node.type === "directory") {
+    const fileCount = collectFilePaths(node).length;
+    return (
+      <div>
+        <div
+          className="group flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
+          style={{ paddingLeft: `${12 + indent}px` }}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3 w-3 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          )}
+          {expanded ? (
+            <FolderOpen className="h-3 w-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <Folder className="h-3 w-3 shrink-0 text-muted-foreground" />
+          )}
+          <span className="truncate">{node.name}</span>
+          <span className="text-faint">{fileCount}</span>
+          <span className="ml-auto shrink-0 flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDiscardBatch(collectFilePaths(node));
+                  }}
+                  disabled={disabled}
+                  className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-red-400 transition-all disabled:opacity-40"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Discard folder changes</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleBatch(collectFilePaths(node));
+                  }}
+                  disabled={disabled}
+                  className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
+                >
+                  {toggleIcon}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{toggleTitle} folder</TooltipContent>
+            </Tooltip>
+          </span>
+        </div>
+        {expanded && node.children.map((child) => (
+          <TreeNodeView
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            selectedFilePath={selectedFilePath}
+            isLfsFile={isLfsFile}
+            onSelect={onSelect}
+            onToggle={onToggle}
+            toggleIcon={toggleIcon}
+            toggleTitle={toggleTitle}
+            onDiscard={onDiscard}
+            onToggleBatch={onToggleBatch}
+            onDiscardBatch={onDiscardBatch}
+            disabled={disabled}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // File node
+  const file = node.file!;
+  const statusColor = statusTypeColor(file.status_type);
+  const statusLabel = statusTypeLabel(file.status_type);
+  const isSelected = selectedFilePath === file.path;
+  const isLfs = !!isLfsFile(file.path);
+
+  return (
+    <div
+      className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
+        isSelected
+          ? "bg-accent text-accent-foreground"
+          : "hover:bg-secondary"
+      }`}
+      style={{ paddingLeft: `${12 + indent + 16}px` }}
+      onClick={() => onSelect(file.path)}
+    >
+      <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
+        {statusLabel}
+      </span>
+      <span className="truncate text-xs text-foreground">{node.name}</span>
+      {isLfs && (
+        <span className="shrink-0 rounded px-1 py-px text-caption font-medium leading-none bg-blue-500/20 text-blue-400">
+          LFS
+        </span>
+      )}
+      <span className="ml-auto shrink-0 flex items-center gap-1 tabular-nums text-right">
+        {file.additions != null && (
+          <span className="text-xs text-green-400">+{file.additions}</span>
+        )}
+        {file.deletions != null && file.deletions > 0 && (
+          <span className="text-xs text-red-400">-{file.deletions}</span>
+        )}
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDiscard(file.path);
+            }}
+            disabled={disabled}
+            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-red-400 transition-all disabled:opacity-40"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Discard changes</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle(file.path);
+            }}
+            disabled={disabled}
+            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
+          >
+            {toggleIcon}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{toggleTitle}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
@@ -243,7 +545,7 @@ function FileRow({
 
   return (
     <div
-      className={`group flex items-center gap-1.5 px-3 py-0.5 cursor-pointer transition-colors ${
+      className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
         isSelected
           ? "bg-accent text-accent-foreground"
           : "hover:bg-secondary"
@@ -257,12 +559,12 @@ function FileRow({
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
         {isLfs && (
-          <span className="shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none bg-blue-500/20 text-blue-400">
+          <span className="shrink-0 rounded px-1 py-px text-caption font-medium leading-none bg-blue-500/20 text-blue-400">
             LFS
           </span>
         )}
         {dirPath && (
-          <span className="truncate text-xs text-muted-foreground/50">
+          <span className="truncate text-xs text-faint">
             {dirPath}
           </span>
         )}
@@ -344,7 +646,7 @@ function ConflictRow({
 
   return (
     <div
-      className={`group flex items-center gap-1.5 px-3 py-0.5 cursor-pointer transition-colors ${
+      className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
         isSelected
           ? "bg-accent text-accent-foreground"
           : "hover:bg-secondary"
@@ -356,12 +658,12 @@ function ConflictRow({
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
         {dirPath && (
-          <span className="truncate text-xs text-muted-foreground/50">
+          <span className="truncate text-xs text-faint">
             {dirPath}
           </span>
         )}
       </div>
-      <span className="shrink-0 text-xs text-red-400/70">
+      <span className="shrink-0 text-xs text-red-400">
         {conflictLabel}
       </span>
       <Tooltip>

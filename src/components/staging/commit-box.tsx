@@ -90,14 +90,14 @@ export function CommitBox() {
                   className="h-5 w-5 shrink-0 rounded-full"
                 />
               ) : (
-                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[9px] font-bold text-primary">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-caption font-bold text-primary">
                   {getInitials(gitIdentity.name)}
                 </div>
               )}
               <span className="text-xs text-muted-foreground truncate">
                 {gitIdentity.name}
               </span>
-              <span className="ml-auto rounded bg-accent px-1 py-0.5 text-[9px] text-muted-foreground/60 shrink-0">
+              <span className="ml-auto rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
                 {gitIdentity.source}
               </span>
             </div>
@@ -106,7 +106,7 @@ export function CommitBox() {
             <div className="space-y-0.5 text-xs">
               <p className="font-medium">{gitIdentity.name}</p>
               <p className="text-muted-foreground">{gitIdentity.email}</p>
-              <p className="text-muted-foreground/70 text-[11px]">
+              <p className="text-dim text-label">
                 Source: {SOURCE_LABELS[gitIdentity.source] ?? gitIdentity.source}
               </p>
             </div>
@@ -121,7 +121,7 @@ export function CommitBox() {
           onKeyDown={handleKeyDown}
           placeholder="Commit message..."
           rows={1}
-          className={`w-full resize-none rounded bg-background border px-3 py-2 pr-10 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring ${
+          className={`w-full resize-none rounded-md bg-background border px-3 py-2 pr-10 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors ${
             commitMessage.length > 72
               ? "border-destructive/60"
               : commitMessage.length > 50
@@ -131,12 +131,12 @@ export function CommitBox() {
         />
         {commitMessage.length > 0 && (
           <span
-            className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] tabular-nums ${
+            className={`absolute right-2 top-1/2 -translate-y-1/2 text-caption tabular-nums ${
               commitMessage.length > 72
                 ? "text-destructive"
                 : commitMessage.length > 50
                   ? "text-yellow-500"
-                  : "text-muted-foreground/40"
+                  : "text-faint"
             }`}
           >
             {commitMessage.length}
@@ -147,7 +147,7 @@ export function CommitBox() {
       {/* Description toggle + field */}
       <button
         onClick={() => setShowDescription(!showDescription)}
-        className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors self-start"
+        className="flex items-center gap-1 text-xs text-dim hover:text-muted-foreground transition-colors self-start"
       >
         {showDescription ? (
           <ChevronDown className="h-3 w-3" />
@@ -164,14 +164,14 @@ export function CommitBox() {
           onKeyDown={handleKeyDown}
           placeholder="Optional extended description..."
           rows={3}
-          className="w-full resize-y rounded bg-background border border-border px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
+          className="w-full resize-y rounded-md bg-background border border-border px-3 py-2 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors"
         />
       )}
 
       <button
         onClick={handleCommit}
         disabled={!canCommit}
-        className="w-full rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="w-full rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
       >
         {isLoading
           ? "Committing..."
@@ -179,7 +179,7 @@ export function CommitBox() {
             ? `Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
             : "Nothing staged"}
       </button>
-      <p className="text-center text-xs text-muted-foreground/50">
+      <p className="text-center text-xs text-faint">
         Ctrl+Enter to commit
       </p>
     </div>

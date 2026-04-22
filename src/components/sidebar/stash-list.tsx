@@ -34,7 +34,7 @@ export function StashList({ filter = "" }: { filter?: string }) {
       <div className="flex items-center px-3 py-1.5">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+          className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
         >
           {isOpen ? (
             <ChevronDown className="h-3 w-3" />
@@ -43,7 +43,7 @@ export function StashList({ filter = "" }: { filter?: string }) {
           )}
           Stash
           {filtered.length > 0 && (
-            <span className="ml-1 normal-case tracking-normal text-muted-foreground/50">
+            <span className="ml-1 normal-case tracking-normal text-faint">
               {filtered.length}
             </span>
           )}

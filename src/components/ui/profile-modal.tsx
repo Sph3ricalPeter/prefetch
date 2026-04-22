@@ -98,7 +98,7 @@ function ProfileListView({
       {/* Profile cards */}
       <div className="space-y-1.5 mb-4">
         {profiles.length === 0 ? (
-          <p className="text-xs text-muted-foreground/50 italic py-4 text-center">
+          <p className="text-xs text-faint italic py-4 text-center">
             No profiles yet. Create one to get started.
           </p>
         ) : (
@@ -118,12 +118,12 @@ function ProfileListView({
                     <Star className="h-2.5 w-2.5 text-yellow-500 shrink-0 fill-yellow-500" />
                   )}
                   {activeProfile?.id === profile.id && (
-                    <span className="rounded bg-primary/20 px-1 py-0.5 text-[9px] text-primary shrink-0">
+                    <span className="rounded bg-primary/20 px-1 py-0.5 text-caption text-primary shrink-0">
                       active
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-muted-foreground truncate">
+                <p className="text-label text-muted-foreground truncate">
                   {profile.user_email}
                 </p>
               </div>
@@ -287,7 +287,7 @@ function ProfileEditView({
         <div className="flex items-center gap-3">
           <AvatarPreview email={userEmail} name={userName || name} />
           <div className="flex-1">
-            <label className="block text-[11px] text-muted-foreground mb-1">
+            <label className="block text-label text-muted-foreground mb-1">
               Profile Name
             </label>
             <input
@@ -296,18 +296,18 @@ function ProfileEditView({
               placeholder="e.g. Work, Personal"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
         </div>
 
         {/* Git identity */}
         <div className="space-y-2">
-          <h3 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+          <h3 className="text-label font-medium text-muted-foreground uppercase tracking-wider">
             Git Identity
           </h3>
           <div>
-            <label className="block text-[11px] text-muted-foreground mb-1">
+            <label className="block text-label text-muted-foreground mb-1">
               Author Name
             </label>
             <input
@@ -315,11 +315,11 @@ function ProfileEditView({
               placeholder="Jane Doe"
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
           <div>
-            <label className="block text-[11px] text-muted-foreground mb-1">
+            <label className="block text-label text-muted-foreground mb-1">
               Author Email
             </label>
             <input
@@ -327,14 +327,14 @@ function ProfileEditView({
               placeholder="jane@example.com"
               value={userEmail}
               onChange={(e) => setUserEmail(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
         </div>
 
         {/* SSH key */}
         <div className="space-y-2">
-          <h3 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+          <h3 className="text-label font-medium text-muted-foreground uppercase tracking-wider">
             SSH Key (optional)
           </h3>
           <div className="flex items-center gap-1.5">
@@ -343,7 +343,7 @@ function ProfileEditView({
               placeholder="~/.ssh/id_ed25519"
               value={sshKeyPath}
               onChange={(e) => setSshKeyPath(e.target.value)}
-              className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+              className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
             <Tooltip>
               <TooltipTrigger asChild>
@@ -357,7 +357,7 @@ function ProfileEditView({
               <TooltipContent>Browse for SSH key</TooltipContent>
             </Tooltip>
           </div>
-          <p className="text-[10px] text-muted-foreground/50">
+          <p className="text-caption text-faint">
             When set, git push/pull/fetch will use this key via GIT_SSH_COMMAND.
           </p>
         </div>
@@ -365,10 +365,10 @@ function ProfileEditView({
         {/* Path prefixes (only for existing profiles) */}
         {isEditing && (
           <div className="space-y-2">
-            <h3 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+            <h3 className="text-label font-medium text-muted-foreground uppercase tracking-wider">
               Auto-switch Paths
             </h3>
-            <p className="text-[10px] text-muted-foreground/50">
+            <p className="text-caption text-faint">
               Repos under these folders will automatically activate this profile.
             </p>
             {paths.length > 0 ? (
@@ -378,8 +378,8 @@ function ProfileEditView({
                     key={p.id}
                     className="group flex items-center gap-1.5 text-xs text-muted-foreground"
                   >
-                    <FolderOpen className="h-3 w-3 shrink-0 opacity-50" />
-                    <span className="flex-1 font-mono truncate text-[11px]">
+                    <FolderOpen className="h-3 w-3 shrink-0 text-faint" />
+                    <span className="flex-1 font-mono truncate text-label">
                       {p.path_prefix}
                     </span>
                     <button
@@ -392,7 +392,7 @@ function ProfileEditView({
                 ))}
               </div>
             ) : (
-              <p className="text-[10px] text-muted-foreground/40 italic">
+              <p className="text-caption text-faint italic">
                 No paths configured — profile won't auto-switch.
               </p>
             )}
@@ -418,7 +418,7 @@ function ProfileEditView({
             Set as default profile
           </span>
         </label>
-        <p className="text-[10px] text-muted-foreground/50 -mt-2 ml-5">
+        <p className="text-caption text-faint -mt-2 ml-5">
           The default profile is used when no path prefix matches.
         </p>
 

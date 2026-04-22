@@ -17,6 +17,7 @@ import { UpdateChecker } from "@/components/updater";
  */
 function DatabaseInit() {
   const loadRecentRepos = useRepoStore((s) => s.loadRecentRepos);
+  const loadFileViewMode = useRepoStore((s) => s.loadFileViewMode);
   const loadProfiles = useProfileStore((s) => s.loadProfiles);
   const restoreActiveProfile = useProfileStore((s) => s.restoreActiveProfile);
 
@@ -29,6 +30,7 @@ function DatabaseInit() {
         if (cancelled) return;
         await Promise.all([
           loadRecentRepos(),
+          loadFileViewMode(),
           loadProfiles().then(() => restoreActiveProfile()),
         ]);
       } catch {
@@ -40,7 +42,7 @@ function DatabaseInit() {
     };
     tryInit();
     return () => { cancelled = true; };
-  }, [loadRecentRepos, loadProfiles, restoreActiveProfile]);
+  }, [loadRecentRepos, loadFileViewMode, loadProfiles, restoreActiveProfile]);
 
   return null;
 }

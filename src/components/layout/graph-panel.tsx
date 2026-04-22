@@ -1,18 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
   RefreshCw,
   ArrowLeft,
-  Undo2,
-  Archive,
-  ArchiveRestore,
-  GitBranchPlus,
   FolderGit2,
   X,
-  ChevronDown,
-  FolderOpen,
   AlertTriangle,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
@@ -20,10 +12,14 @@ import { useProfileStore } from "@/stores/profile-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 
 export function GraphPanel() {
   const repoPath = useRepoStore((s) => s.repoPath);
-  const repoName = useRepoStore((s) => s.repoName);
   const commits = useRepoStore((s) => s.commits);
   const edges = useRepoStore((s) => s.edges);
   const totalLanes = useRepoStore((s) => s.totalLanes);
@@ -46,12 +42,6 @@ export function GraphPanel() {
   const loadPendingDiff = useRepoStore((s) => s.loadPendingDiff);
   const clearSelection = useRepoStore((s) => s.clearSelection);
   const loadStatus = useRepoStore((s) => s.loadStatus);
-  const fetchAction = useRepoStore((s) => s.fetch);
-  const pullAction = useRepoStore((s) => s.pull);
-  const pushAction = useRepoStore((s) => s.push);
-  const pushStash = useRepoStore((s) => s.pushStash);
-  const popStash = useRepoStore((s) => s.popStash);
-  const createBranch = useRepoStore((s) => s.createBranch);
   const checkout = useRepoStore((s) => s.checkout);
   const undoInfo = useRepoStore((s) => s.undoInfo);
   const undoAction = useRepoStore((s) => s.undo);
@@ -69,8 +59,6 @@ export function GraphPanel() {
   const continueOp = useRepoStore((s) => s.continueOperation);
   const currentBranch = useRepoStore((s) => s.currentBranch);
 
-  const [showBranchInput, setShowBranchInput] = useState(false);
-  const [newBranchName, setNewBranchName] = useState("");
   const [commitContextMenu, setCommitContextMenu] = useState<{
     commitId: string;
     x: number;
@@ -78,7 +66,7 @@ export function GraphPanel() {
   } | null>(null);
   const [confirmResetHard, setConfirmResetHard] = useState<string | null>(null);
 
-  // Ctrl+Z undo shortcut
+  // Ctrl+Z undo shortcut (global)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
@@ -109,27 +97,29 @@ export function GraphPanel() {
   const recentRepos = useRepoStore((s) => s.recentRepos);
   const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
 
-  // No repo open
+  // No repo open — welcome screen
   if (!repoPath) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-6 bg-background">
-        <button
-          onClick={handleOpenRepo}
-          disabled={isLoading}
-          className="rounded-md bg-secondary px-6 py-3 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent disabled:opacity-50"
-        >
-          {isLoading ? "Opening..." : "Open Repository"}
-        </button>
-        <p className="text-xs text-muted-foreground">
-          Select a folder containing a Git repository
-        </p>
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-sm text-muted-foreground">
+            Open a repository to get started
+          </p>
+          <button
+            onClick={handleOpenRepo}
+            disabled={isLoading}
+            className="rounded-lg border border-border bg-card px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+          >
+            {isLoading ? "Opening..." : "Open Repository"}
+          </button>
+        </div>
 
         {recentRepos.length > 0 && (
-          <div className="mt-4 w-full max-w-sm">
-            <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider text-center">
+          <div className="mt-2 w-full max-w-sm">
+            <p className="mb-2 text-label font-medium text-faint uppercase tracking-[0.08em] text-center">
               Recent Repositories
             </p>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 rounded-lg border border-border overflow-hidden">
               {recentRepos.map((repo) => {
                 const profileName = repo.profile_id
                   ? useProfileStore.getState().profiles.find((p) => p.id === repo.profile_id)?.name
@@ -137,7 +127,7 @@ export function GraphPanel() {
                 return (
                   <div
                     key={repo.path}
-                    className="group flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors hover:bg-secondary"
+                    className="group flex items-center gap-2 bg-card px-3 py-2 cursor-pointer transition-colors hover:bg-secondary"
                     onClick={() => openRepository(repo.path)}
                   >
                     <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -145,25 +135,29 @@ export function GraphPanel() {
                       <span className="text-sm text-foreground truncate">
                         {repo.name}
                       </span>
-                      <span className="text-xs text-muted-foreground/50 truncate">
+                      <span className="text-label text-faint truncate">
                         {repo.path}
                       </span>
                     </div>
                     {profileName && (
-                      <span className="shrink-0 rounded bg-accent px-1.5 py-0.5 text-[10px] text-muted-foreground/60">
+                      <span className="shrink-0 rounded-sm bg-brand/10 px-1.5 py-0.5 text-caption font-medium text-brand-dim">
                         {profileName}
                       </span>
                     )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeFromRecentRepos(repo.path);
-                      }}
-                      className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
-                      title="Remove from recent"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFromRecentRepos(repo.path);
+                          }}
+                          className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Remove from recent</TooltipContent>
+                    </Tooltip>
                   </div>
                 );
               })}
@@ -188,11 +182,10 @@ export function GraphPanel() {
 
   return (
     <div className="relative flex h-full flex-col bg-background">
-      {/* Header bar with toolbar */}
-      <div className="shrink-0">
-      <div className="flex min-h-10 items-center px-4 py-1">
-        {showDiff || showLargeDiffGuard || (diffLoading && selectedFilePath) ? (
-          <>
+      {/* Toolbar — only shown for diff breadcrumb, Change 5: buttons moved to titlebar */}
+      {(showDiff || showLargeDiffGuard || (diffLoading && selectedFilePath)) && (
+        <div className="shrink-0">
+          <div className="flex min-h-9 items-center px-3 py-1">
             <button
               onClick={clearDiff}
               className="mr-2 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
@@ -205,107 +198,10 @@ export function GraphPanel() {
             <RefreshCw
               className={`ml-2 h-3 w-3 shrink-0 text-muted-foreground animate-spin transition-opacity duration-100 ${diffLoading ? "opacity-100" : "opacity-0"}`}
             />
-          </>
-        ) : (
-          <RepoSwitcher
-            repoName={repoName ?? ""}
-            commitCount={commits.length}
-            recentRepos={recentRepos}
-            currentPath={repoPath ?? ""}
-            onOpenRepo={handleOpenRepo}
-            onSwitchRepo={openRepository}
-            onRemoveRepo={removeFromRecentRepos}
-            profiles={useProfileStore.getState().profiles}
-          />
-        )}
-
-        {/* Toolbar buttons — right side */}
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
-          {undoInfo?.can_undo && (
-            <div className="flex items-center gap-1 border-r border-border pr-2">
-              <ToolbarButton
-                icon={<Undo2 className="h-3.5 w-3.5" />}
-                label="Undo"
-                disabled={isLoading}
-                onClick={undoAction}
-                title={undoInfo.description}
-              />
-            </div>
-          )}
-
-          <div className="flex items-center gap-1">
-            <ToolbarButton
-              icon={<RefreshCw className="h-3.5 w-3.5" />}
-              label="Fetch"
-              disabled={isLoading}
-              onClick={fetchAction}
-            />
-            <ToolbarButton
-              icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-              label="Pull"
-              disabled={isLoading}
-              onClick={pullAction}
-            />
-            <ToolbarButton
-              icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-              label="Push"
-              disabled={isLoading}
-              onClick={pushAction}
-            />
           </div>
-
-          <div className="flex items-center gap-1 border-l border-border pl-2">
-            <ToolbarButton
-              icon={<Archive className="h-3.5 w-3.5" />}
-              label="Stash"
-              disabled={isLoading || fileStatuses.length === 0}
-              onClick={() => pushStash()}
-            />
-            <ToolbarButton
-              icon={<ArchiveRestore className="h-3.5 w-3.5" />}
-              label="Pop"
-              disabled={isLoading || stashes.length === 0}
-              onClick={() => popStash(0)}
-            />
-          </div>
-
-          <div className="flex items-center gap-1 border-l border-border pl-2">
-            {showBranchInput ? (
-              <input
-                type="text"
-                placeholder="branch name..."
-                value={newBranchName}
-                onChange={(e) => setNewBranchName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newBranchName.trim()) {
-                    createBranch(newBranchName.trim());
-                    setNewBranchName("");
-                    setShowBranchInput(false);
-                  } else if (e.key === "Escape") {
-                    setShowBranchInput(false);
-                    setNewBranchName("");
-                  }
-                }}
-                onBlur={() => {
-                  setShowBranchInput(false);
-                  setNewBranchName("");
-                }}
-                autoFocus
-                className="w-32 rounded bg-background border border-border px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
-              />
-            ) : (
-              <ToolbarButton
-                icon={<GitBranchPlus className="h-3.5 w-3.5" />}
-                label="Branch"
-                disabled={isLoading}
-                onClick={() => setShowBranchInput(true)}
-              />
-            )}
-          </div>
+          <div className="mx-3 border-t border-border" />
         </div>
-      </div>
-      <div className="mx-3 my-1 border-t border-border" />
-      </div>
+      )}
 
       {/* Conflict banner */}
       {conflictState?.in_progress && (() => {
@@ -401,7 +297,7 @@ export function GraphPanel() {
       {/* Remote checkout dialog */}
       {remoteCheckoutPending && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-sm">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-sm">
             <p className="text-sm text-foreground mb-1">
               A local &apos;{remoteCheckoutPending.localName}&apos; already exists.
             </p>
@@ -438,7 +334,7 @@ export function GraphPanel() {
       {/* Reset hard confirmation */}
       {confirmResetHard && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Reset hard?</p>
             <p className="text-xs text-muted-foreground mb-4">
               This will discard all changes and move the branch to {confirmResetHard.slice(0, 7)}. This cannot be undone.
@@ -467,7 +363,7 @@ export function GraphPanel() {
       {/* Force push confirmation */}
       {forcePushPending && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Force push?</p>
             <p className="text-xs text-muted-foreground mb-4">
               The remote branch has diverged from your local branch. Force pushing will overwrite the remote history. This uses --force-with-lease for safety.
@@ -487,122 +383,6 @@ export function GraphPanel() {
               </button>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RepoSwitcher({
-  repoName,
-  commitCount,
-  recentRepos,
-  currentPath,
-  onOpenRepo,
-  onSwitchRepo,
-  onRemoveRepo,
-  profiles,
-}: {
-  repoName: string;
-  commitCount: number;
-  recentRepos: { path: string; name: string; profile_id: string | null }[];
-  currentPath: string;
-  onOpenRepo: () => void;
-  onSwitchRepo: (path: string) => void;
-  onRemoveRepo: (path: string) => void;
-  profiles: { id: string; name: string }[];
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [isOpen]);
-
-  const otherRepos = recentRepos.filter((r) => r.path !== currentPath);
-
-  return (
-    <div className="relative" ref={dropdownRef}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex max-w-[200px] items-center gap-1 rounded px-2 py-1 -ml-2 hover:bg-secondary transition-colors"
-      >
-        <span className="truncate text-xs font-medium text-muted-foreground">
-          {repoName}
-        </span>
-        <span className="shrink-0 text-xs text-muted-foreground/50">
-          {commitCount.toLocaleString()}
-        </span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
-      </button>
-
-      {isOpen && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-72 rounded-md border border-border bg-popover shadow-lg">
-          {/* Open new repo */}
-          <button
-            onClick={() => {
-              setIsOpen(false);
-              onOpenRepo();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-          >
-            <FolderOpen className="h-3.5 w-3.5" />
-            Open Repository...
-          </button>
-
-          {/* Recent repos */}
-          {otherRepos.length > 0 && (
-            <>
-              <div className="border-t border-border" />
-              <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground/50 uppercase tracking-wider">
-                Recent
-              </p>
-              {otherRepos.map((repo) => {
-                const profileName = repo.profile_id
-                  ? profiles.find((p) => p.id === repo.profile_id)?.name
-                  : null;
-                return (
-                  <div
-                    key={repo.path}
-                    className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-secondary transition-colors"
-                    onClick={() => {
-                      setIsOpen(false);
-                      onSwitchRepo(repo.path);
-                    }}
-                  >
-                    <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-xs text-foreground truncate">{repo.name}</span>
-                      <span className="text-xs text-muted-foreground/40 truncate">{repo.path}</span>
-                    </div>
-                    {profileName && (
-                      <span className="shrink-0 rounded bg-accent px-1.5 py-0.5 text-[10px] text-muted-foreground/60">
-                        {profileName}
-                      </span>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemoveRepo(repo.path);
-                      }}
-                      className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
-                      title="Remove from recent"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                );
-              })}
-            </>
-          )}
         </div>
       )}
     </div>
@@ -648,30 +428,3 @@ function buildCommitContextMenuItems(
 
   return items;
 }
-
-function ToolbarButton({
-  icon,
-  label,
-  disabled,
-  onClick,
-  title,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  title?: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title ?? label}
-      className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-

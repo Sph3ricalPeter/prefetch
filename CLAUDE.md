@@ -32,6 +32,8 @@ See `GITCLIENT_PROJECT_BRIEF.md` for full product spec, tech stack decisions, an
 - **Rust**: Follow `cargo clippy` and `cargo fmt` conventions. No `unwrap()` in production code — use proper error handling with `thiserror` or `anyhow`.
 - **TypeScript/React**: Strict mode. No `any` types. Functional components only. Use Zustand for state.
 - **CSS**: Tailwind only via shadcn/ui. No inline styles, no CSS modules, no styled-components.
+- **Font**: Inter (sans-serif), JetBrains Mono (monospace via `font-mono`). Use `font-mono` **only** for diff viewer and code/config displays. All other text (paths, hashes, branch names, commit graph) uses Inter. Never reference font families by name in components — use CSS/canvas constants.
+- **Type scale**: 4 levels — `text-caption` (9px headers/badges), `text-label` (11px form labels), `text-xs` (12px body), `text-sm` (14px title). No arbitrary font sizes (`text-[Npx]`). Canvas equivalents: `SIZE_LABEL`, `SIZE_BODY`. See DESIGN.md "Type Scale (App)".
 - **Naming**: Rust = snake_case. React components = PascalCase. Files = kebab-case for TS, snake_case for Rust.
 
 ## Architecture Quick Reference

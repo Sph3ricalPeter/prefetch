@@ -61,11 +61,11 @@ The app uses shadcn HSL variables. These align to the same Zinc scale:
 
 | Context | Font | Fallback stack |
 |---|---|---|
-| **App UI** | Geist (variable, woff2) | system-ui, sans-serif |
+| **App UI** | Inter (variable, woff2) | system-ui, sans-serif |
 | **Landing page** | Inter (Google Fonts, 400–700) | -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif |
-| **Monospace** (both) | SF Mono, Cascadia Code, JetBrains Mono, Fira Code | monospace |
+| **Monospace** (both) | JetBrains Mono (app, bundled) | ui-monospace, monospace |
 
-> **Why two fonts?** Geist is loaded locally in the Tauri app for offline use and tighter control. Inter is loaded from Google Fonts on the landing page for zero-config CDN delivery. Both are geometric sans-serifs from the same design lineage — they're visually interchangeable at body sizes.
+> **Same font, two delivery methods.** The app loads Inter locally from `public/fonts/InterVariable.woff2` for offline use. The landing page loads it from Google Fonts CDN for zero-config delivery.
 
 ### Type Scale (Landing Page)
 
@@ -81,6 +81,26 @@ The app uses shadcn HSL variables. These align to the same Zinc scale:
 | Code | `12.5px` | 400 | normal | Mono stack |
 | Stat value | `28px` | 700 | `-0.03em` | |
 | Stat label | `12px` | 500 | `0.06em` | Uppercase, muted |
+
+### Type Scale (App)
+
+Four levels. Custom tokens defined in `src/index.css` via `@theme inline` using `--text-*` naming (NOT `--font-size-*`).
+
+| Token | Size | Tailwind class | Line-height | Role |
+|-------|------|---------------|-------------|------|
+| caption | 9px | `text-caption` | 14px | Section headers (uppercase+tracked), badges, tiny metadata |
+| label | 11px | `text-label` | 16px | Form labels, modal descriptions |
+| body | 12px | `text-xs` (built-in) | 16px | Default everything — lists, buttons, inputs |
+| title | 14px | `text-sm` (built-in) | 20px | Commit messages, dialog headings |
+
+Canvas (`commit-graph-canvas.tsx`) uses matching named constants: `SIZE_LABEL`, `SIZE_BODY` and font constant `FONT_SANS`.
+
+Use `font-mono` (JetBrains Mono) **only** for: diff viewer, code/config displays, and code input fields. All other text (commit hashes, file paths, directory paths, repo paths, branch names, commit graph) uses Inter (`font-sans`).
+
+**Rules:**
+- Never use arbitrary font sizes (`text-[Npx]`). Pick from the four levels above.
+- Canvas font sizes must stay in sync with the CSS tokens.
+- `text-xs` and `text-sm` are Tailwind built-ins — do not redefine them.
 
 ### Key Typography Rules
 

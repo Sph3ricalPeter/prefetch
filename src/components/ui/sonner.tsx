@@ -8,7 +8,7 @@ export function Toaster() {
       richColors
       toastOptions={{
         style: {
-          fontFamily: '"Geist", system-ui, sans-serif',
+          fontFamily: '"Inter", system-ui, sans-serif',
         },
       }}
     />

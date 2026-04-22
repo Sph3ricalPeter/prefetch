@@ -10,13 +10,31 @@ import { gravatarUrl } from "@/lib/gravatar";
 
 const ROW_HEIGHT = 32;
 const LANE_WIDTH = 20;
-const NODE_RADIUS = 8;
-const GRAPH_PADDING_LEFT = 12;
+const NODE_RADIUS = 10;          // Change 4: was 8 (16px -> 20px diameter)
+const SCROLLBAR_PAD = 6;         // matches scrollbar width for visual balance
+const GRAPH_PADDING_LEFT = 12 + SCROLLBAR_PAD; // left padding accounts for scrollbar parity
 const TEXT_GAP = 24;
-const LABEL_HEIGHT = 16;
-const LABEL_PAD_X = 5;
+const LABEL_HEIGHT = 20;         // Change 2: was 16
+const LABEL_PAD_X = 7;           // Change 2: was 5
 const LABEL_GAP = 3;
-const LABEL_RADIUS = 3;
+const LABEL_RADIUS = 4;          // Change 2: was 3
+const ROW_RADIUS = 6;            // Change 1: matches CSS rounded-md
+const GRAPH_PADDING_TOP = 6;     // top padding matching left padding
+const ROW_INSET = 2;             // vertical inset so row highlights don't touch
+
+// Type scale constants (must stay in sync with src/index.css @theme tokens)
+const FONT_SANS = '"Inter", system-ui, sans-serif';
+const SIZE_LABEL = 11;
+const SIZE_BODY = 12;
+
+// Design system grays — must match index.css tokens (240° cool hue)
+const COLOR_FG       = "hsl(240 5% 96%)";  // --foreground
+const COLOR_MUTED    = "hsl(240 5% 65%)";  // --muted-foreground
+const COLOR_DIM      = "hsl(240 5% 45%)";  // --dim (tertiary)
+const COLOR_FAINT    = "hsl(240 5% 30%)";  // --faint (ghost)
+const BG_SELECTED    = "hsl(240 6% 10%)";  // --secondary
+const BG_HOVER       = "hsl(240 6% 8%)";   // between bg and secondary
+const BG_PAGE        = "hsl(240 6% 3.9%)"; // --background (for clearing behind separator labels)
 
 const LANE_COLORS = [
   "#00e5ff", // cyan
@@ -61,15 +79,26 @@ function laneX(lane: number): number {
   return GRAPH_PADDING_LEFT + lane * LANE_WIDTH + LANE_WIDTH / 2;
 }
 
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now() / 1000;
-  const diff = now - timestamp;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`;
-  if (diff < 31536000) return `${Math.floor(diff / 2592000)}mo ago`;
-  return `${Math.floor(diff / 31536000)}y ago`;
+// Change 3: Time-group classification for commit timestamps
+type TimeGroup = "Today" | "Yesterday" | "This week" | "Last week" | "This month" | "Last month" | "Older";
+
+function getTimeGroup(timestamp: number): TimeGroup {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  const startOfYesterday = startOfToday - 86400;
+  const dayOfWeek = now.getDay() || 7; // Sunday = 7
+  const startOfThisWeek = startOfToday - (dayOfWeek - 1) * 86400;
+  const startOfLastWeek = startOfThisWeek - 7 * 86400;
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000;
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime() / 1000;
+
+  if (timestamp >= startOfToday) return "Today";
+  if (timestamp >= startOfYesterday) return "Yesterday";
+  if (timestamp >= startOfThisWeek) return "This week";
+  if (timestamp >= startOfLastWeek) return "Last week";
+  if (timestamp >= startOfThisMonth) return "This month";
+  if (timestamp >= startOfLastMonth) return "Last month";
+  return "Older";
 }
 
 function truncateText(
@@ -80,10 +109,44 @@ function truncateText(
   if (maxWidth <= 0) return "";
   if (ctx.measureText(text).width <= maxWidth) return text;
   let t = text;
-  while (t.length > 0 && ctx.measureText(t + "…").width > maxWidth) {
+  while (t.length > 0 && ctx.measureText(t + "\u2026").width > maxWidth) {
     t = t.slice(0, -1);
   }
-  return t + "…";
+  return t + "\u2026";
+}
+
+/** Draw a small tag icon (matches lucide Tag shape) */
+function drawTagIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+): number {
+  const w = 13;
+  const h = 9;
+  const cx = x + w / 2;
+  const cy = y;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  // Tag body: rectangle with pointed left edge
+  ctx.moveTo(cx - w / 2 + 1, cy);           // left point
+  ctx.lineTo(cx - w / 2 + 3, cy - h / 2);   // top-left
+  ctx.lineTo(cx + w / 2, cy - h / 2);        // top-right
+  ctx.lineTo(cx + w / 2, cy + h / 2);        // bottom-right
+  ctx.lineTo(cx - w / 2 + 3, cy + h / 2);   // bottom-left
+  ctx.closePath();
+  ctx.stroke();
+  // Small circle (tag hole)
+  ctx.beginPath();
+  ctx.arc(cx + w / 2 - 3, cy, 1, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+  return w + 5;
 }
 
 /** Draw a rounded rect pill and return its width */
@@ -94,10 +157,10 @@ function drawPill(
   text: string,
   bgColor: string,
   textColor: string,
-  icon?: string,
+  drawIcon?: (ctx: CanvasRenderingContext2D, ix: number, iy: number, color: string) => number,
 ): number {
-  ctx.font = '10px "Geist", system-ui, sans-serif';
-  const iconWidth = icon ? ctx.measureText(icon).width + 3 : 0;
+  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+  const iconWidth = drawIcon ? drawIcon(ctx, 0, -1000, textColor) : 0; // dry-run to measure width
   const textWidth = ctx.measureText(text).width;
   const pillWidth = textWidth + iconWidth + LABEL_PAD_X * 2;
   const pillY = y - LABEL_HEIGHT / 2;
@@ -110,47 +173,42 @@ function drawPill(
 
   // Icon + text
   ctx.fillStyle = textColor;
-  if (icon) {
-    ctx.fillText(icon, x + LABEL_PAD_X, y);
+  if (drawIcon) {
+    drawIcon(ctx, x + LABEL_PAD_X, y, textColor);
   }
+  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+  ctx.fillStyle = textColor;
   ctx.fillText(text, x + LABEL_PAD_X + iconWidth, y);
 
   return pillWidth;
 }
 
-/** Draw a small branch-fork icon (local branch indicator) */
+/** Draw a small monitor/screen icon (local branch indicator) */
 function drawLocalIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
 ): number {
-  const iconW = 8;
-  const halfH = 5;
+  const iconW = 11;
+  const halfH = 6;
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.4;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
-  // Main vertical stem
-  ctx.moveTo(x + 2, y - halfH);
-  ctx.lineTo(x + 2, y + halfH);
-  // Branch fork
-  ctx.moveTo(x + 2, y - 1);
-  ctx.lineTo(x + iconW - 1, y - halfH);
+  // Monitor screen (rounded rect)
+  ctx.roundRect(x, y - halfH, iconW, halfH * 2 - 3, 1.5);
   ctx.stroke();
-  // Small circles at branch tips
-  ctx.fillStyle = color;
+  // Stand
   ctx.beginPath();
-  ctx.arc(x + 2, y - halfH, 1.2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(x + 2, y + halfH, 1.2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(x + iconW - 1, y - halfH, 1.2, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.moveTo(x + iconW / 2, y + halfH - 3);
+  ctx.lineTo(x + iconW / 2, y + halfH - 1);
+  // Base
+  ctx.moveTo(x + 2, y + halfH - 1);
+  ctx.lineTo(x + iconW - 2, y + halfH - 1);
+  ctx.stroke();
   ctx.restore();
   return iconW + 3;
 }
@@ -162,11 +220,11 @@ function drawRemoteIcon(
   y: number,
   color: string,
 ): number {
-  const iconW = 7;
-  const halfH = 5;
+  const iconW = 9;
+  const halfH = 5;    // shorter vertically
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = 1.6; // Change 2: was 1.4
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -265,16 +323,16 @@ function drawMergedBranchPill(
     : `${bColor}${Math.round(bgAlpha * 255)
         .toString(16)
         .padStart(2, "0")}`;
-  const textCol = isRemoteOnly ? "hsl(0 0% 55%)" : bColor;
+  const textCol = isRemoteOnly ? COLOR_DIM : bColor;
 
   // Measure text
-  ctx.font = '10px "Geist", system-ui, sans-serif';
+  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
   const textWidth = ctx.measureText(group.baseName).width;
 
-  // Calculate icon widths
+  // Calculate icon widths — Change 2: was 11/10
   let iconsWidth = 0;
-  if (group.local) iconsWidth += 11;
-  if (group.remote) iconsWidth += 10;
+  if (group.local) iconsWidth += 15; // 11px icon + 4px gap before remote
+  if (group.remote) iconsWidth += 12;
 
   const pillWidth = LABEL_PAD_X + iconsWidth + textWidth + LABEL_PAD_X;
   const pillY = y - LABEL_HEIGHT / 2;
@@ -285,19 +343,19 @@ function drawMergedBranchPill(
   ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, LABEL_RADIUS);
   ctx.fill();
 
-  // Icons
+  // Icons — Change 2: advance widths updated
   let iconX = x + LABEL_PAD_X;
   if (group.local) {
     drawLocalIcon(ctx, iconX, y, textCol);
-    iconX += 11;
+    iconX += 15; // 11px icon + 4px gap
   }
   if (group.remote) {
     drawRemoteIcon(ctx, iconX, y, textCol);
-    iconX += 10;
+    iconX += 12;
   }
 
   // Text
-  ctx.font = '10px "Geist", system-ui, sans-serif';
+  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
   ctx.fillStyle = textCol;
   ctx.fillText(group.baseName, x + LABEL_PAD_X + iconsWidth, y);
 
@@ -311,6 +369,33 @@ interface BadgeHitArea {
   width: number;
   height: number;
   branchName: string;
+  row: number;
+}
+
+/** Stored body-text position for hover tooltip (Change 6) */
+interface BodyHitArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  row: number;
+  body: string;
+}
+
+/** Stored avatar position for hover tooltip */
+interface AvatarHitArea {
+  cx: number;
+  cy: number;
+  row: number;
+  commitIdx: number;
+}
+
+/** Canvas hover info for tooltip overlay (Change 6) */
+interface CanvasHoverInfo {
+  type: "body" | "avatar";
+  text: string;
+  x: number;
+  y: number;
   row: number;
 }
 
@@ -354,6 +439,10 @@ export function CommitGraphCanvas({
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
   const rafRef = useRef<number>(0);
   const badgeHitAreasRef = useRef<BadgeHitArea[]>([]);
+  const bodyHitAreasRef = useRef<BodyHitArea[]>([]);       // Change 6
+  const avatarHitAreasRef = useRef<AvatarHitArea[]>([]);
+  const [canvasHover, setCanvasHover] = useState<CanvasHoverInfo | null>(null); // Change 6
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);     // Change 6
   // Stable ref so async avatar-load callbacks always reach the latest draw
   const requestDrawRef = useRef<() => void>(() => {});
 
@@ -361,9 +450,9 @@ export function CommitGraphCanvas({
   const rowOffset = hasWip ? 1 : 0;
   const textOffset = GRAPH_PADDING_LEFT + totalLanes * LANE_WIDTH + TEXT_GAP;
   const totalRows = commits.length + rowOffset;
-  const totalHeight = totalRows * ROW_HEIGHT;
+  const totalHeight = totalRows * ROW_HEIGHT + GRAPH_PADDING_TOP;
 
-  // Build lookup maps: commitId prefix → labels
+  // Build lookup maps: commitId prefix -> labels
   const branchMap = useMemo(() => {
     const map = new Map<string, BranchInfo[]>();
     for (const b of branches) {
@@ -393,8 +482,22 @@ export function CommitGraphCanvas({
     return map;
   }, [tags, commits]);
 
-  // Stashes don't have commit_id mapping yet — future: map to commits
+  // Stashes don't have commit_id mapping yet -- future: map to commits
   void stashes;
+
+  // Change 3: Pre-compute time-group boundaries
+  const timeGroupBoundaries = useMemo(() => {
+    const boundaries = new Map<number, TimeGroup>();
+    let prevGroup: TimeGroup | null = null;
+    for (let i = 0; i < commits.length; i++) {
+      const group = getTimeGroup(commits[i].timestamp);
+      if (group !== prevGroup) {
+        boundaries.set(i + rowOffset, group);
+        prevGroup = group;
+      }
+    }
+    return boundaries;
+  }, [commits, rowOffset]);
 
   // Assign a color to each commit based on which branch owns it.
   // Walk backwards from each branch HEAD, coloring commits until
@@ -435,7 +538,7 @@ export function CommitGraphCanvas({
     return colorMap;
   }, [commits, branches]);
 
-  /** Get the color for a commit — branch-owned color or fallback to lane color */
+  /** Get the color for a commit -- branch-owned color or fallback to lane color */
   const getCommitColor = useCallback(
     (commit: CommitInfo): string => {
       return commitColorMap.get(commit.id) ?? laneColor(commit.lane);
@@ -454,7 +557,7 @@ export function CommitGraphCanvas({
     const dpr = window.devicePixelRatio || 1;
     const width = scroll.clientWidth;
     const height = scroll.clientHeight;
-    const scrollTop = scroll.scrollTop;
+    const scrollTop = scroll.scrollTop - GRAPH_PADDING_TOP; // offset so first row starts below top padding
 
     if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
       canvas.width = width * dpr;
@@ -473,9 +576,11 @@ export function CommitGraphCanvas({
     ctx.clearRect(0, 0, width, height);
     ctx.textBaseline = "middle";
     const hitAreas: BadgeHitArea[] = [];
+    const bodyHitAreas: BodyHitArea[] = [];
+    const avatarHitAreas: AvatarHitArea[] = [];
 
     // --- HEAD row highlight (permanent "you are here") ---
-    // Use headCommitId from the backend — works for both branch checkout and detached HEAD (tag checkout)
+    // Use headCommitId from the backend -- works for both branch checkout and detached HEAD (tag checkout)
     let headCommitIdx = headCommitId
       ? commits.findIndex((c) => c.id === headCommitId || c.id.startsWith(headCommitId))
       : -1;
@@ -491,13 +596,16 @@ export function CommitGraphCanvas({
 
     // HEAD highlight color: branch color when on a branch, neutral gray when detached (tag checkout)
     const headHighlightColor = isDetachedHead
-      ? "hsl(0 0% 70%)"
-      : (commits[headCommitIdx] ? getCommitColor(commits[headCommitIdx]) : "#ffffff");
+      ? COLOR_MUTED
+      : (commits[headCommitIdx] ? getCommitColor(commits[headCommitIdx]) : COLOR_FG);
 
+    // Change 1: All row highlights use roundRect instead of fillRect
     if (headRow >= firstVisibleRow && headRow <= lastVisibleRow) {
       ctx.fillStyle = headHighlightColor;
       ctx.globalAlpha = isDetachedHead ? 0.12 : 0.08;
-      ctx.fillRect(0, headRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      ctx.beginPath();
+      ctx.roundRect(SCROLLBAR_PAD, headRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
+      ctx.fill();
       ctx.globalAlpha = 1;
     }
 
@@ -510,18 +618,24 @@ export function CommitGraphCanvas({
       if (selectedRow === headRow) {
         ctx.fillStyle = headHighlightColor;
         ctx.globalAlpha = isDetachedHead ? 0.22 : 0.18;
-        ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+        ctx.beginPath();
+        ctx.roundRect(SCROLLBAR_PAD, selectedRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
+        ctx.fill();
         ctx.globalAlpha = 1;
       } else {
-        ctx.fillStyle = "hsl(0 0% 14.9%)";
-        ctx.fillRect(0, selectedRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+        ctx.fillStyle = BG_SELECTED;
+        ctx.beginPath();
+        ctx.roundRect(SCROLLBAR_PAD, selectedRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
+        ctx.fill();
       }
     }
 
     // WIP row selected highlight
     if (isWipSelected && hasWip && 0 >= firstVisibleRow && 0 <= lastVisibleRow) {
-      ctx.fillStyle = "hsl(0 0% 14.9%)";
-      ctx.fillRect(0, 0 * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+      ctx.fillStyle = BG_SELECTED;
+      ctx.beginPath();
+      ctx.roundRect(SCROLLBAR_PAD, 0 * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
+      ctx.fill();
     }
 
     if (
@@ -534,15 +648,17 @@ export function CommitGraphCanvas({
       if (hoveredRow === headRow) {
         ctx.fillStyle = headHighlightColor;
         ctx.globalAlpha = isDetachedHead ? 0.18 : 0.14;
-        ctx.fillRect(0, hoveredRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+        ctx.beginPath();
+        ctx.roundRect(SCROLLBAR_PAD, hoveredRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
+        ctx.fill();
         ctx.globalAlpha = 1;
       } else {
-        ctx.fillStyle = "hsl(0 0% 10%)";
-        ctx.fillRect(0, hoveredRow * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+        ctx.fillStyle = BG_HOVER;
+        ctx.beginPath();
+        ctx.roundRect(SCROLLBAR_PAD, hoveredRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
+        ctx.fill();
       }
     }
-
-    // WIP row highlight handled by general hover/selection above
 
     // --- Edges (offset by rowOffset) ---
     ctx.lineWidth = 1.5;
@@ -604,20 +720,20 @@ export function CommitGraphCanvas({
       }
 
       // Empty circle node (subtle fill when selected)
-      ctx.strokeStyle = "hsl(0 0% 50%)";
+      ctx.strokeStyle = COLOR_DIM;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(nodeX, wipY, NODE_RADIUS, 0, Math.PI * 2);
       if (isWipSelected) {
-        ctx.fillStyle = "hsl(0 0% 25%)";
+        ctx.fillStyle = COLOR_FAINT;
         ctx.fill();
       }
       ctx.stroke();
 
       // File edit icon + change count
-      const wipTextColor = "hsl(0 0% 70%)";
+      const wipTextColor = COLOR_MUTED;
       const wipIconW = drawFileEditIcon(ctx, textOffset, wipY, wipTextColor);
-      ctx.font = '12px "Geist", system-ui, sans-serif';
+      ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
       ctx.fillStyle = wipTextColor;
       const changeText =
         fileStatusCount === 1 ? "1 change" : `${fileStatusCount} changes`;
@@ -634,12 +750,12 @@ export function CommitGraphCanvas({
       const y = visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
       const color = getCommitColor(commit);
 
-      // Node — avatar image or fallback initial circle
+      // Node -- avatar image or fallback initial circle
       {
         const email = commit.author_email;
         let img = avatarCache.get(email);
         if (img === undefined) {
-          // First encounter — start loading gravatar
+          // First encounter -- start loading gravatar
           avatarCache.set(email, null);
           const loadImg = new Image();
           loadImg.crossOrigin = "anonymous";
@@ -649,13 +765,13 @@ export function CommitGraphCanvas({
             requestDrawRef.current();
           };
           loadImg.onerror = () => {
-            // Stays null — permanent fallback to initials
+            // Stays null -- permanent fallback to initials
           };
           img = null;
         }
 
         if (img) {
-          // Gravatar — draw circular clipped image
+          // Gravatar -- draw circular clipped image
           ctx.save();
           ctx.beginPath();
           ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
@@ -669,14 +785,14 @@ export function CommitGraphCanvas({
           );
           ctx.restore();
         } else {
-          // Fallback — colored circle with author initial
+          // Fallback -- colored circle with author initial
           ctx.beginPath();
           ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
           ctx.fillStyle = color;
           ctx.fill();
           ctx.save();
           ctx.fillStyle = contrastText(color);
-          ctx.font = `bold ${Math.round(NODE_RADIUS * 1.2)}px "Geist", system-ui, sans-serif`;
+          ctx.font = `bold ${Math.round(NODE_RADIUS * 1.2)}px ${FONT_SANS}`;
           ctx.textAlign = "center";
           ctx.fillText(
             commit.author_name.charAt(0).toUpperCase(),
@@ -692,6 +808,9 @@ export function CommitGraphCanvas({
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.5;
         ctx.stroke();
+
+        // Store avatar hit area for tooltip
+        avatarHitAreas.push({ cx: x, cy: y, row: visRow, commitIdx: commitIdx });
       }
 
       // --- Labels (branches + tags) ---
@@ -699,7 +818,7 @@ export function CommitGraphCanvas({
       const commitBranches = branchMap.get(commit.id) ?? [];
       const commitTags = tagMap.get(commit.id) ?? [];
       const hasLabels = commitBranches.length > 0 || commitTags.length > 0;
-      const maxLabelArea = 220; // max px for labels before SHA
+      const maxLabelArea = 260; // Change 2: was 220
 
       if (hasLabels) {
         let usedWidth = 0;
@@ -712,13 +831,13 @@ export function CommitGraphCanvas({
           if (usedWidth > maxLabelArea - 40) {
             const remaining = totalLabels - labelCount;
             if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", "hsl(0 0% 60%)");
+              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", COLOR_DIM);
             }
             break;
           }
           const pillX = labelX + usedWidth;
           const w = drawMergedBranchPill(ctx, pillX, y, group);
-          // Store hit area — prefer local branch name for checkout
+          // Store hit area -- prefer local branch name for checkout
           hitAreas.push({
             x: pillX,
             y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
@@ -736,18 +855,18 @@ export function CommitGraphCanvas({
           if (usedWidth > maxLabelArea - 40) {
             const remaining = totalLabels - labelCount;
             if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", "hsl(0 0% 60%)");
+              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", COLOR_DIM);
             }
             break;
           }
           const tagPillX = labelX + usedWidth;
-          const w = drawPill(ctx, tagPillX, y, tag.name, "rgba(255,255,255,0.08)", "hsl(0 0% 60%)", "⬡");
+          const w = drawPill(ctx, tagPillX, y, tag.name, "rgba(255,255,255,0.08)", COLOR_DIM, drawTagIcon);
           hitAreas.push({
             x: tagPillX,
             y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
             width: w,
             height: LABEL_HEIGHT,
-            branchName: tag.name, // reuse branchName field — checkout works for tags too
+            branchName: tag.name, // reuse branchName field -- checkout works for tags too
             row: visRow,
           });
           usedWidth += w + LABEL_GAP;
@@ -758,27 +877,88 @@ export function CommitGraphCanvas({
       }
 
       // Short SHA
-      ctx.font = '11px "Geist Mono", ui-monospace, monospace';
-      ctx.fillStyle = "hsl(0 0% 63.9%)";
+      ctx.font = `${SIZE_LABEL}px ${FONT_SANS}`;
+      ctx.fillStyle = COLOR_DIM;
       ctx.fillText(commit.short_id, labelX, y);
 
-      // Message
+      // Message + Body (Change 3: reclaimed right space, Change 6: inline body)
       const msgX = labelX + 64;
-      const maxMsgWidth = width - msgX - 160;
-      ctx.font = '13px "Geist", system-ui, sans-serif';
-      ctx.fillStyle = "hsl(0 0% 90%)";
-      ctx.fillText(truncateText(ctx, commit.message, maxMsgWidth), msgX, y);
+      const totalAvailWidth = width - msgX - 80; // Change 3: was -160, now -80 (time-group label area)
+      ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
 
-      // Author + time (right-aligned)
-      const metaText = `${commit.author_name}  ${formatRelativeTime(commit.timestamp)}`;
-      ctx.font = '11px "Geist", system-ui, sans-serif';
-      ctx.fillStyle = "hsl(0 0% 50%)";
-      const metaWidth = ctx.measureText(metaText).width;
-      ctx.fillText(metaText, width - metaWidth - 16, y);
+      const fullMsgWidth = ctx.measureText(commit.message).width;
+      if (fullMsgWidth <= totalAvailWidth) {
+        // Message fits — draw it, then body if available
+        ctx.fillStyle = COLOR_FG;
+        ctx.fillText(commit.message, msgX, y);
+
+        // Change 6: Draw body text after message
+        if (commit.body) {
+          const bodyGap = 8;
+          const bodyX = msgX + fullMsgWidth + bodyGap;
+          const bodyAvail = totalAvailWidth - fullMsgWidth - bodyGap;
+          if (bodyAvail > 30) {
+            ctx.fillStyle = COLOR_DIM;
+            const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
+            const bodyText = truncateText(ctx, bodyOneLine, bodyAvail);
+            ctx.fillText(bodyText, bodyX, y);
+
+            // Store hit area for tooltip
+            const drawnBodyWidth = ctx.measureText(bodyText).width;
+            bodyHitAreas.push({
+              x: bodyX,
+              y: visRow * ROW_HEIGHT - scrollTop,
+              width: drawnBodyWidth,
+              height: ROW_HEIGHT,
+              row: visRow,
+              body: commit.body,
+            });
+          }
+        }
+      } else {
+        // Message alone overflows — truncate it, no room for body
+        ctx.fillStyle = COLOR_FG;
+        ctx.fillText(truncateText(ctx, commit.message, totalAvailWidth), msgX, y);
+      }
+
+      // Change 3: removed author + time (was here)
+    }
+
+    // Change 3: Draw time-group separator lines
+    ctx.font = `${SIZE_LABEL}px ${FONT_SANS}`;
+    for (const [row, group] of timeGroupBoundaries) {
+      if (row < firstVisibleRow || row > lastVisibleRow) continue;
+      const separatorY = row * ROW_HEIGHT - scrollTop; // top edge of the first row in group
+
+      // Faint horizontal line across the text area
+      ctx.strokeStyle = COLOR_FAINT;
+      ctx.globalAlpha = 0.4;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(textOffset, separatorY);
+      ctx.lineTo(width - 12, separatorY);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Right-aligned label with background clear-rect
+      const label = group;
+      const labelWidth = ctx.measureText(label).width;
+      const labelPad = 6;
+      const labelDrawX = width - labelWidth - 16;
+
+      // Clear a gap in the line behind the label
+      ctx.fillStyle = BG_PAGE;
+      ctx.fillRect(labelDrawX - labelPad, separatorY - 7, labelWidth + labelPad * 2, 14);
+
+      // Draw the label text
+      ctx.fillStyle = COLOR_FAINT;
+      ctx.fillText(label, labelDrawX, separatorY);
     }
 
     badgeHitAreasRef.current = hitAreas;
-  }, [commits, edges, selectedCommitId, headCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches, isWipSelected, fileStatusCount]);
+    bodyHitAreasRef.current = bodyHitAreas;
+    avatarHitAreasRef.current = avatarHitAreas;
+  }, [commits, edges, selectedCommitId, headCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches, isWipSelected, fileStatusCount, timeGroupBoundaries]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -799,7 +979,7 @@ export function CommitGraphCanvas({
 
       const rect = scroll.getBoundingClientRect();
       const y = e.clientY - rect.top + scroll.scrollTop;
-      const visRow = Math.floor(y / ROW_HEIGHT);
+      const visRow = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
 
       // WIP row
       if (hasWip && visRow === 0) {
@@ -850,7 +1030,7 @@ export function CommitGraphCanvas({
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const y = my + scroll.scrollTop;
-      const row = Math.floor(y / ROW_HEIGHT);
+      const row = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
 
       setHoveredRow(row >= 0 && row < totalRows ? row : null);
 
@@ -859,11 +1039,65 @@ export function CommitGraphCanvas({
         (b) => mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height,
       );
       scroll.style.cursor = overBadge ? "pointer" : "";
+
+      // Hover tooltips: body text and avatar
+      const overBody = bodyHitAreasRef.current.find(
+        (b) => mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height,
+      );
+      const overAvatar = !overBody
+        ? avatarHitAreasRef.current.find(
+            (a) => Math.hypot(mx - a.cx, my - a.cy) <= NODE_RADIUS,
+          )
+        : undefined;
+
+      if (overBody) {
+        if (!canvasHover || canvasHover.row !== overBody.row || canvasHover.type !== "body") {
+          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          hoverTimerRef.current = setTimeout(() => {
+            setCanvasHover({
+              type: "body",
+              text: overBody.body,
+              x: e.clientX,
+              y: e.clientY,
+              row: overBody.row,
+            });
+          }, 300);
+        }
+      } else if (overAvatar) {
+        const commit = commits[overAvatar.commitIdx];
+        if (commit && (!canvasHover || canvasHover.row !== overAvatar.row || canvasHover.type !== "avatar")) {
+          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          const date = new Date(commit.timestamp * 1000);
+          const dateStr = date.toLocaleDateString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          hoverTimerRef.current = setTimeout(() => {
+            setCanvasHover({
+              type: "avatar",
+              text: `${commit.author_name}\n${commit.author_email}\n${dateStr}`,
+              x: e.clientX,
+              y: e.clientY,
+              row: overAvatar.row,
+            });
+          }, 300);
+        }
+      } else {
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+        if (canvasHover) setCanvasHover(null);
+      }
     },
-    [totalRows],
+    [totalRows, canvasHover, commits],
   );
 
-  const handleMouseLeave = useCallback(() => setHoveredRow(null), []);
+  const handleMouseLeave = useCallback(() => {
+    setHoveredRow(null);
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    setCanvasHover(null);
+  }, []);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -873,7 +1107,7 @@ export function CommitGraphCanvas({
 
       const rect = scroll.getBoundingClientRect();
       const y = e.clientY - rect.top + scroll.scrollTop;
-      const visRow = Math.floor(y / ROW_HEIGHT);
+      const visRow = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
       const commitIdx = visRow - rowOffset;
 
       if (commitIdx >= 0 && commitIdx < commits.length) {
@@ -917,6 +1151,19 @@ export function CommitGraphCanvas({
         ref={canvasRef}
         className="pointer-events-none absolute inset-0"
       />
+
+      {/* Change 6: Canvas tooltip overlay for commit body */}
+      {canvasHover && (
+        <div
+          className="pointer-events-none fixed z-50 max-w-sm rounded-md border border-border bg-card px-3 py-1.5 text-xs text-foreground shadow-lg"
+          style={{
+            left: canvasHover.x + 12,
+            top: canvasHover.y + 12,
+          }}
+        >
+          <p className="whitespace-pre-wrap">{canvasHover.text}</p>
+        </div>
+      )}
     </div>
   );
 }

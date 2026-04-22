@@ -119,11 +119,11 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
               </>
             ) : (
               <>
-                <User className="h-3 w-3 shrink-0 opacity-50" />
-                <span className="truncate opacity-60">No Profile</span>
+                <User className="h-3 w-3 shrink-0 text-faint" />
+                <span className="truncate text-dim">No Profile</span>
               </>
             )}
-            <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-50" />
+            <ChevronDown className="h-2.5 w-2.5 shrink-0 text-faint" />
           </button>
         </TooltipTrigger>
         <TooltipContent>
@@ -141,7 +141,7 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
             onClick={() => handleSwitch(null)}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
           >
-            <User className="h-3.5 w-3.5 shrink-0 opacity-50" />
+            <User className="h-3.5 w-3.5 shrink-0 text-faint" />
             <span className="flex-1 text-left truncate">No Profile</span>
             {!activeProfile && <Check className="h-3 w-3 shrink-0 text-primary" />}
           </button>
@@ -160,12 +160,12 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
               <MiniAvatar name={profile.user_name} email={profile.user_email} size={16} />
               <div className="flex-1 min-w-0 text-left">
                 <span className="block truncate text-foreground">{profile.name}</span>
-                <span className="block truncate text-[10px] text-muted-foreground/60">
+                <span className="block truncate text-caption text-dim">
                   {profile.user_email}
                 </span>
               </div>
               {profile.is_default && (
-                <span className="rounded bg-accent px-1 py-0.5 text-[9px] text-muted-foreground/60 shrink-0">
+                <span className="rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
                   default
                 </span>
               )}

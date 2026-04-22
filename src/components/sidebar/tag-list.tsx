@@ -61,7 +61,7 @@ export function TagList({ filter = "" }: { filter?: string }) {
       <div className="flex items-center px-3 py-1.5">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+          className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
         >
           {isOpen ? (
             <ChevronDown className="h-3 w-3" />
@@ -70,7 +70,7 @@ export function TagList({ filter = "" }: { filter?: string }) {
           )}
           Tags
           {tags.length > 0 && (
-            <span className="ml-1 normal-case tracking-normal text-muted-foreground/50">
+            <span className="ml-1 normal-case tracking-normal text-faint">
               {tags.length}
             </span>
           )}
@@ -99,7 +99,7 @@ export function TagList({ filter = "" }: { filter?: string }) {
             onChange={(e) => setNewTagName(e.target.value)}
             onKeyDown={handleKeyDown}
             autoFocus
-            className="w-full rounded bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
           />
           <input
             type="text"
@@ -107,7 +107,7 @@ export function TagList({ filter = "" }: { filter?: string }) {
             value={newTagMessage}
             onChange={(e) => setNewTagMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="w-full rounded bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
           />
           <div className="flex gap-1">
             <button
@@ -141,7 +141,7 @@ export function TagList({ filter = "" }: { filter?: string }) {
             >
               <Tag className="h-3 w-3 shrink-0" />
               <span className="truncate flex-1">{tag.name}</span>
-              <span className="shrink-0 font-mono text-muted-foreground/40 text-xs">
+              <span className="shrink-0 text-faint text-xs">
                 {tag.commit_id}
               </span>
 

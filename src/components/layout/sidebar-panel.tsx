@@ -32,13 +32,13 @@ export function SidebarPanel() {
   return (
     <div className="flex h-full flex-col bg-sidebar-background">
       {/* Filter input */}
-      <div className="px-3 pt-2 pb-2">
+      <div className="px-3 pt-2 pb-1.5">
         <input
           type="text"
           placeholder="Filter..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-full rounded bg-background border border-border px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
+          className="w-full rounded-md bg-background border border-border px-2.5 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors"
         />
       </div>
 
@@ -78,7 +78,7 @@ export function SidebarPanel() {
           {lfsInfo?.initialized && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/70 shrink-0 cursor-default">
+                <span className="ml-2 rounded bg-accent px-1.5 py-0.5 text-caption font-medium text-dim shrink-0 cursor-default">
                   LFS
                 </span>
               </TooltipTrigger>

@@ -122,7 +122,7 @@ export function ForgeSettings({ onClose }: { onClose: () => void }) {
                 if (e.key === "Enter") handleSave();
                 if (e.key === "Escape") onClose();
               }}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
 
             <div className="flex gap-2 pt-1">

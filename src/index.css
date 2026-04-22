@@ -1,53 +1,61 @@
 @import "tailwindcss";
 
-/* Geist Sans */
+/* Inter Sans */
 @font-face {
-  font-family: "Geist";
+  font-family: "Inter";
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
-  src: url("/fonts/Geist-Variable.woff2") format("woff2");
+  src: url("/fonts/InterVariable.woff2") format("woff2");
 }
 
-/* Geist Mono */
+/* JetBrains Mono */
 @font-face {
-  font-family: "Geist Mono";
+  font-family: "JetBrains Mono";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 400;
   font-display: swap;
-  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
 }
 
 @layer base {
   :root {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
+    /* DESIGN.md aligned tokens — dark mode, zinc scale */
+    --background: 240 6% 3.9%;      /* #09090b — page/app bg */
+    --foreground: 240 5% 96%;         /* cool white — primary text */
+    --card: 240 7% 7%;               /* #111113 — surface/panel bg */
+    --card-foreground: 240 5% 96%;
+    --popover: 240 7% 7%;            /* same as card */
+    --popover-foreground: 240 5% 96%;
+    --primary: 240 5% 96%;           /* cool white — primary buttons */
+    --primary-foreground: 240 6% 9%;
+    --secondary: 240 6% 10%;         /* #18181b — hover states */
+    --secondary-foreground: 240 5% 96%;
+    --muted: 240 6% 10%;             /* #18181b — same as secondary */
+    --muted-foreground: 240 5% 64.9%; /* cool gray — body text */
+    --accent: 240 6% 10%;            /* #18181b — interactive hover bg */
+    --accent-foreground: 240 5% 96%;
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
+    --destructive-foreground: 240 5% 96%;
+    --border: 240 5% 11.6%;          /* #1c1c1f — subtle borders */
+    --input: 240 5% 11.6%;           /* same as border */
+    --ring: 263 70% 76%;             /* #a78bfa — purple focus ring */
     --radius: 0.5rem;
-    --sidebar-background: 0 0% 5.9%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 0 0% 9%;
-    --sidebar-accent: 0 0% 14.9%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 14.9%;
-    --sidebar-ring: 0 0% 83.1%;
+    --sidebar-background: 240 8% 4.3%; /* #0c0c0e — bg-subtle */
+    --sidebar-foreground: 240 5% 96%;
+    --sidebar-primary: 240 5% 96%;
+    --sidebar-primary-foreground: 240 6% 9%;
+    --sidebar-accent: 240 6% 10%;
+    --sidebar-accent-foreground: 240 5% 96%;
+    --sidebar-border: 240 5% 11.6%;
+    --sidebar-ring: 263 70% 76%;
   }
 
   * {
@@ -56,16 +64,28 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: "Geist", system-ui, sans-serif;
+    font-family: "Inter", system-ui, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
     margin: 0;
+    overflow: hidden;
   }
 
   code,
   pre,
   kbd {
-    font-family: "Geist Mono", ui-monospace, monospace;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
   }
+}
+
+/* Noise texture overlay — subtle grain on the dark background */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* Dark scrollbar styling — thin, consistent everywhere */
@@ -79,12 +99,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 22%);
+  background: hsl(240 5% 16%);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(0 0% 32%);
+  background: hsl(240 5% 24%);
 }
 
 ::-webkit-scrollbar-corner {
@@ -123,4 +143,23 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Text scale — 4 levels only, cool hue, no opacity hacks */
+  --color-dim: hsl(240 5% 45%);       /* tertiary: labels, timestamps, captions */
+  --color-faint: hsl(240 5% 30%);     /* ghost: placeholders, disabled, hints */
+
+  /* Brand colors — purple accent from DESIGN.md */
+  --color-brand: #a78bfa;
+  --color-brand-dim: #7c3aed;
+  --color-brand-glow: rgba(167, 139, 250, 0.08);
+  --color-success: #34d399;
+
+  /* Font families */
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Type scale — 4 levels (caption, label, body=text-xs, title=text-sm) */
+  --text-caption: 9px;
+  --text-caption--line-height: 14px;
+  --text-label: 11px;
+  --text-label--line-height: 16px;
 }

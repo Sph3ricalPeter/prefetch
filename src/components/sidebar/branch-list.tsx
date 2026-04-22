@@ -166,7 +166,7 @@ function BranchSection({
     <div>
       <button
         onClick={onToggle}
-        className="flex w-full items-center gap-1 px-3 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+        className="flex w-full items-center gap-1 px-3 py-1.5 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
       >
         {isOpen ? (
           <ChevronDown className="h-3 w-3" />
@@ -174,7 +174,7 @@ function BranchSection({
           <ChevronRight className="h-3 w-3" />
         )}
         {label}
-        <span className="ml-auto text-muted-foreground/50 normal-case tracking-normal">
+        <span className="ml-auto text-faint normal-case tracking-normal">
           {count}
         </span>
       </button>
@@ -212,7 +212,7 @@ function BranchRow({
         isCurrent
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-      } ${branch.is_remote ? "opacity-70" : ""} disabled:cursor-default`}
+      } ${branch.is_remote ? "text-dim" : ""} disabled:cursor-default`}
     >
       <GitBranch className="h-3 w-3 shrink-0" />
       <span className="truncate">{displayName}</span>

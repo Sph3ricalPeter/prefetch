@@ -74,6 +74,7 @@ import {
   addRecentRepo,
   getRecentRepos,
   removeRecentRepo,
+  getUiState,
   setUiState,
   type RecentRepo,
 } from "@/lib/database";
@@ -157,6 +158,9 @@ interface RepoState {
   /** branch name → PrInfo (or null = "checked, no open PR") */
   prCache: Record<string, PrInfo | null>;
 
+  /** Global file view mode — persisted across all views */
+  fileViewMode: "flat" | "tree";
+
   // Actions
   openRepository: (path: string) => Promise<void>;
   loadRecentRepos: () => Promise<void>;
@@ -223,6 +227,10 @@ interface RepoState {
   deleteForgeToken: (host: string) => Promise<void>;
   openPr: (url: string) => Promise<void>;
 
+  // UI settings (persisted)
+  setFileViewMode: (mode: "flat" | "tree") => void;
+  loadFileViewMode: () => Promise<void>;
+
   // LFS actions
   loadLfsInfo: (full?: boolean) => Promise<void>;
   initializeLfs: () => Promise<void>;
@@ -279,6 +287,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   gitIdentity: null,
   forgeStatus: null,
   prCache: {},
+  fileViewMode: "flat",
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
@@ -1146,6 +1155,24 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await openUrlCmd(url);
     } catch (e) {
       toast.error(String(e));
+    }
+  },
+
+  // ── UI settings (persisted) ──────────────────────────────────────────────
+
+  setFileViewMode: (mode) => {
+    set({ fileViewMode: mode });
+    setUiState("file_view_mode", mode).catch(() => {});
+  },
+
+  loadFileViewMode: async () => {
+    try {
+      const saved = await getUiState("file_view_mode");
+      if (saved === "flat" || saved === "tree") {
+        set({ fileViewMode: saved });
+      }
+    } catch {
+      // DB might not be ready yet — use default
     }
   },
 

@@ -53,7 +53,7 @@ function ProfilesSection({ onManageProfiles }: { onManageProfiles: () => void })
                 <Star className="h-2.5 w-2.5 text-yellow-500 shrink-0 fill-yellow-500" />
               )}
             </div>
-            <p className="text-[11px] text-muted-foreground truncate">
+            <p className="text-label text-muted-foreground truncate">
               {activeProfile.user_email}
             </p>
           </div>
@@ -142,7 +142,7 @@ function IntegrationsSection() {
               <p className="text-xs font-medium text-foreground truncate">
                 {forgeName}
               </p>
-              <p className="text-[11px] text-muted-foreground truncate">
+              <p className="text-label text-muted-foreground truncate">
                 {host} · {forgeStatus?.owner}/{forgeStatus?.repo}
               </p>
             </div>
@@ -184,16 +184,16 @@ function IntegrationsSection() {
             </label>
 
             {/* Scopes hint */}
-            <div className="rounded bg-secondary px-3 py-2 text-[11px] text-muted-foreground space-y-1">
-              <p className="font-medium text-foreground/80">Required scopes:</p>
+            <div className="rounded bg-secondary px-3 py-2 text-label text-muted-foreground space-y-1">
+              <p className="font-medium text-muted-foreground">Required scopes:</p>
               {kind === "gitlab" ? (
                 <ul className="list-disc list-inside space-y-0.5">
-                  <li><span className="font-mono text-foreground/70">read_api</span> — PR/MR detection</li>
-                  <li><span className="font-mono text-foreground/70">write_repository</span> — push, pull, fetch</li>
+                  <li><span className="font-mono text-foreground">read_api</span> — PR/MR detection</li>
+                  <li><span className="font-mono text-foreground">write_repository</span> — push, pull, fetch</li>
                 </ul>
               ) : (
                 <ul className="list-disc list-inside space-y-0.5">
-                  <li><span className="font-mono text-foreground/70">repo</span> — push, pull, fetch, PR detection</li>
+                  <li><span className="font-mono text-foreground">repo</span> — push, pull, fetch, PR detection</li>
                 </ul>
               )}
             </div>
@@ -228,7 +228,7 @@ function IntegrationsSection() {
                   onChange={(e) => setToken(e.target.value)}
                   onKeyDown={handleKeyDown}
                   autoFocus={!!token}
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
                 />
                 <div className="flex gap-2">
                   <button
@@ -323,7 +323,7 @@ function LfsSection() {
             <Database className="h-4 w-4 text-foreground shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-foreground">LFS Active</p>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-label text-muted-foreground">
                 {lfsInfo.file_count} file{lfsInfo.file_count !== 1 ? "s" : ""},{" "}
                 {formatBytes(lfsInfo.total_size)}
               </p>
@@ -338,11 +338,11 @@ function LfsSection() {
 
           {/* Tracked patterns */}
           <div className="space-y-1">
-            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+            <p className="text-label font-medium text-muted-foreground uppercase tracking-wider">
               Tracked patterns
             </p>
             {lfsInfo.tracked_patterns.length === 0 ? (
-              <p className="text-xs text-muted-foreground/50 italic">
+              <p className="text-xs text-faint italic">
                 No patterns
               </p>
             ) : (
@@ -379,7 +379,7 @@ function LfsSection() {
                 value={newPattern}
                 onChange={(e) => setNewPattern(e.target.value)}
                 onKeyDown={handlePatternKeyDown}
-                className="flex-1 rounded bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:ring-1 focus:ring-ring"
+                className="flex-1 rounded bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
               />
               <button
                 onClick={handleAddPattern}

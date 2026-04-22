@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { ResizeHandle } from "@/components/ui/resize-handle";
+import { Titlebar } from "./titlebar";
 import { SidebarPanel } from "./sidebar-panel";
 import { GraphPanel } from "./graph-panel";
 import { DetailPanel } from "./detail-panel";
@@ -12,20 +13,33 @@ export function AppLayout() {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
 
-  // Restore saved widths on mount
+  // Restore saved widths on mount — retries if DB not initialized yet
   useEffect(() => {
-    (async () => {
-      const [savedSidebar, savedDetail] = await Promise.all([
-        getUiState("sidebar_width"),
-        getUiState("detail_width"),
-      ]);
-      if (savedSidebar && sidebarRef.current) {
-        sidebarRef.current.style.width = `${savedSidebar}px`;
+    let cancelled = false;
+    let retries = 0;
+    const tryRestore = async () => {
+      try {
+        const [savedSidebar, savedDetail] = await Promise.all([
+          getUiState("sidebar_width"),
+          getUiState("detail_width"),
+        ]);
+        if (cancelled) return;
+        if (savedSidebar && sidebarRef.current) {
+          sidebarRef.current.style.width = `${savedSidebar}px`;
+        }
+        if (savedDetail && detailRef.current) {
+          detailRef.current.style.width = `${savedDetail}px`;
+        }
+      } catch {
+        // DB not initialized yet — retry after a short delay
+        if (!cancelled && retries < 5) {
+          retries++;
+          setTimeout(tryRestore, 500);
+        }
       }
-      if (savedDetail && detailRef.current) {
-        detailRef.current.style.width = `${savedDetail}px`;
-      }
-    })();
+    };
+    tryRestore();
+    return () => { cancelled = true; };
   }, []);
 
   const saveSidebarWidth = useCallback((width: number) => {
@@ -37,36 +51,42 @@ export function AppLayout() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground select-none">
-      {/* Left sidebar — branches */}
-      <div ref={sidebarRef} className="shrink-0" style={{ width: SIDEBAR_DEFAULT }}>
-        <SidebarPanel />
-      </div>
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground select-none">
+      {/* Custom titlebar — replaces native window chrome */}
+      <Titlebar />
 
-      <ResizeHandle
-        side="left"
-        panelRef={sidebarRef}
-        minWidth={192}
-        maxWidth={320}
-        onResizeEnd={saveSidebarWidth}
-      />
+      {/* Three-panel content area */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Left sidebar — branches */}
+        <div ref={sidebarRef} className="shrink-0" style={{ width: SIDEBAR_DEFAULT }}>
+          <SidebarPanel />
+        </div>
 
-      {/* Center — commit graph */}
-      <div className="flex-1 min-w-0">
-        <GraphPanel />
-      </div>
+        <ResizeHandle
+          side="left"
+          panelRef={sidebarRef}
+          minWidth={192}
+          maxWidth={320}
+          onResizeEnd={saveSidebarWidth}
+        />
 
-      <ResizeHandle
-        side="right"
-        panelRef={detailRef}
-        minWidth={256}
-        maxWidth={480}
-        onResizeEnd={saveDetailWidth}
-      />
+        {/* Center — commit graph */}
+        <div className="flex-1 min-w-0">
+          <GraphPanel />
+        </div>
 
-      {/* Right detail — commit info / diff */}
-      <div ref={detailRef} className="shrink-0" style={{ width: DETAIL_DEFAULT }}>
-        <DetailPanel />
+        <ResizeHandle
+          side="right"
+          panelRef={detailRef}
+          minWidth={256}
+          maxWidth={480}
+          onResizeEnd={saveDetailWidth}
+        />
+
+        {/* Right detail — commit info / diff */}
+        <div ref={detailRef} className="shrink-0" style={{ width: DETAIL_DEFAULT }}>
+          <DetailPanel />
+        </div>
       </div>
     </div>
   );
