@@ -4,181 +4,473 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prefetch — Git client for people who ship</title>
-  <meta name="description" content="Open source desktop git client. GitKraken UX, Linear design, no subscription. Built with Tauri + Rust.">
+  <meta name="description" content="Open-source desktop git client. GitKraken UX, Linear design, no subscription. Built with Tauri + Rust. 10 MB, not 150.">
+  <meta property="og:title" content="Prefetch — Git client for people who ship">
+  <meta property="og:description" content="Open-source desktop git client. GitKraken UX, Linear design, no subscription. Built with Tauri + Rust.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://sph3ricalpeter.github.io/prefetch/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    /* ── Reset & tokens ── */
     :root {
-      --bg: #0a0a0b;
-      --surface: #111113;
-      --border: #1e1e21;
-      --border-hover: #2a2a2e;
-      --text: #ededef;
-      --text-secondary: #7a7a80;
-      --text-tertiary: #53535a;
-      --accent: #ededef;
-      --code-bg: #161618;
-      --green: #3dd68c;
-      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      --mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+      --bg:              #09090b;
+      --bg-subtle:       #0c0c0e;
+      --surface:         #111113;
+      --surface-hover:   #18181b;
+      --border:          #1c1c1f;
+      --border-hover:    #27272a;
+      --text:            #fafafa;
+      --text-secondary:  #a1a1aa;
+      --text-tertiary:   #71717a;
+      --text-muted:      #52525b;
+      --accent:          #a78bfa;
+      --accent-dim:      #7c3aed;
+      --green:           #34d399;
+      --font:            'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono:            'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
+      --radius:          12px;
+      --radius-sm:       8px;
+      --max-w:           1080px;
     }
 
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     html {
       background: var(--bg);
       color: var(--text);
       font-family: var(--font);
+      font-size: 16px;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      scroll-behavior: smooth;
     }
 
     body {
       min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      overflow-x: hidden;
     }
 
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Noise overlay ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      opacity: 0.025;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px 256px;
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── Container ── */
     .container {
       width: 100%;
-      max-width: 640px;
+      max-width: var(--max-w);
+      margin: 0 auto;
       padding: 0 24px;
     }
 
-    /* Header */
-    header {
-      width: 100%;
-      padding: 20px 0;
-      border-bottom: 1px solid var(--border);
+    /* ── Nav ── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 0;
+      background: rgba(9, 9, 11, 0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.3s;
     }
 
-    header .container {
+    nav.scrolled { border-bottom-color: var(--border); }
+
+    nav .container {
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
 
+    .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+    }
+
     .logo {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .nav-links a {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--text); }
+
+    .nav-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 14px;
+      transition: all 0.2s;
+    }
+
+    .nav-cta:hover {
+      background: var(--surface-hover);
+      border-color: var(--border-hover);
+    }
+
+    .nav-cta svg { width: 14px; height: 14px; opacity: 0.7; }
+
+    /* ── Hero ── */
+    .hero {
+      position: relative;
+      padding: 180px 0 120px;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    /* Radial glow behind hero */
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -20%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 600px;
+      background: radial-gradient(ellipse at center, rgba(167, 139, 250, 0.08) 0%, rgba(124, 58, 237, 0.03) 40%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 5px 14px 5px 10px;
+      margin-bottom: 32px;
+      transition: border-color 0.2s;
+    }
+
+    .hero-badge:hover { border-color: var(--border-hover); }
+
+    .hero-badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px rgba(52, 211, 153, 0.4);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .hero h1 {
+      font-size: clamp(40px, 6vw, 64px);
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      margin-bottom: 20px;
+      background: linear-gradient(180deg, var(--text) 40%, var(--text-tertiary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: 17px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      max-width: 480px;
+      margin: 0 auto 40px;
+    }
+
+    .hero-ctas {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       font-size: 14px;
       font-weight: 600;
-      letter-spacing: -0.02em;
-      color: var(--text);
-      text-decoration: none;
+      color: #09090b;
+      background: var(--text);
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: all 0.2s;
     }
 
-    .header-links {
-      display: flex;
-      gap: 20px;
+    .btn-primary:hover {
+      background: #e4e4e7;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(250, 250, 250, 0.1);
     }
 
-    .header-links a {
-      font-size: 13px;
+    .btn-primary svg { width: 16px; height: 16px; }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 500;
       color: var(--text-secondary);
-      text-decoration: none;
-      transition: color 0.15s;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 9px 18px;
+      cursor: pointer;
+      transition: all 0.2s;
     }
 
-    .header-links a:hover { color: var(--text); }
+    .btn-secondary:hover {
+      color: var(--text);
+      border-color: var(--border-hover);
+      background: var(--surface);
+    }
 
-    /* Hero */
-    .hero {
-      padding: 120px 0 80px;
+    .btn-secondary svg { width: 16px; height: 16px; }
+
+    /* ── Stats bar ── */
+    .stats {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 48px;
+      padding: 48px 0;
+      margin-bottom: 32px;
+    }
+
+    .stat {
       text-align: center;
     }
 
-    .badge {
-      display: inline-block;
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text-secondary);
-      border: 1px solid var(--border);
-      border-radius: 100px;
-      padding: 4px 12px;
-      margin-bottom: 24px;
-      letter-spacing: 0.01em;
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text);
     }
 
-    h1 {
-      font-size: 40px;
+    .stat-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-top: 4px;
+    }
+
+    .stat-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border);
+    }
+
+    /* ── Section titles ── */
+    .section-label {
+      font-size: 12px;
       font-weight: 600;
-      letter-spacing: -0.035em;
-      line-height: 1.1;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
       margin-bottom: 16px;
     }
 
-    .subtitle {
-      font-size: 16px;
+    .section-title {
+      font-size: clamp(28px, 4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 1.15;
+      margin-bottom: 12px;
+    }
+
+    .section-desc {
+      font-size: 15px;
       color: var(--text-secondary);
       line-height: 1.6;
-      max-width: 460px;
+      max-width: 540px;
+    }
+
+    /* ── Bento grid ── */
+    .bento-section {
+      padding: 48px 0 96px;
+    }
+
+    .bento-header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .bento-header .section-desc {
       margin: 0 auto;
     }
 
-    /* Install section */
-    .install {
-      padding: 0 0 80px;
+    .bento-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
     }
 
-    .install h2 {
-      font-size: 13px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+    .bento-card {
+      background: var(--surface);
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: background 0.2s;
+    }
+
+    .bento-card:hover {
+      background: var(--surface-hover);
+    }
+
+    .bento-card.span-2 {
+      grid-column: span 2;
+    }
+
+    .bento-icon {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       color: var(--text-tertiary);
-      margin-bottom: 20px;
+      margin-bottom: 4px;
+    }
+
+    .bento-icon svg { width: 18px; height: 18px; }
+
+    .bento-card h3 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .bento-card p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    /* ── Install section ── */
+    .install-section {
+      padding: 96px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .install-header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .install-header .section-desc {
+      margin: 0 auto;
+    }
+
+    .install-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      max-width: 720px;
+      margin: 0 auto;
     }
 
     .install-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: var(--radius);
       overflow: hidden;
+      transition: border-color 0.2s;
     }
 
-    .install-card + .install-card {
-      margin-top: 12px;
-    }
+    .install-card:hover { border-color: var(--border-hover); }
 
     .card-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 14px 16px 0;
+      gap: 10px;
+      padding: 16px 20px 0;
     }
 
-    .platform-label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .platform-icon {
+      width: 20px;
+      height: 20px;
+      color: var(--text-tertiary);
+    }
+
+    .platform-name {
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       color: var(--text-secondary);
-    }
-
-    .platform-label svg {
-      width: 16px;
-      height: 16px;
-      opacity: 0.6;
     }
 
     .code-block {
       position: relative;
-      padding: 14px 16px;
+      padding: 16px 20px;
     }
 
     .code-block code {
       font-family: var(--mono);
-      font-size: 13px;
+      font-size: 12.5px;
       line-height: 1.6;
-      color: var(--text);
+      color: var(--text-secondary);
       word-break: break-all;
       display: block;
-      padding-right: 40px;
+      padding-right: 44px;
     }
 
     .copy-btn {
       position: absolute;
-      top: 14px;
-      right: 12px;
+      top: 16px;
+      right: 16px;
       width: 32px;
       height: 32px;
       display: flex;
@@ -187,74 +479,144 @@
       background: transparent;
       border: 1px solid var(--border);
       border-radius: 6px;
-      color: var(--text-tertiary);
+      color: var(--text-muted);
       cursor: pointer;
-      transition: all 0.15s;
+      transition: all 0.2s;
     }
 
     .copy-btn:hover {
-      color: var(--text);
+      color: var(--text-secondary);
       border-color: var(--border-hover);
-      background: var(--code-bg);
-    }
-
-    .copy-btn svg {
-      width: 14px;
-      height: 14px;
+      background: var(--bg);
     }
 
     .copy-btn.copied {
       color: var(--green);
-      border-color: var(--green);
+      border-color: rgba(52, 211, 153, 0.3);
     }
 
-    /* Features */
-    .features {
-      padding: 0 0 80px;
+    .copy-btn svg { width: 14px; height: 14px; }
+
+    .install-note {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 12px;
+      color: var(--text-muted);
     }
 
-    .features h2 {
-      font-size: 13px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+    .install-note a {
       color: var(--text-tertiary);
-      margin-bottom: 20px;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      text-decoration-color: var(--border-hover);
+      transition: color 0.2s;
     }
 
-    .feature-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1px;
-      background: var(--border);
+    .install-note a:hover { color: var(--text-secondary); }
+
+    /* ── Comparison ── */
+    .comparison-section {
+      padding: 96px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .comparison-header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .comparison-header .section-desc { margin: 0 auto; }
+
+    .comparison-table {
+      max-width: 640px;
+      margin: 0 auto;
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: var(--radius);
       overflow: hidden;
     }
 
-    .feature {
-      background: var(--surface);
-      padding: 16px;
+    .comparison-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      border-bottom: 1px solid var(--border);
     }
 
-    .feature-name {
+    .comparison-row:last-child { border-bottom: none; }
+
+    .comparison-row.header {
+      background: var(--bg);
+    }
+
+    .comparison-cell {
+      padding: 12px 20px;
       font-size: 13px;
-      font-weight: 500;
-      margin-bottom: 4px;
-    }
-
-    .feature-desc {
-      font-size: 12px;
       color: var(--text-secondary);
-      line-height: 1.5;
+      display: flex;
+      align-items: center;
     }
 
-    /* Footer */
-    footer {
-      width: 100%;
-      padding: 24px 0;
+    .comparison-row.header .comparison-cell {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      padding: 10px 20px;
+    }
+
+    .comparison-cell:first-child {
+      background: var(--surface);
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .comparison-cell:not(:first-child) {
+      justify-content: center;
+      background: var(--surface);
+    }
+
+    .check { color: var(--green); }
+    .cross { color: var(--text-muted); }
+
+    /* ── Bottom CTA ── */
+    .bottom-cta {
+      position: relative;
+      padding: 120px 0;
+      text-align: center;
       border-top: 1px solid var(--border);
-      margin-top: auto;
+      overflow: hidden;
+    }
+
+    .bottom-cta::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 400px;
+      background: radial-gradient(ellipse at center, rgba(167, 139, 250, 0.06) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    .bottom-cta h2 {
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 1.1;
+      margin-bottom: 16px;
+    }
+
+    .bottom-cta p {
+      font-size: 15px;
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+    }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0;
     }
 
     footer .container {
@@ -263,124 +625,369 @@
       justify-content: space-between;
     }
 
-    footer p {
-      font-size: 12px;
-      color: var(--text-tertiary);
+    .footer-left {
+      display: flex;
+      align-items: center;
+      gap: 24px;
     }
 
-    footer a {
+    .footer-left span {
       font-size: 12px;
-      color: var(--text-tertiary);
-      text-decoration: none;
-      transition: color 0.15s;
+      color: var(--text-muted);
     }
 
-    footer a:hover { color: var(--text-secondary); }
+    .footer-links {
+      display: flex;
+      gap: 20px;
+    }
 
-    /* Responsive */
-    @media (max-width: 520px) {
-      .hero { padding: 80px 0 60px; }
-      h1 { font-size: 28px; }
-      .subtitle { font-size: 14px; }
-      .feature-grid { grid-template-columns: 1fr; }
-      .code-block code { font-size: 12px; }
+    .footer-links a {
+      font-size: 12px;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover { color: var(--text-secondary); }
+
+    .footer-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .footer-right a {
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .footer-right a:hover { color: var(--text-secondary); }
+
+    .footer-right a svg { width: 18px; height: 18px; }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      .hero { padding: 140px 0 80px; }
+
+      .stats { gap: 24px; }
+      .stat-value { font-size: 22px; }
+
+      .bento-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .bento-card.span-2 {
+        grid-column: span 1;
+      }
+
+      .install-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .comparison-cell {
+        padding: 10px 12px;
+        font-size: 12px;
+      }
+
+      .nav-links { display: none; }
+
+      .footer-left { flex-direction: column; align-items: flex-start; gap: 12px; }
+      footer .container { flex-direction: column; gap: 20px; align-items: flex-start; }
+    }
+
+    @media (max-width: 480px) {
+      .hero { padding: 120px 0 64px; }
+      .hero p { font-size: 15px; }
+
+      .hero-ctas { flex-direction: column; width: 100%; }
+      .hero-ctas .btn-primary,
+      .hero-ctas .btn-secondary { width: 100%; justify-content: center; }
+
+      .stats { flex-direction: column; gap: 20px; }
+      .stat-divider { width: 32px; height: 1px; }
     }
   </style>
 </head>
 <body>
-  <header>
+
+  <!-- ── Nav ── -->
+  <nav id="nav">
     <div class="container">
-      <a href="/" class="logo">Prefetch</a>
-      <div class="header-links">
-        <a href="https://github.com/Sph3ricalPeter/prefetch">GitHub</a>
-        <a href="https://github.com/Sph3ricalPeter/prefetch/releases">Releases</a>
+      <div class="nav-left">
+        <a href="/" class="logo">Prefetch</a>
+        <div class="nav-links">
+          <a href="#features">Features</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/Sph3ricalPeter/prefetch/releases">Releases</a>
+        </div>
+      </div>
+      <a href="https://github.com/Sph3ricalPeter/prefetch" class="nav-cta">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </nav>
+
+  <!-- ── Hero ── -->
+  <section class="hero">
+    <div class="container">
+      <a href="https://github.com/Sph3ricalPeter/prefetch/releases" class="hero-badge">
+        <span class="dot"></span>
+        v0.3.0 &mdash; now available
+      </a>
+      <h1>Git, without the<br>cognitive overhead</h1>
+      <p>
+        Open-source desktop git client. Visual branch graph,
+        one-click staging, LFS built in. 10&nbsp;MB, starts in under a second.
+      </p>
+      <div class="hero-ctas">
+        <a href="#install" class="btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </a>
+        <a href="https://github.com/Sph3ricalPeter/prefetch" class="btn-secondary">
+          <svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          View source
+        </a>
       </div>
     </div>
-  </header>
+  </section>
 
-  <main>
-    <section class="hero container">
-      <span class="badge">Open source &middot; MIT licensed</span>
-      <h1>Git client for people<br>who ship</h1>
-      <p class="subtitle">
-        GitKraken UX, Linear design, no subscription.
-        Built with Tauri&nbsp;+&nbsp;Rust. 10MB, not&nbsp;150.
+  <!-- ── Stats ── -->
+  <div class="container">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value">~10 MB</div>
+        <div class="stat-label">Install size</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <div class="stat-value">Tauri + Rust</div>
+        <div class="stat-label">Not Electron</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <div class="stat-value">MIT</div>
+        <div class="stat-label">Licensed</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <div class="stat-value">$0</div>
+        <div class="stat-label">Forever</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Features bento ── -->
+  <section class="bento-section" id="features">
+    <div class="container">
+      <div class="bento-header">
+        <div class="section-label">Features</div>
+        <h2 class="section-title">Everything you need,<br>nothing you don't</h2>
+        <p class="section-desc">
+          Built for developers who want visual clarity without giving up speed or control.
+        </p>
+      </div>
+
+      <div class="bento-grid">
+        <!-- Row 1: span-2 + 1 -->
+        <div class="bento-card span-2">
+          <div class="bento-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+          </div>
+          <h3>Commit graph</h3>
+          <p>Canvas-rendered, virtualized DAG. Handles repos with 100k+ commits without breaking a sweat. See branches, merges, and history at a glance.</p>
+        </div>
+        <div class="bento-card">
+          <div class="bento-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <h3>Git profiles</h3>
+          <p>Auto-switch identity by repo path. Work vs. personal, zero friction.</p>
+        </div>
+
+        <!-- Row 2: 1 + span-2 -->
+        <div class="bento-card">
+          <div class="bento-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          </div>
+          <h3>Inline diffs</h3>
+          <p>Grouped hunks, clear additions and deletions. Click a file, see the change.</p>
+        </div>
+        <div class="bento-card span-2">
+          <div class="bento-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <h3>GitHub &amp; GitLab</h3>
+          <p>PR badges on branches, PAT stored in your OS keychain, click to open in browser. Works with GitHub and GitLab out of the box.</p>
+        </div>
+
+        <!-- Row 3: 3 equal -->
+        <div class="bento-card">
+          <div class="bento-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          </div>
+          <h3>Undo anything</h3>
+          <p>Ctrl+Z backed by reflog. Even works for ops run in your terminal.</p>
+        </div>
+        <div class="bento-card">
+          <div class="bento-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          </div>
+          <h3>Git LFS</h3>
+          <p>Track patterns, see file sizes, prune objects. Game dev and design friendly.</p>
+        </div>
+        <div class="bento-card">
+          <div class="bento-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+          <h3>Fast. Actually.</h3>
+          <p>Tauri + Rust backend. Native webview. Starts in under a second, not five.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Install ── -->
+  <section class="install-section" id="install">
+    <div class="container">
+      <div class="install-header">
+        <div class="section-label">Install</div>
+        <h2 class="section-title">Up and running in<br>one command</h2>
+        <p class="section-desc">
+          Downloads the latest release, runs the installer. That's it.
+        </p>
+      </div>
+
+      <div class="install-grid">
+        <div class="install-card">
+          <div class="card-header">
+            <svg class="platform-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+            <span class="platform-name">Windows</span>
+          </div>
+          <div class="code-block">
+            <code id="cmd-win">irm https://raw.githubusercontent.com/Sph3ricalPeter/prefetch/main/install.ps1 | iex</code>
+            <button class="copy-btn" onclick="copy('cmd-win', this)" aria-label="Copy">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="install-card">
+          <div class="card-header">
+            <svg class="platform-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            <span class="platform-name">macOS</span>
+          </div>
+          <div class="code-block">
+            <code id="cmd-mac">curl -fsSL https://raw.githubusercontent.com/Sph3ricalPeter/prefetch/main/install.sh | sh</code>
+            <button class="copy-btn" onclick="copy('cmd-mac', this)" aria-label="Copy">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <p class="install-note">
+        Or download directly from <a href="https://github.com/Sph3ricalPeter/prefetch/releases">GitHub Releases</a>
       </p>
-    </section>
+    </div>
+  </section>
 
-    <section class="install container">
-      <h2>Install</h2>
-
-      <div class="install-card">
-        <div class="card-header">
-          <span class="platform-label">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            Windows
-          </span>
-        </div>
-        <div class="code-block">
-          <code id="cmd-win">irm https://raw.githubusercontent.com/Sph3ricalPeter/prefetch/main/install.ps1 | iex</code>
-          <button class="copy-btn" onclick="copy('cmd-win', this)" aria-label="Copy to clipboard">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-        </div>
+  <!-- ── Comparison ── -->
+  <section class="comparison-section">
+    <div class="container">
+      <div class="comparison-header">
+        <div class="section-label">Why Prefetch</div>
+        <h2 class="section-title">Same power, none of<br>the bloat</h2>
+        <p class="section-desc">
+          You shouldn't need a subscription to see your branches.
+        </p>
       </div>
 
-      <div class="install-card">
-        <div class="card-header">
-          <span class="platform-label">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06z"/><path d="M10 2c1 .5 2 2 2 5"/></svg>
-            macOS
-          </span>
+      <div class="comparison-table">
+        <div class="comparison-row header">
+          <div class="comparison-cell"></div>
+          <div class="comparison-cell">Prefetch</div>
+          <div class="comparison-cell">Others</div>
         </div>
-        <div class="code-block">
-          <code id="cmd-mac">curl -fsSL https://raw.githubusercontent.com/Sph3ricalPeter/prefetch/main/install.sh | sh</code>
-          <button class="copy-btn" onclick="copy('cmd-mac', this)" aria-label="Copy to clipboard">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
+        <div class="comparison-row">
+          <div class="comparison-cell">Free forever</div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
+          <div class="comparison-cell"><span class="cross">&#10005;</span></div>
         </div>
-      </div>
-    </section>
-
-    <section class="features container">
-      <h2>What you get</h2>
-      <div class="feature-grid">
-        <div class="feature">
-          <div class="feature-name">Commit graph</div>
-          <div class="feature-desc">Canvas-rendered, virtualized. Handles 100k+ commits.</div>
+        <div class="comparison-row">
+          <div class="comparison-cell">Open source</div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
+          <div class="comparison-cell"><span class="cross">&#10005;</span></div>
         </div>
-        <div class="feature">
-          <div class="feature-name">Profiles</div>
-          <div class="feature-desc">Auto-switch git identity by repo path. Work / personal, zero friction.</div>
+        <div class="comparison-row">
+          <div class="comparison-cell">Under 15 MB</div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
+          <div class="comparison-cell"><span class="cross">&#10005;</span></div>
         </div>
-        <div class="feature">
-          <div class="feature-name">GitHub &amp; GitLab</div>
-          <div class="feature-desc">PR badges on branches. PAT in OS keychain. Click to open in browser.</div>
+        <div class="comparison-row">
+          <div class="comparison-cell">Native performance</div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
+          <div class="comparison-cell"><span class="cross">&#10005;</span></div>
         </div>
-        <div class="feature">
-          <div class="feature-name">Git LFS</div>
-          <div class="feature-desc">Track patterns, see file sizes, prune objects. Game dev friendly.</div>
+        <div class="comparison-row">
+          <div class="comparison-cell">Commit graph</div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
         </div>
-        <div class="feature">
-          <div class="feature-name">Undo</div>
-          <div class="feature-desc">Ctrl+Z backed by reflog. Works even for ops run in terminal.</div>
-        </div>
-        <div class="feature">
-          <div class="feature-name">10 MB</div>
-          <div class="feature-desc">Tauri + Rust, not Electron. Native webview. Starts in under a second.</div>
+        <div class="comparison-row">
+          <div class="comparison-cell">LFS support</div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
+          <div class="comparison-cell"><span class="check">&#10003;</span></div>
         </div>
       </div>
-    </section>
-  </main>
+    </div>
+  </section>
 
+  <!-- ── Bottom CTA ── -->
+  <section class="bottom-cta">
+    <div class="container">
+      <h2>Try it. It's free.</h2>
+      <p>No account, no trial, no catch. Just a git client that works.</p>
+      <div class="hero-ctas">
+        <a href="#install" class="btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </a>
+        <a href="https://github.com/Sph3ricalPeter/prefetch" class="btn-secondary">
+          <svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          Star on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ── -->
   <footer>
     <div class="container">
-      <p>MIT &middot; Prefetch</p>
-      <a href="https://github.com/Sph3ricalPeter/prefetch">View source</a>
+      <div class="footer-left">
+        <span>MIT &middot; Prefetch</span>
+        <div class="footer-links">
+          <a href="https://github.com/Sph3ricalPeter/prefetch/releases">Releases</a>
+          <a href="https://github.com/Sph3ricalPeter/prefetch/issues">Issues</a>
+          <a href="https://github.com/Sph3ricalPeter/prefetch/blob/main/LICENSE">License</a>
+        </div>
+      </div>
+      <div class="footer-right">
+        <a href="https://github.com/Sph3ricalPeter/prefetch" aria-label="GitHub">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        </a>
+      </div>
     </div>
   </footer>
 
   <script>
+    // Scroll-aware nav border
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 20);
+    }, { passive: true });
+
+    // Copy to clipboard
     function copy(id, btn) {
       const text = document.getElementById(id).textContent;
       navigator.clipboard.writeText(text).then(() => {
