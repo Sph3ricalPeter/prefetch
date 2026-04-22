@@ -347,10 +347,7 @@ pub async fn resolve_conflict_theirs(
 }
 
 #[tauri::command]
-pub async fn discard_files(
-    paths: Vec<String>,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn discard_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
     offload(move || repository::discard_files(&repo, &paths)).await
 }
@@ -362,19 +359,13 @@ pub async fn discard_all_changes(state: State<'_, AppState>) -> Result<(), AppEr
 }
 
 #[tauri::command]
-pub async fn stage_files(
-    paths: Vec<String>,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn stage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
     offload(move || repository::stage_files(&repo, &paths)).await
 }
 
 #[tauri::command]
-pub async fn unstage_files(
-    paths: Vec<String>,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn unstage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
     offload(move || repository::unstage_files(&repo, &paths)).await
 }

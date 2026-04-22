@@ -46,7 +46,6 @@ pub fn is_lfs_initialized(path: &str) -> bool {
     false
 }
 
-
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 /// Run `git lfs install --local` to set up LFS hooks in the repository.

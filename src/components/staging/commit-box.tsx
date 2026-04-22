@@ -26,21 +26,23 @@ function getInitials(name: string): string {
 
 /** Tries to load a gravatar; returns the URL on success, null on 404/error. */
 function useGravatar(email: string | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{ email: string; url: string } | null>(null);
 
   useEffect(() => {
-    if (!email) {
-      setUrl(null);
-      return;
-    }
+    if (!email) return;
+    let cancelled = false;
     const src = gravatarUrl(email, 40); // 2x for retina on a 20px element
     const img = new Image();
-    img.onload = () => setUrl(src);
-    img.onerror = () => setUrl(null);
+    img.onload = () => {
+      if (!cancelled) setLoaded({ email, url: src });
+    };
+    img.onerror = () => {};
     img.src = src;
+    return () => { cancelled = true; };
   }, [email]);
 
-  return url;
+  // Derive null from props instead of calling setState synchronously in the effect
+  return email && loaded?.email === email ? loaded.url : null;
 }
 
 export function CommitBox() {

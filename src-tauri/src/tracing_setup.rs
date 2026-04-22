@@ -50,9 +50,6 @@ pub fn init() {
 
         eprintln!("[tracing] Chrome trace output enabled — file will be written on exit");
     } else {
-        Registry::default()
-            .with(env_filter)
-            .with(fmt_layer)
-            .init();
+        Registry::default().with(env_filter).with(fmt_layer).init();
     }
 }

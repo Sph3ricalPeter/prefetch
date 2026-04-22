@@ -34,7 +34,11 @@ impl BackgroundFetcher {
     /// every second so it can shut down quickly when the repo changes.
     /// `active_profile` is cloned at start time; if the profile changes,
     /// the fetcher must be stopped and restarted.
-    pub fn start(repo_path: String, _app: AppHandle, active_profile: Option<ActiveProfile>) -> Self {
+    pub fn start(
+        repo_path: String,
+        _app: AppHandle,
+        active_profile: Option<ActiveProfile>,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_clone = stop.clone();
         let env_vars = profile_env(&active_profile);
