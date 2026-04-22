@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prefetch — Git client for people who ship</title>
+  <meta name="description" content="Open source desktop git client. GitKraken UX, Linear design, no subscription. Built with Tauri + Rust.">
+  <style>
+    :root {
+      --bg: #0a0a0b;
+      --surface: #111113;
+      --border: #1e1e21;
+      --border-hover: #2a2a2e;
+      --text: #ededef;
+      --text-secondary: #7a7a80;
+      --text-tertiary: #53535a;
+      --accent: #ededef;
+      --code-bg: #161618;
+      --green: #3dd68c;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 640px;
+      padding: 0 24px;
+    }
+
+    /* Header */
+    header {
+      width: 100%;
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .header-links {
+      display: flex;
+      gap: 20px;
+    }
+
+    .header-links a {
+      font-size: 13px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .header-links a:hover { color: var(--text); }
+
+    /* Hero */
+    .hero {
+      padding: 120px 0 80px;
+      text-align: center;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 4px 12px;
+      margin-bottom: 24px;
+      letter-spacing: 0.01em;
+    }
+
+    h1 {
+      font-size: 40px;
+      font-weight: 600;
+      letter-spacing: -0.035em;
+      line-height: 1.1;
+      margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      max-width: 460px;
+      margin: 0 auto;
+    }
+
+    /* Install section */
+    .install {
+      padding: 0 0 80px;
+    }
+
+    .install h2 {
+      font-size: 13px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-tertiary);
+      margin-bottom: 20px;
+    }
+
+    .install-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .install-card + .install-card {
+      margin-top: 12px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 0;
+    }
+
+    .platform-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .platform-label svg {
+      width: 16px;
+      height: 16px;
+      opacity: 0.6;
+    }
+
+    .code-block {
+      position: relative;
+      padding: 14px 16px;
+    }
+
+    .code-block code {
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text);
+      word-break: break-all;
+      display: block;
+      padding-right: 40px;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 14px;
+      right: 12px;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .copy-btn:hover {
+      color: var(--text);
+      border-color: var(--border-hover);
+      background: var(--code-bg);
+    }
+
+    .copy-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .copy-btn.copied {
+      color: var(--green);
+      border-color: var(--green);
+    }
+
+    /* Features */
+    .features {
+      padding: 0 0 80px;
+    }
+
+    .features h2 {
+      font-size: 13px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-tertiary);
+      margin-bottom: 20px;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .feature {
+      background: var(--surface);
+      padding: 16px;
+    }
+
+    .feature-name {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .feature-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* Footer */
+    footer {
+      width: 100%;
+      padding: 24px 0;
+      border-top: 1px solid var(--border);
+      margin-top: auto;
+    }
+
+    footer .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    footer p {
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    footer a {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    footer a:hover { color: var(--text-secondary); }
+
+    /* Responsive */
+    @media (max-width: 520px) {
+      .hero { padding: 80px 0 60px; }
+      h1 { font-size: 28px; }
+      .subtitle { font-size: 14px; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .code-block code { font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <a href="/" class="logo">Prefetch</a>
+      <div class="header-links">
+        <a href="https://github.com/Sph3ricalPeter/prefetch">GitHub</a>
+        <a href="https://github.com/Sph3ricalPeter/prefetch/releases">Releases</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero container">
+      <span class="badge">Open source &middot; MIT licensed</span>
+      <h1>Git client for people<br>who ship</h1>
+      <p class="subtitle">
+        GitKraken UX, Linear design, no subscription.
+        Built with Tauri&nbsp;+&nbsp;Rust. 10MB, not&nbsp;150.
+      </p>
+    </section>
+
+    <section class="install container">
+      <h2>Install</h2>
+
+      <div class="install-card">
+        <div class="card-header">
+          <span class="platform-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Windows
+          </span>
+        </div>
+        <div class="code-block">
+          <code id="cmd-win">irm https://raw.githubusercontent.com/Sph3ricalPeter/prefetch/main/install.ps1 | iex</code>
+          <button class="copy-btn" onclick="copy('cmd-win', this)" aria-label="Copy to clipboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="install-card">
+        <div class="card-header">
+          <span class="platform-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06z"/><path d="M10 2c1 .5 2 2 2 5"/></svg>
+            macOS
+          </span>
+        </div>
+        <div class="code-block">
+          <code id="cmd-mac">curl -fsSL https://raw.githubusercontent.com/Sph3ricalPeter/prefetch/main/install.sh | sh</code>
+          <button class="copy-btn" onclick="copy('cmd-mac', this)" aria-label="Copy to clipboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="features container">
+      <h2>What you get</h2>
+      <div class="feature-grid">
+        <div class="feature">
+          <div class="feature-name">Commit graph</div>
+          <div class="feature-desc">Canvas-rendered, virtualized. Handles 100k+ commits.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-name">Profiles</div>
+          <div class="feature-desc">Auto-switch git identity by repo path. Work / personal, zero friction.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-name">GitHub &amp; GitLab</div>
+          <div class="feature-desc">PR badges on branches. PAT in OS keychain. Click to open in browser.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-name">Git LFS</div>
+          <div class="feature-desc">Track patterns, see file sizes, prune objects. Game dev friendly.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-name">Undo</div>
+          <div class="feature-desc">Ctrl+Z backed by reflog. Works even for ops run in terminal.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-name">10 MB</div>
+          <div class="feature-desc">Tauri + Rust, not Electron. Native webview. Starts in under a second.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>MIT &middot; Prefetch</p>
+      <a href="https://github.com/Sph3ricalPeter/prefetch">View source</a>
+    </div>
+  </footer>
+
+  <script>
+    function copy(id, btn) {
+      const text = document.getElementById(id).textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+        }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>
