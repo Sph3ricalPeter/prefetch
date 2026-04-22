@@ -10,6 +10,8 @@ interface ResizeHandleProps {
   minWidth?: number;
   /** Max width in px */
   maxWidth?: number;
+  /** Called with the final width when the user finishes dragging */
+  onResizeEnd?: (width: number) => void;
 }
 
 export function ResizeHandle({
@@ -17,6 +19,7 @@ export function ResizeHandle({
   panelRef,
   minWidth = 192,
   maxWidth = 480,
+  onResizeEnd,
 }: ResizeHandleProps) {
   const [isDragging, setIsDragging] = useState(false);
   const startX = useRef(0);
@@ -54,6 +57,12 @@ export function ResizeHandle({
 
     const onMouseUp = () => {
       setIsDragging(false);
+      if (onResizeEnd) {
+        const panel = panelRef.current;
+        if (panel) {
+          onResizeEnd(Math.round(panel.getBoundingClientRect().width));
+        }
+      }
     };
 
     document.addEventListener("mousemove", onMouseMove);
@@ -63,7 +72,7 @@ export function ResizeHandle({
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };
-  }, [isDragging, side, panelRef, minWidth, maxWidth]);
+  }, [isDragging, side, panelRef, minWidth, maxWidth, onResizeEnd]);
 
   return (
     <div
