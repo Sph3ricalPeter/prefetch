@@ -76,48 +76,58 @@ A Rust background thread runs `git fetch --all` on a configurable timer (default
 
 ## Feature scope
 
-### MVP (v0.1) — daily-drivable baseline
+### What shipped (v0.1 → v0.3)
 
-The question to answer: what do you actually open GitKraken for on a typical day?
+> Original version boundaries didn't hold — features shipped faster than planned. Current release: **v0.3.0**.
 
-1. **Commit graph** — see where branches are, visual lane layout
-2. **Branch list** in left panel, checkout on click
-3. **Fetch / pull / push** with progress indicator
-4. **Stage / unstage files** — file list + hunk-level staging
-5. **Diff viewer** — read-only (Shiki) for history, CodeMirror 6 for staging
-6. **Commit** — message editor, amend option
-7. **Stash** — push / pop / drop
+**Core (originally v0.1):**
+1. ✅ **Commit graph** — Canvas API, virtualized, lane algorithm
+2. ✅ **Branch list** — checkout on click, smart remote tracking
+3. ✅ **Fetch / pull / push** — with live progress indicators
+4. ✅ **Stage / unstage files** — file-level (hunk staging deferred to diff overhaul)
+5. ✅ **Diff viewer** — read-only, plain HTML with grouped hunks (Shiki deferred to diff overhaul)
+6. ✅ **Commit** — message + description, amend
+7. ✅ **Stash** — push / pop / drop
 
-Errors surfaced via **toast notifications** (bottom-right). Auth failures, push rejections, merge conflicts — all toasts. No error panel, no inline states.
+**Shipped beyond original MVP:**
+8. ✅ **Tags** — create, delete, push
+9. ✅ **Cherry-pick & rebase** — cherry-pick, non-interactive rebase, reset (soft/hard)
+10. ✅ **Undo** via reflog (Ctrl+Z)
+11. ✅ **Merge conflict** — detection + per-file ours/theirs resolution
+12. ✅ **Force push** — `--force-with-lease` + confirmation dialog
+13. ✅ **Auto-updater** — check on mount, download progress, restart prompt, CI signing
+14. ✅ **GitHub / GitLab PAT** — OS keychain storage, per-profile tokens, PR badges on branches
+15. ✅ **Profiles** — full CRUD, auto-switch by repo path, SSH key injection, env var identity
+16. ⚠️ **Git LFS** — initialize, track/untrack, prune, file badges (~85%, missing pull/fetch with progress)
 
-MVP supports one repo at a time with a recent-repos quick-switch. Tabbed multi-repo is a v0.3+ consideration.
+**Infrastructure:**
+- ✅ Background auto-fetch (5 min)
+- ✅ File watcher for `.git/` changes
+- ✅ SQLite persistence (repos, UI state, profiles)
+- ✅ CI/CD — GitHub Actions, Windows NSIS + macOS DMG
+- ✅ Windows console-window suppression
 
-Ship this. Use it. Iterate.
+Errors surfaced via **toast notifications** (bottom-right). Auth failures, push rejections, merge conflicts — all toasts.
 
-### v0.2 — personal pain points
+One repo at a time with recent-repos quick-switch. Tabbed multi-repo is a future consideration.
 
-8. **Profiles** (work / personal) — see detailed spec below, this is the killer feature gap vs competitors
-9. **GitHub / GitLab OAuth** — token storage per profile
-10. **Open existing PR in browser** — detect if PR exists for current branch → badge on branch → click opens URL
-11. **Undo** via reflog — see implementation spec below
-12. **Cherry-pick & rebase** — cherry-pick commits onto current branch, non-interactive rebase onto target branch
-13. **Tags** — create, delete, push tags
+### Next up
 
-### v0.3 — rounding out
+17. **LFS pull/fetch** — complete the remaining 15% of LFS (pull/fetch with progress streaming)
+18. **Diff & staging overhaul** — Shiki for read-only diffs, CodeMirror 6 for hunk/line staging, merge conflict editor upgrade
+19. **Git hooks UX** — detect hook failures, show hook name + output in toast (not generic error)
+20. **Command palette** (Cmd+K) — fuzzy-search all actions, keyboard-driven workflows
 
-14. **Conflict resolution** — pick ours/theirs per hunk, no 3-pane editor needed
-15. **Branch divergence indicators** — ahead/behind counts in branch list
-16. **Remote management** — add, remove, rename remotes
+### Future
 
-### v0.4 — nice to haves
-
-17. **Command palette** (Cmd+K) — quick branch switch, repo switch, action trigger
-18. **Git config editor** — global and local, UI for user.name / user.email / default branch
+21. **GitHub/GitLab OAuth** — upgrade from PAT to OAuth per profile (requires app registration)
+22. **Branch divergence indicators** — ahead/behind counts in branch list
+23. **Remote management** — add, remove, rename remotes
+24. **Git config editor** — global and local, UI for user.name / user.email / default branch
 
 ### Explicitly out of scope (not even v1)
 
 - Interactive rebase with commit reordering
-- 3-pane merge conflict editor
 - Worktrees UI
 - Bitbucket / Azure DevOps
 - AI commit messages (easy to add later via Anthropic API)
@@ -277,27 +287,32 @@ CC loses context between sessions. A tight `ARCHITECTURE.md` that describes:
 
 ### Feature build order
 ```
-1. Repo open + commit graph (Canvas, virtualized, interaction layer)
-2. Branch list + checkout
-3. Fetch / pull / push with progress + error toasts
-4. Stage/unstage + diff (Shiki) + commit
-5. Stash
-── ship v0.1 ── ✅
-6. Tags (create, delete, push)                          ✅
-7. Cherry-pick & non-interactive rebase                 ✅
-8. Undo via reflog                                      ✅
-9. Forge integration (GitHub/GitLab PAT, open PR)       ✅
-10. Global settings, author identity, LFS               ✅
-11. Profiles (work/personal) with auto-switch
-12. GitHub/GitLab OAuth (upgrade PAT → OAuth per profile)
-── ship v0.2 ──
-13. Conflict resolution (pick ours/theirs)
-14. Branch divergence indicators
-15. Remote management
-── ship v0.3 ──
-16. Command palette (Cmd+K)
-17. Git config editor UI
-── ship v0.4 ──
+1. Repo open + commit graph (Canvas, virtualized, interaction layer)  ✅
+2. Branch list + checkout                                             ✅
+3. Fetch / pull / push with progress + error toasts                   ✅
+4. Stage/unstage + diff (plain HTML) + commit                         ✅
+5. Stash                                                              ✅
+── ship v0.1 ──
+6.  Tags (create, delete, push)                                       ✅
+7.  Cherry-pick & non-interactive rebase                              ✅
+8.  Undo via reflog                                                   ✅
+9.  Merge conflict detection + per-file ours/theirs                   ✅
+10. Force push with --force-with-lease                                ✅
+11. Auto-updater + distribution cleanup                               ✅
+12. Forge integration (GitHub/GitLab PAT, open PR)                    ✅
+13. Git LFS support (manage patterns, status)                         ⚠️ ~85% (missing pull/fetch)
+14. Profiles (work/personal) with auto-switch                         ✅
+── current: v0.3.0 ──
+15. LFS pull/fetch with progress
+16. Diff & staging overhaul (Shiki + CodeMirror + hunk/line staging)
+17. Git hooks UX (clear hook failure notifications)
+18. Command palette (Cmd+K)
+── ship next ──
+19. GitHub/GitLab OAuth (upgrade PAT → OAuth per profile)
+20. Branch divergence indicators
+21. Remote management
+22. Git config editor UI
+── future ──
 ```
 
 ---

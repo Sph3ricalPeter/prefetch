@@ -20,6 +20,14 @@ See `GITCLIENT_PROJECT_BRIEF.md` for full product spec, tech stack decisions, an
 - Multiple approaches -> ASK which to use
 - Can't find something you expect to exist -> ASK before creating it
 
+### Task Tracking — GitHub Issues
+- **GitHub Issues are the single source of truth for TODOs.** No local TODO files.
+- Issues are organized with **milestones** (v0.4.0, v0.5.0, v1.0.0) and **labels** (priority, area, type).
+- Before starting work, check `gh issue list --milestone <version>` for the current backlog.
+- When finishing a feature, close the issue via commit message (`Closes #N`) or `gh issue close N`.
+- When discovering new work during implementation, create an issue with `gh issue create` — don't just leave a TODO comment.
+- Reference issues in commit messages (e.g. `feat: add LFS pull with progress (#1)`).
+
 ### Code Standards
 - **Rust**: Follow `cargo clippy` and `cargo fmt` conventions. No `unwrap()` in production code — use proper error handling with `thiserror` or `anyhow`.
 - **TypeScript/React**: Strict mode. No `any` types. Functional components only. Use Zustand for state.
@@ -31,26 +39,40 @@ See `GITCLIENT_PROJECT_BRIEF.md` for full product spec, tech stack decisions, an
 ```
 src/                    # React frontend
   components/           # React components (shadcn/ui based)
+    layout/             # App shell, sidebar, panels
+    sidebar/            # Branch list, stash list, tag list, LFS panel
+    staging/            # File list, diff viewer, commit box
+    graph/              # Commit graph (Canvas)
+    ui/                 # Shared UI: forge settings, profile switcher/modal, settings modal, etc.
   hooks/                # Custom React hooks
   stores/               # Zustand stores
+    repo-store.ts       # Main repo state (git ops, forge, LFS)
+    profile-store.ts    # Profile CRUD, auto-switch, session persistence
   lib/                  # Utilities, IPC wrappers
+    commands.ts         # All Tauri invoke wrappers (typed)
+    database.ts         # SQLite ops (repos, profiles, UI state)
   types/                # TypeScript types
+    git.ts              # Git + forge + LFS types
+    profile.ts          # Profile types
 
 src-tauri/
   src/
     main.rs             # Tauri entry point
-    lib.rs              # App setup, plugin registration
+    lib.rs              # App setup, plugin registration, generate_handler!
     commands/           # Tauri IPC command handlers (one file per domain)
       mod.rs            # Re-exports all command modules
-      git_status.rs     # Status, diff reads (git2-rs)
-      git_mutations.rs  # Commit, push, fetch, pull (git CLI subprocess)
-      repo.rs           # Repo open/close, recent repos
+      repo.rs           # All git operations (status, commit, push, fetch, etc.)
+      lfs.rs            # LFS commands (init, track, prune, etc.)
+      forge.rs          # GitHub/GitLab PAT, PR lookup, open URL
+      profile.rs        # Active profile get/set
     git/                # Git abstraction layer
       mod.rs
-      repository.rs     # git2-rs wrapper with RwLock
-      cli.rs            # Git CLI subprocess runner
-      types.rs          # Shared git types (Commit, Branch, Status, etc.)
-    events.rs           # Event names and payloads for IPC events
+      repository.rs     # git2-rs wrapper, CLI subprocess runner, profile env injection
+      graph.rs          # Commit graph algorithm (topological sort, lane assignment)
+      types.rs          # Shared git types (Commit, Branch, Status, LFS, Forge, etc.)
+      lfs.rs            # LFS operations (version, track, prune, ls-files)
+      forge.rs          # Forge detection, keychain token ops, PR API calls
+      profile.rs        # ActiveProfile type
     error.rs            # Error types, Tauri-compatible serialization
 ```
 
@@ -64,8 +86,8 @@ src-tauri/
 ### UI Patterns
 - **Layout**: Three-panel — left sidebar (branches), center (commit graph), right (detail/diff)
 - **Commit graph**: Canvas API, virtualized. NOT React DOM nodes.
-- **Diffs (read-only)**: Shiki
-- **Diffs (interactive staging)**: CodeMirror 6
+- **Diffs (read-only)**: Currently plain HTML with grouped hunks. Shiki upgrade planned (#4).
+- **Diffs (interactive staging)**: Currently file-level only. CodeMirror 6 hunk/line staging planned (#5).
 - **Errors**: Toast notifications, bottom-right. All error types.
 - **Theme**: Dark mode only.
 
@@ -171,7 +193,21 @@ When compacting, always preserve:
 
 ## Git Workflow
 
-- Work on `main` for now (solo project)
-- Commit messages: imperative mood, concise, explain the "why"
-- Don't create feature branches unless asked
+### Branching model: main / dev
+- **`dev`** — default branch. All feature work targets `dev`. Push here freely.
+- **`main`** — stable releases only. Merge `dev` → `main` when features are complete, tested, and version is bumped. Releases auto-trigger from `main` (CI tags + builds installers).
+- **Feature branches** — optional. For larger features, branch off `dev` (e.g. `feat/hunk-staging`), PR back into `dev`. For smaller changes, commit directly to `dev`.
+- **No direct pushes to `main`** — always merge from `dev` via PR or local merge.
+
+### Commits
+- Imperative mood, concise, explain the "why"
+- Reference GitHub issues: `feat: add LFS pull with progress (#1)`
+- Close issues via commit message when appropriate: `Closes #1`
 - Don't push unless asked
+
+### Releasing
+1. Ensure all target milestone issues are closed
+2. Bump version in `package.json` and `src-tauri/tauri.conf.json`
+3. Merge `dev` → `main`
+4. Tag: `git tag v0.X.0` + push tag
+5. CI builds installers + creates GitHub release automatically

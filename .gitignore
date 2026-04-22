@@ -21,3 +21,10 @@ Thumbs.db
 
 # Tauri
 src-tauri/gen/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Screenshots
+*.png
+!src-tauri/icons/*.png
