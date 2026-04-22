@@ -5,6 +5,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tracing::debug;
 
 /// Watches the `.git/` directory for changes and emits `repo_changed` events.
 ///
@@ -87,6 +88,7 @@ impl RepoWatcher {
                                 ChangeType::Refs => "Refs",
                                 ChangeType::Head => "Head",
                             };
+                            debug!(change_type = payload, "watcher: emitting repo_changed");
                             app.emit(events::REPO_CHANGED, payload).ok();
                             last_emit = Instant::now();
                             pending = None;
@@ -111,15 +113,18 @@ impl RepoWatcher {
                 }
 
                 if rel_str == "HEAD" {
+                    debug!(file = %rel_str, "watcher: detected Head change");
                     return Some(ChangeType::Head);
                 }
                 if rel_str.starts_with("refs")
                     || rel_str == "FETCH_HEAD"
                     || rel_str == "packed-refs"
                 {
+                    debug!(file = %rel_str, "watcher: detected Refs change");
                     return Some(ChangeType::Refs);
                 }
                 if rel_str == "index" {
+                    debug!(file = %rel_str, "watcher: detected Status change");
                     return Some(ChangeType::Status);
                 }
             }

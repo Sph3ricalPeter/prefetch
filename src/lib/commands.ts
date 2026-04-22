@@ -13,124 +13,136 @@ import type {
   TagInfo,
   UndoAction,
 } from "@/types/git";
+import type { ActiveProfileConfig } from "@/types/profile";
+import { traceIpc } from "@/lib/tracing";
+
+/** Traced invoke — wraps every IPC call with performance marks. */
+async function tracedInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const end = traceIpc(command);
+  try {
+    return await invoke<T>(command, args);
+  } finally {
+    end();
+  }
+}
 
 export async function openRepo(path: string): Promise<string> {
-  return invoke<string>("open_repo", { path });
+  return tracedInvoke<string>("open_repo", { path });
 }
 
 export async function getCommits(limit?: number): Promise<GraphData> {
-  return invoke<GraphData>("get_commits", { limit });
+  return tracedInvoke<GraphData>("get_commits", { limit });
 }
 
 export async function getBranches(): Promise<BranchInfo[]> {
-  return invoke<BranchInfo[]>("get_branches");
+  return tracedInvoke<BranchInfo[]>("get_branches");
 }
 
 export async function checkoutBranch(name: string): Promise<void> {
-  return invoke<void>("checkout_branch", { name });
+  return tracedInvoke<void>("checkout_branch", { name });
 }
 
 export async function resetBranchToRemote(
   branch: string,
   remoteRef: string,
 ): Promise<void> {
-  return invoke<void>("reset_branch_to_remote", { branch, remoteRef });
+  return tracedInvoke<void>("reset_branch_to_remote", { branch, remoteRef });
 }
 
 export async function createBranchCmd(name: string): Promise<void> {
-  return invoke<void>("create_branch", { name });
+  return tracedInvoke<void>("create_branch", { name });
 }
 
 export async function fetchRepo(): Promise<string> {
-  return invoke<string>("fetch_repo");
+  return tracedInvoke<string>("fetch_repo");
 }
 
 export async function pullRepo(): Promise<string> {
-  return invoke<string>("pull_repo");
+  return tracedInvoke<string>("pull_repo");
 }
 
 export async function pushRepo(): Promise<string> {
-  return invoke<string>("push_repo");
+  return tracedInvoke<string>("push_repo");
 }
 
 export async function forcePushRepo(): Promise<string> {
-  return invoke<string>("force_push_repo");
+  return tracedInvoke<string>("force_push_repo");
 }
 
 export async function getFileStatus(): Promise<FileStatus[]> {
-  return invoke<FileStatus[]>("get_file_status");
+  return tracedInvoke<FileStatus[]>("get_file_status");
 }
 
 export async function getFileDiff(
   filePath: string,
   staged: boolean,
 ): Promise<FileDiff> {
-  return invoke<FileDiff>("get_file_diff", { filePath, staged });
+  return tracedInvoke<FileDiff>("get_file_diff", { filePath, staged });
 }
 
 export async function discardFiles(paths: string[]): Promise<void> {
-  return invoke<void>("discard_files", { paths });
+  return tracedInvoke<void>("discard_files", { paths });
 }
 
 export async function discardAllChanges(): Promise<void> {
-  return invoke<void>("discard_all_changes");
+  return tracedInvoke<void>("discard_all_changes");
 }
 
 export async function stageFiles(paths: string[]): Promise<void> {
-  return invoke<void>("stage_files", { paths });
+  return tracedInvoke<void>("stage_files", { paths });
 }
 
 export async function unstageFiles(paths: string[]): Promise<void> {
-  return invoke<void>("unstage_files", { paths });
+  return tracedInvoke<void>("unstage_files", { paths });
 }
 
 export async function createCommit(
   message: string,
   amend: boolean,
 ): Promise<string> {
-  return invoke<string>("create_commit", { message, amend });
+  return tracedInvoke<string>("create_commit", { message, amend });
 }
 
 export async function getCommitFiles(commitId: string): Promise<FileStatus[]> {
-  return invoke<FileStatus[]>("get_commit_files", { commitId });
+  return tracedInvoke<FileStatus[]>("get_commit_files", { commitId });
 }
 
 export async function getCommitFileDiff(
   commitId: string,
   filePath: string,
 ): Promise<FileDiff> {
-  return invoke<FileDiff>("get_commit_file_diff", { commitId, filePath });
+  return tracedInvoke<FileDiff>("get_commit_file_diff", { commitId, filePath });
 }
 
 export async function getStashes(): Promise<StashInfo[]> {
-  return invoke<StashInfo[]>("get_stashes");
+  return tracedInvoke<StashInfo[]>("get_stashes");
 }
 
 export async function stashPush(message?: string): Promise<string> {
-  return invoke<string>("stash_save", { message: message ?? null });
+  return tracedInvoke<string>("stash_save", { message: message ?? null });
 }
 
 export async function stashPop(index: number): Promise<string> {
-  return invoke<string>("stash_pop", { index });
+  return tracedInvoke<string>("stash_pop", { index });
 }
 
 export async function stashDrop(index: number): Promise<string> {
-  return invoke<string>("stash_drop", { index });
+  return tracedInvoke<string>("stash_drop", { index });
 }
 
 export async function getStashFiles(index: number): Promise<FileStatus[]> {
-  return invoke<FileStatus[]>("get_stash_files", { index });
+  return tracedInvoke<FileStatus[]>("get_stash_files", { index });
 }
 
 export async function getStashFileDiff(
   index: number,
   filePath: string,
 ): Promise<FileDiff> {
-  return invoke<FileDiff>("get_stash_file_diff", { index, filePath });
+  return tracedInvoke<FileDiff>("get_stash_file_diff", { index, filePath });
 }
 
 export async function getTags(): Promise<TagInfo[]> {
-  return invoke<TagInfo[]>("get_tags");
+  return tracedInvoke<TagInfo[]>("get_tags");
 }
 
 export async function createTagCmd(
@@ -138,7 +150,7 @@ export async function createTagCmd(
   commit?: string,
   message?: string,
 ): Promise<string> {
-  return invoke<string>("create_tag", {
+  return tracedInvoke<string>("create_tag", {
     name,
     commit: commit ?? null,
     message: message ?? null,
@@ -146,106 +158,124 @@ export async function createTagCmd(
 }
 
 export async function deleteTagCmd(name: string): Promise<string> {
-  return invoke<string>("delete_tag", { name });
+  return tracedInvoke<string>("delete_tag", { name });
 }
 
 export async function pushTagCmd(name: string): Promise<string> {
-  return invoke<string>("push_tag", { name });
+  return tracedInvoke<string>("push_tag", { name });
 }
 
 export async function getUndoAction(): Promise<UndoAction> {
-  return invoke<UndoAction>("get_undo_action");
+  return tracedInvoke<UndoAction>("get_undo_action");
 }
 
 export async function undoLast(): Promise<string> {
-  return invoke<string>("undo_last");
+  return tracedInvoke<string>("undo_last");
 }
 
 export async function resolveConflictOurs(filePath: string): Promise<void> {
-  return invoke<void>("resolve_conflict_ours", { filePath });
+  return tracedInvoke<void>("resolve_conflict_ours", { filePath });
 }
 
 export async function resolveConflictTheirs(filePath: string): Promise<void> {
-  return invoke<void>("resolve_conflict_theirs", { filePath });
+  return tracedInvoke<void>("resolve_conflict_theirs", { filePath });
 }
 
 export async function resetToCommit(
   commitId: string,
   mode: string,
 ): Promise<string> {
-  return invoke<string>("reset_to_commit", { commitId, mode });
+  return tracedInvoke<string>("reset_to_commit", { commitId, mode });
 }
 
 export async function cherryPickCommit(commitId: string): Promise<string> {
-  return invoke<string>("cherry_pick", { commitId });
+  return tracedInvoke<string>("cherry_pick", { commitId });
 }
 
 export async function rebaseOnto(target: string): Promise<string> {
-  return invoke<string>("rebase_onto", { target });
+  return tracedInvoke<string>("rebase_onto", { target });
 }
 
 export async function getConflictState(): Promise<ConflictState> {
-  return invoke<ConflictState>("get_conflict_state");
+  return tracedInvoke<ConflictState>("get_conflict_state");
 }
 
 export async function abortOperation(): Promise<string> {
-  return invoke<string>("abort_operation");
+  return tracedInvoke<string>("abort_operation");
 }
 
 export async function continueOperation(): Promise<string> {
-  return invoke<string>("continue_operation");
+  return tracedInvoke<string>("continue_operation");
 }
 
 // ── Git identity ─────────────────────────────────────────────────────────────
 
 export async function getGitIdentity(): Promise<GitIdentity> {
-  return invoke<GitIdentity>("get_git_identity");
+  return tracedInvoke<GitIdentity>("get_git_identity");
 }
 
 // ── Forge (GitHub / GitLab) ───────────────────────────────────────────────────
 
 export async function getForgeStatus(): Promise<ForgeStatus> {
-  return invoke<ForgeStatus>("get_forge_status");
+  return tracedInvoke<ForgeStatus>("get_forge_status");
 }
 
 export async function saveForgeToken(host: string, token: string): Promise<void> {
-  return invoke<void>("save_forge_token", { host, token });
+  return tracedInvoke<void>("save_forge_token", { host, token });
 }
 
 export async function deleteForgeToken(host: string): Promise<void> {
-  return invoke<void>("delete_forge_token", { host });
+  return tracedInvoke<void>("delete_forge_token", { host });
 }
 
 export async function getPrForBranch(branch: string): Promise<PrInfo | null> {
-  return invoke<PrInfo | null>("get_pr_for_branch", { branch });
+  return tracedInvoke<PrInfo | null>("get_pr_for_branch", { branch });
 }
 
 export async function clearPrCache(): Promise<void> {
-  return invoke<void>("clear_pr_cache");
+  return tracedInvoke<void>("clear_pr_cache");
 }
 
 export async function openUrl(url: string): Promise<void> {
-  return invoke<void>("open_url", { url });
+  return tracedInvoke<void>("open_url", { url });
 }
 
 // ── LFS ───────────────────────────────────────────────────────────────────────
 
+/** Lightweight check — pure file reads, <1ms. Use at repo open. */
+export async function lfsCheckInitialized(): Promise<LfsInfo> {
+  return tracedInvoke<LfsInfo>("lfs_check_initialized");
+}
+
+/** Full LFS details — spawns git lfs subprocesses, 2-5s. Use on-demand only. */
 export async function lfsGetInfo(): Promise<LfsInfo> {
-  return invoke<LfsInfo>("lfs_get_info");
+  return tracedInvoke<LfsInfo>("lfs_get_info");
 }
 
 export async function lfsInitialize(): Promise<string> {
-  return invoke<string>("lfs_initialize");
+  return tracedInvoke<string>("lfs_initialize");
 }
 
 export async function lfsTrackPattern(pattern: string): Promise<string> {
-  return invoke<string>("lfs_track_pattern", { pattern });
+  return tracedInvoke<string>("lfs_track_pattern", { pattern });
 }
 
 export async function lfsUntrackPattern(pattern: string): Promise<string> {
-  return invoke<string>("lfs_untrack_pattern", { pattern });
+  return tracedInvoke<string>("lfs_untrack_pattern", { pattern });
 }
 
 export async function lfsPruneObjects(): Promise<string> {
-  return invoke<string>("lfs_prune_objects");
+  return tracedInvoke<string>("lfs_prune_objects");
+}
+
+// ── Profiles ────────────────────────────────────────────────────────────────
+
+export async function setActiveProfileCmd(
+  profile: ActiveProfileConfig | null,
+): Promise<void> {
+  return tracedInvoke<void>("set_active_profile", { profile });
+}
+
+export async function getActiveProfileCmd(): Promise<ActiveProfileConfig | null> {
+  return tracedInvoke<ActiveProfileConfig | null>("get_active_profile");
 }

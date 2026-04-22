@@ -14,7 +14,7 @@ use crate::git::types::{ForgeConfig, ForgeKind, PrInfo};
 ///
 /// Returns `None` if there is no `origin` remote or the URL is unrecognised.
 pub fn detect_forge(path: &str) -> Result<Option<ForgeConfig>, AppError> {
-    let output = run_git(path, &["remote", "get-url", "origin"]);
+    let output = run_git(path, &["remote", "get-url", "origin"], &[]);
     let url = match output {
         Ok(u) => u.trim().to_string(),
         Err(_) => return Ok(None), // no origin remote
@@ -79,7 +79,11 @@ fn split_owner_repo(path: &str) -> Result<(String, String), AppError> {
     }
     let owner = parts[0].to_string();
     // For subgroups (a/b/c) the last segment is the repo
-    let repo = parts[1].split('/').next_back().unwrap_or(parts[1]).to_string();
+    let repo = parts[1]
+        .split('/')
+        .next_back()
+        .unwrap_or(parts[1])
+        .to_string();
     Ok((owner, repo))
 }
 
@@ -96,17 +100,55 @@ fn classify_host(host: &str) -> ForgeKind {
 
 const KEYCHAIN_SERVICE: &str = "prefetch";
 
+/// Build the keyring username for a host, optionally scoped to a profile.
+///
+/// - No profile: `"github.com"` (legacy key)
+/// - With profile: `"<profile_id>/github.com"`
+fn keyring_user(profile_id: Option<&str>, host: &str) -> String {
+    match profile_id {
+        Some(id) => format!("{id}/{host}"),
+        None => host.to_string(),
+    }
+}
+
 /// Store a forge PAT in the OS keychain.
-/// Key: `prefetch/<host>`, e.g. `prefetch/github.com`
-pub fn save_token(host: &str, token: &str) -> Result<(), AppError> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, host)
+pub fn save_token_for_profile(
+    profile_id: Option<&str>,
+    host: &str,
+    token: &str,
+) -> Result<(), AppError> {
+    let user = keyring_user(profile_id, host);
+    keyring::Entry::new(KEYCHAIN_SERVICE, &user)
         .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?
         .set_password(token)
         .map_err(|e| AppError::Other(format!("Failed to save token: {e}")))
 }
 
-/// Retrieve a forge PAT from the OS keychain. Returns `None` if not set.
-pub fn load_token(host: &str) -> Result<Option<String>, AppError> {
+/// Retrieve a forge PAT from the OS keychain, trying profile-scoped key first.
+///
+/// Fallback order:
+/// 1. If `profile_id` is `Some`, try `<profile_id>/<host>` first.
+/// 2. Fall back to `<host>` (legacy / shared key).
+/// 3. If `profile_id` is `None`, use `<host>` directly.
+pub fn load_token_for_profile(
+    profile_id: Option<&str>,
+    host: &str,
+) -> Result<Option<String>, AppError> {
+    if let Some(pid) = profile_id {
+        // Try profile-scoped key first
+        let user = keyring_user(Some(pid), host);
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &user)
+            .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
+        match entry.get_password() {
+            Ok(token) => return Ok(Some(token)),
+            Err(keyring::Error::NoEntry) => {
+                // Fall through to legacy key
+            }
+            Err(e) => return Err(AppError::Other(format!("Failed to load token: {e}"))),
+        }
+    }
+
+    // Legacy / no-profile key
     let entry = keyring::Entry::new(KEYCHAIN_SERVICE, host)
         .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
     match entry.get_password() {
@@ -116,9 +158,10 @@ pub fn load_token(host: &str) -> Result<Option<String>, AppError> {
     }
 }
 
-/// Delete a forge PAT from the OS keychain.
-pub fn delete_token(host: &str) -> Result<(), AppError> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, host)
+/// Delete a forge PAT from the OS keychain (profile-scoped or legacy).
+pub fn delete_token_for_profile(profile_id: Option<&str>, host: &str) -> Result<(), AppError> {
+    let user = keyring_user(profile_id, host);
+    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &user)
         .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
@@ -134,11 +177,14 @@ pub fn delete_token(host: &str) -> Result<(), AppError> {
 /// For HTTPS remotes with a stored token, returns the URL with embedded
 /// credentials (e.g. `https://x-access-token:TOKEN@github.com/owner/repo.git`).
 ///
+/// `profile_id` scopes the token lookup — tries profile-specific key first,
+/// then falls back to the legacy shared key.
+///
 /// Returns `None` for SSH remotes or when no token is stored — the caller
 /// should fall back to the normal remote name so the user's SSH keys /
 /// credential helper still work.
-pub fn authenticated_remote_url(path: &str) -> Option<String> {
-    let url = run_git(path, &["remote", "get-url", "origin"]).ok()?;
+pub fn authenticated_remote_url(path: &str, profile_id: Option<&str>) -> Option<String> {
+    let url = run_git(path, &["remote", "get-url", "origin"], &[]).ok()?;
     let url = url.trim();
 
     // Only inject credentials for HTTPS remotes
@@ -147,7 +193,7 @@ pub fn authenticated_remote_url(path: &str) -> Option<String> {
     }
 
     let config = detect_forge(path).ok()??;
-    let token = load_token(&config.host).ok()??;
+    let token = load_token_for_profile(profile_id, &config.host).ok()??;
 
     let username = match config.kind {
         ForgeKind::GitHub => "x-access-token",
@@ -178,11 +224,7 @@ pub fn get_pr_for_branch(
     }
 }
 
-fn github_get_pr(
-    config: &ForgeConfig,
-    branch: &str,
-    token: &Option<String>,
-) -> Option<PrInfo> {
+fn github_get_pr(config: &ForgeConfig, branch: &str, token: &Option<String>) -> Option<PrInfo> {
     let url = format!(
         "https://api.{}/repos/{}/{}/pulls?head={}:{}&state=open&per_page=1",
         config.host, config.owner, config.repo, config.owner, branch
@@ -210,11 +252,7 @@ fn github_get_pr(
     })
 }
 
-fn gitlab_get_mr(
-    config: &ForgeConfig,
-    branch: &str,
-    token: &Option<String>,
-) -> Option<PrInfo> {
+fn gitlab_get_mr(config: &ForgeConfig, branch: &str, token: &Option<String>) -> Option<PrInfo> {
     // URL-encode owner/repo for the project ID path
     let project_path =
         urlencoding::encode(&format!("{}/{}", config.owner, config.repo)).into_owned();

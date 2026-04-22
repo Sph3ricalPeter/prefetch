@@ -8,6 +8,7 @@ use crate::git::{
 use crate::AppState;
 use serde::Serialize;
 use tauri::State;
+use tracing::instrument;
 
 /// Helper to get the open repository path from state.
 fn repo_path(state: &State<'_, AppState>) -> Result<String, AppError> {
@@ -19,12 +20,23 @@ fn repo_path(state: &State<'_, AppState>) -> Result<String, AppError> {
         .ok_or_else(|| AppError::Other("No repository open".to_string()))
 }
 
+/// Run a blocking closure on the tokio thread pool.
+async fn offload<F, T>(f: F) -> Result<T, AppError>
+where
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
 // ── Forge status ──────────────────────────────────────────────────────────────
 
 /// The forge status returned to the frontend — config + whether a token exists.
 #[derive(Debug, Clone, Serialize)]
 pub struct ForgeStatus {
-    pub kind: Option<String>,     // "github" | "gitlab" | null
+    pub kind: Option<String>, // "github" | "gitlab" | null
     pub host: Option<String>,
     pub owner: Option<String>,
     pub repo: Option<String>,
@@ -32,57 +44,76 @@ pub struct ForgeStatus {
 }
 
 /// Detect the forge from the open repo's remote URL and check for a stored PAT.
+/// Uses the active profile for token lookup when available.
+#[instrument(skip(state))]
 #[tauri::command]
-pub fn get_forge_status(state: State<'_, AppState>) -> Result<ForgeStatus, AppError> {
+pub async fn get_forge_status(state: State<'_, AppState>) -> Result<ForgeStatus, AppError> {
     let path = repo_path(&state)?;
-    let config = forge::detect_forge(&path)?;
+    let profile_id = state
+        .active_profile
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
 
-    match config {
-        None => Ok(ForgeStatus {
-            kind: None,
-            host: None,
-            owner: None,
-            repo: None,
-            has_token: false,
-        }),
-        Some(cfg) => {
-            let token = forge::load_token(&cfg.host).unwrap_or(None);
-            Ok(ForgeStatus {
-                kind: Some(format!("{:?}", cfg.kind).to_lowercase()),
-                host: Some(cfg.host),
-                owner: Some(cfg.owner),
-                repo: Some(cfg.repo),
-                has_token: token.is_some(),
-            })
+    offload(move || {
+        let config = forge::detect_forge(&path)?;
+        match config {
+            None => Ok(ForgeStatus {
+                kind: None,
+                host: None,
+                owner: None,
+                repo: None,
+                has_token: false,
+            }),
+            Some(cfg) => {
+                let token =
+                    forge::load_token_for_profile(profile_id.as_deref(), &cfg.host).unwrap_or(None);
+                Ok(ForgeStatus {
+                    kind: Some(format!("{:?}", cfg.kind).to_lowercase()),
+                    host: Some(cfg.host),
+                    owner: Some(cfg.owner),
+                    repo: Some(cfg.repo),
+                    has_token: token.is_some(),
+                })
+            }
         }
-    }
+    })
+    .await
 }
 
 // ── Token management ──────────────────────────────────────────────────────────
 
 /// Store a PAT for the given host in the OS keychain.
 #[tauri::command]
-pub fn save_forge_token(host: String, token: String) -> Result<(), AppError> {
-    forge::save_token(&host, &token)
+pub async fn save_forge_token(
+    host: String,
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let profile_id = state
+        .active_profile
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
+    offload(move || forge::save_token_for_profile(profile_id.as_deref(), &host, &token)).await
 }
 
 /// Remove the PAT for the given host from the OS keychain.
 #[tauri::command]
-pub fn delete_forge_token(host: String) -> Result<(), AppError> {
-    forge::delete_token(&host)
+pub async fn delete_forge_token(host: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let profile_id = state
+        .active_profile
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
+    offload(move || forge::delete_token_for_profile(profile_id.as_deref(), &host)).await
 }
 
 // ── PR / MR lookup ────────────────────────────────────────────────────────────
 
 /// Return the open PR/MR for the given branch, or null if none exists.
-///
-/// Checks the in-memory cache first. On a cache miss, calls the forge API
-/// synchronously (runs fine on the Tauri command thread pool). The result
-/// (including `null` for "no PR") is cached so subsequent calls are instant.
-///
-/// Cache is cleared by the `clear_pr_cache` command (called after fetch/pull).
 #[tauri::command]
-pub fn get_pr_for_branch(
+pub async fn get_pr_for_branch(
     branch: String,
     state: State<'_, AppState>,
 ) -> Result<Option<PrInfo>, AppError> {
@@ -99,16 +130,26 @@ pub fn get_pr_for_branch(
         }
     }
 
-    // Cache miss — detect forge + call API
-    let config: Option<ForgeConfig> = forge::detect_forge(&path)?;
+    let profile_id = state
+        .active_profile
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
 
-    let pr = match config {
-        None => None,
-        Some(ref cfg) => {
-            let token = forge::load_token(&cfg.host).unwrap_or(None);
-            forge::get_pr_for_branch(cfg, &branch, &token)
-        }
-    };
+    let branch_clone = branch.clone();
+    let pr = offload(move || {
+        let config: Option<ForgeConfig> = forge::detect_forge(&path)?;
+        let pr = match config {
+            None => None,
+            Some(ref cfg) => {
+                let token =
+                    forge::load_token_for_profile(profile_id.as_deref(), &cfg.host).unwrap_or(None);
+                forge::get_pr_for_branch(cfg, &branch_clone, &token)
+            }
+        };
+        Ok(pr)
+    })
+    .await?;
 
     // Store result (including None) so we don't hammer the API
     {

@@ -8,7 +8,6 @@ import {
   Undo2,
   Archive,
   ArchiveRestore,
-  FileEdit,
   GitBranchPlus,
   FolderGit2,
   X,
@@ -17,6 +16,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
+import { useProfileStore } from "@/stores/profile-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
@@ -130,33 +130,43 @@ export function GraphPanel() {
               Recent Repositories
             </p>
             <div className="flex flex-col gap-0.5">
-              {recentRepos.map((repo) => (
-                <div
-                  key={repo.path}
-                  className="group flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors hover:bg-secondary"
-                  onClick={() => openRepository(repo.path)}
-                >
-                  <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-sm text-foreground truncate">
-                      {repo.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground/50 truncate">
-                      {repo.path}
-                    </span>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeFromRecentRepos(repo.path);
-                    }}
-                    className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
-                    title="Remove from recent"
+              {recentRepos.map((repo) => {
+                const profileName = repo.profile_id
+                  ? useProfileStore.getState().profiles.find((p) => p.id === repo.profile_id)?.name
+                  : null;
+                return (
+                  <div
+                    key={repo.path}
+                    className="group flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors hover:bg-secondary"
+                    onClick={() => openRepository(repo.path)}
                   >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
+                    <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="text-sm text-foreground truncate">
+                        {repo.name}
+                      </span>
+                      <span className="text-xs text-muted-foreground/50 truncate">
+                        {repo.path}
+                      </span>
+                    </div>
+                    {profileName && (
+                      <span className="shrink-0 rounded bg-accent px-1.5 py-0.5 text-[10px] text-muted-foreground/60">
+                        {profileName}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFromRecentRepos(repo.path);
+                      }}
+                      className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                      title="Remove from recent"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -180,7 +190,7 @@ export function GraphPanel() {
     <div className="relative flex h-full flex-col bg-background">
       {/* Header bar with toolbar */}
       <div className="shrink-0">
-      <div className="flex h-10 items-center px-4">
+      <div className="flex min-h-10 items-center px-4 py-1">
         {showDiff || showLargeDiffGuard || (diffLoading && selectedFilePath) ? (
           <>
             <button
@@ -205,33 +215,14 @@ export function GraphPanel() {
             onOpenRepo={handleOpenRepo}
             onSwitchRepo={openRepository}
             onRemoveRepo={removeFromRecentRepos}
+            profiles={useProfileStore.getState().profiles}
           />
         )}
 
         {/* Toolbar buttons — right side */}
-        <div className="ml-auto flex items-center gap-1">
-          {fileStatuses.length > 0 && (
-            <>
-              <button
-                onClick={() => { clearSelection(); loadStatus(); }}
-                className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                  selectedCommitId === null && selectedStashIndex === null
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                }`}
-              >
-                <FileEdit className="h-3.5 w-3.5" />
-                <span>Changes</span>
-                <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-xs leading-none">
-                  {fileStatuses.length}
-                </span>
-              </button>
-              <div className="mx-1 h-4 w-px bg-border" />
-            </>
-          )}
-
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
           {undoInfo?.can_undo && (
-            <>
+            <div className="flex items-center gap-1 border-r border-border pr-2">
               <ToolbarButton
                 icon={<Undo2 className="h-3.5 w-3.5" />}
                 label="Undo"
@@ -239,79 +230,78 @@ export function GraphPanel() {
                 onClick={undoAction}
                 title={undoInfo.description}
               />
-              <div className="mx-1 h-4 w-px bg-border" />
-            </>
+            </div>
           )}
 
-          <ToolbarButton
-            icon={<RefreshCw className="h-3.5 w-3.5" />}
-            label="Fetch"
-            disabled={isLoading}
-            onClick={fetchAction}
-          />
-          <ToolbarButton
-            icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-            label="Pull"
-            disabled={isLoading}
-            onClick={pullAction}
-          />
-          <ToolbarButton
-            icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-            label="Push"
-            disabled={isLoading}
-            onClick={pushAction}
-          />
-
-          {/* Separator */}
-          <div className="mx-1 h-4 w-px bg-border" />
-
-          <ToolbarButton
-            icon={<Archive className="h-3.5 w-3.5" />}
-            label="Stash"
-            disabled={isLoading || fileStatuses.length === 0}
-            onClick={() => pushStash()}
-          />
-          <ToolbarButton
-            icon={<ArchiveRestore className="h-3.5 w-3.5" />}
-            label="Pop"
-            disabled={isLoading || stashes.length === 0}
-            onClick={() => popStash(0)}
-          />
-
-          {/* Separator */}
-          <div className="mx-1 h-4 w-px bg-border" />
-
-          {showBranchInput ? (
-            <input
-              type="text"
-              placeholder="branch name..."
-              value={newBranchName}
-              onChange={(e) => setNewBranchName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newBranchName.trim()) {
-                  createBranch(newBranchName.trim());
-                  setNewBranchName("");
-                  setShowBranchInput(false);
-                } else if (e.key === "Escape") {
-                  setShowBranchInput(false);
-                  setNewBranchName("");
-                }
-              }}
-              onBlur={() => {
-                setShowBranchInput(false);
-                setNewBranchName("");
-              }}
-              autoFocus
-              className="w-32 rounded bg-background border border-border px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
-            />
-          ) : (
+          <div className="flex items-center gap-1">
             <ToolbarButton
-              icon={<GitBranchPlus className="h-3.5 w-3.5" />}
-              label="Branch"
+              icon={<RefreshCw className="h-3.5 w-3.5" />}
+              label="Fetch"
               disabled={isLoading}
-              onClick={() => setShowBranchInput(true)}
+              onClick={fetchAction}
             />
-          )}
+            <ToolbarButton
+              icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+              label="Pull"
+              disabled={isLoading}
+              onClick={pullAction}
+            />
+            <ToolbarButton
+              icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
+              label="Push"
+              disabled={isLoading}
+              onClick={pushAction}
+            />
+          </div>
+
+          <div className="flex items-center gap-1 border-l border-border pl-2">
+            <ToolbarButton
+              icon={<Archive className="h-3.5 w-3.5" />}
+              label="Stash"
+              disabled={isLoading || fileStatuses.length === 0}
+              onClick={() => pushStash()}
+            />
+            <ToolbarButton
+              icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+              label="Pop"
+              disabled={isLoading || stashes.length === 0}
+              onClick={() => popStash(0)}
+            />
+          </div>
+
+          <div className="flex items-center gap-1 border-l border-border pl-2">
+            {showBranchInput ? (
+              <input
+                type="text"
+                placeholder="branch name..."
+                value={newBranchName}
+                onChange={(e) => setNewBranchName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newBranchName.trim()) {
+                    createBranch(newBranchName.trim());
+                    setNewBranchName("");
+                    setShowBranchInput(false);
+                  } else if (e.key === "Escape") {
+                    setShowBranchInput(false);
+                    setNewBranchName("");
+                  }
+                }}
+                onBlur={() => {
+                  setShowBranchInput(false);
+                  setNewBranchName("");
+                }}
+                autoFocus
+                className="w-32 rounded bg-background border border-border px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-ring"
+              />
+            ) : (
+              <ToolbarButton
+                icon={<GitBranchPlus className="h-3.5 w-3.5" />}
+                label="Branch"
+                disabled={isLoading}
+                onClick={() => setShowBranchInput(true)}
+              />
+            )}
+          </div>
         </div>
       </div>
       <div className="mx-3 my-1 border-t border-border" />
@@ -378,7 +368,9 @@ export function GraphPanel() {
             tags={tags}
             stashes={stashes}
             hasUncommittedChanges={fileStatuses.length > 0}
-            onClickWip={clearSelection}
+            fileStatusCount={fileStatuses.length}
+            isWipSelected={selectedCommitId === null && selectedStashIndex === null}
+            onClickWip={() => { clearSelection(); loadStatus(); }}
             onCommitContextMenu={(commitId, x, y) => setCommitContextMenu({ commitId, x, y })}
           />
         )}
@@ -509,14 +501,16 @@ function RepoSwitcher({
   onOpenRepo,
   onSwitchRepo,
   onRemoveRepo,
+  profiles,
 }: {
   repoName: string;
   commitCount: number;
-  recentRepos: { path: string; name: string }[];
+  recentRepos: { path: string; name: string; profile_id: string | null }[];
   currentPath: string;
   onOpenRepo: () => void;
   onSwitchRepo: (path: string) => void;
   onRemoveRepo: (path: string) => void;
+  profiles: { id: string; name: string }[];
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -539,15 +533,15 @@ function RepoSwitcher({
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1 rounded px-2 py-1 -ml-2 hover:bg-secondary transition-colors"
+        className="flex max-w-[200px] items-center gap-1 rounded px-2 py-1 -ml-2 hover:bg-secondary transition-colors"
       >
-        <span className="text-xs font-medium text-muted-foreground">
+        <span className="truncate text-xs font-medium text-muted-foreground">
           {repoName}
         </span>
-        <span className="text-xs text-muted-foreground/50">
-          {commitCount.toLocaleString()} commits
+        <span className="shrink-0 text-xs text-muted-foreground/50">
+          {commitCount.toLocaleString()}
         </span>
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50" />
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
       </button>
 
       {isOpen && (
@@ -571,32 +565,42 @@ function RepoSwitcher({
               <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground/50 uppercase tracking-wider">
                 Recent
               </p>
-              {otherRepos.map((repo) => (
-                <div
-                  key={repo.path}
-                  className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-secondary transition-colors"
-                  onClick={() => {
-                    setIsOpen(false);
-                    onSwitchRepo(repo.path);
-                  }}
-                >
-                  <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-xs text-foreground truncate">{repo.name}</span>
-                    <span className="text-xs text-muted-foreground/40 truncate">{repo.path}</span>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRemoveRepo(repo.path);
+              {otherRepos.map((repo) => {
+                const profileName = repo.profile_id
+                  ? profiles.find((p) => p.id === repo.profile_id)?.name
+                  : null;
+                return (
+                  <div
+                    key={repo.path}
+                    className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-secondary transition-colors"
+                    onClick={() => {
+                      setIsOpen(false);
+                      onSwitchRepo(repo.path);
                     }}
-                    className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
-                    title="Remove from recent"
                   >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
+                    <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="text-xs text-foreground truncate">{repo.name}</span>
+                      <span className="text-xs text-muted-foreground/40 truncate">{repo.path}</span>
+                    </div>
+                    {profileName && (
+                      <span className="shrink-0 rounded bg-accent px-1.5 py-0.5 text-[10px] text-muted-foreground/60">
+                        {profileName}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveRepo(repo.path);
+                      }}
+                      className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                      title="Remove from recent"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
             </>
           )}
         </div>

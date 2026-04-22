@@ -1,6 +1,6 @@
 [package]
 name = "prefetch"
-version = "0.2.0"
+version = "0.3.0"
 description = "A desktop git client"
 authors = ["Sph3ricalPeter <sph3ricalpeter@gmail.com>"]
 license = "MIT"
@@ -23,7 +23,7 @@ tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
 tauri-plugin-fs = { version = "2.5.0", features = ["watch"] }
 tauri-plugin-os = "2.3.2"
 git2 = "0.20"
-tokio = { version = "1.52.1", features = ["sync"] }
+tokio = { version = "1.52.1", features = ["sync", "rt"] }
 notify = "8"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
@@ -31,3 +31,6 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"], def
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 urlencoding = "2"
 open = "5"
+tracing = { version = "0.1", features = ["release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt", "ansi"] }
+tracing-chrome = "0.7"

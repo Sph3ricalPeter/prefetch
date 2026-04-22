@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from "react";
+import { useState, useEffect, useRef, type KeyboardEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -35,6 +35,16 @@ export function LfsPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [newPattern, setNewPattern] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const fullLoadedRef = useRef(false);
+
+  // Load full LFS details on first expand (tracked patterns, file counts).
+  // This is deferred because spawning git lfs Go binaries takes 2-5s on Windows.
+  useEffect(() => {
+    if (isOpen && lfsInfo?.initialized && !fullLoadedRef.current) {
+      fullLoadedRef.current = true;
+      useRepoStore.getState().loadLfsInfo(true);
+    }
+  }, [isOpen, lfsInfo?.initialized]);
 
   // Don't render if LFS info hasn't loaded yet
   if (!lfsInfo) return null;

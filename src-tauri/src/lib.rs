@@ -3,17 +3,20 @@ mod commands;
 mod error;
 mod events;
 mod git;
+mod tracing_setup;
 mod watcher;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use background::BackgroundFetcher;
+use git::profile::ActiveProfile;
 use git::types::PrInfo;
 use watcher::RepoWatcher;
 
 pub struct AppState {
     pub repo_path: Mutex<Option<String>>,
+    pub active_profile: Mutex<Option<ActiveProfile>>,
     pub watcher: Mutex<Option<RepoWatcher>>,
     pub fetcher: Mutex<Option<BackgroundFetcher>>,
     /// In-memory cache of branch name → PR info (or None if no open PR).
@@ -23,6 +26,8 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    tracing_setup::init();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
@@ -31,6 +36,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             repo_path: Mutex::new(None),
+            active_profile: Mutex::new(None),
             watcher: Mutex::new(None),
             fetcher: Mutex::new(None),
             pr_cache: Mutex::new(HashMap::new()),
@@ -83,7 +89,11 @@ pub fn run() {
             commands::forge::get_pr_for_branch,
             commands::forge::clear_pr_cache,
             commands::forge::open_url,
+            // Profiles
+            commands::profile::set_active_profile,
+            commands::profile::get_active_profile,
             // LFS
+            commands::lfs::lfs_check_initialized,
             commands::lfs::lfs_get_info,
             commands::lfs::lfs_initialize,
             commands::lfs::lfs_track_pattern,

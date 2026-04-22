@@ -1,6 +1,8 @@
-use crate::events;
 use crate::git::forge;
+use crate::git::profile::ActiveProfile;
+use crate::git::repository::profile_env;
 use std::process::Command;
+use tracing::debug;
 
 /// Configure a Command to hide the console window on Windows.
 #[cfg(target_os = "windows")]
@@ -17,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 /// Background thread that runs `git fetch --all --prune` every 5 minutes
 /// and emits a `repo_changed` event when new data arrives.
@@ -30,9 +32,13 @@ impl BackgroundFetcher {
     ///
     /// The fetcher runs in a separate thread and checks the stop flag
     /// every second so it can shut down quickly when the repo changes.
-    pub fn start(repo_path: String, app: AppHandle) -> Self {
+    /// `active_profile` is cloned at start time; if the profile changes,
+    /// the fetcher must be stopped and restarted.
+    pub fn start(repo_path: String, _app: AppHandle, active_profile: Option<ActiveProfile>) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_clone = stop.clone();
+        let env_vars = profile_env(&active_profile);
+        let pid = active_profile.as_ref().map(|p| p.profile_id.clone());
 
         thread::spawn(move || {
             // Wait 5 minutes between fetches, checking stop flag each second
@@ -49,8 +55,12 @@ impl BackgroundFetcher {
                 }
 
                 // Run git fetch, injecting forge credentials for HTTPS remotes
+                // and profile env vars for SSH key injection
                 let mut cmd = Command::new("git");
-                if let Some(url) = forge::authenticated_remote_url(&repo_path) {
+                for (k, v) in &env_vars {
+                    cmd.env(k, v);
+                }
+                if let Some(url) = forge::authenticated_remote_url(&repo_path, pid.as_deref()) {
                     cmd.args(["fetch", &url, "--prune"]);
                 } else {
                     cmd.args(["fetch", "--all", "--prune"]);
@@ -61,10 +71,13 @@ impl BackgroundFetcher {
 
                 if let Ok(output) = result {
                     if output.status.success() {
-                        // Only emit if fetch actually got something
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         if !stderr.trim().is_empty() {
-                            app.emit(events::REPO_CHANGED, "Refs").ok();
+                            debug!("background fetch got new data");
+                            // No need to emit REPO_CHANGED — the file watcher
+                            // already detects .git/FETCH_HEAD and ref changes
+                            // from the fetch. Emitting here would cause a
+                            // redundant double reload.
                         }
                     }
                 }

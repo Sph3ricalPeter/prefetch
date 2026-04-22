@@ -118,6 +118,192 @@ function drawPill(
   return pillWidth;
 }
 
+/** Draw a small branch-fork icon (local branch indicator) */
+function drawLocalIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+): number {
+  const iconW = 8;
+  const halfH = 5;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  // Main vertical stem
+  ctx.moveTo(x + 2, y - halfH);
+  ctx.lineTo(x + 2, y + halfH);
+  // Branch fork
+  ctx.moveTo(x + 2, y - 1);
+  ctx.lineTo(x + iconW - 1, y - halfH);
+  ctx.stroke();
+  // Small circles at branch tips
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x + 2, y - halfH, 1.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + 2, y + halfH, 1.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + iconW - 1, y - halfH, 1.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  return iconW + 3;
+}
+
+/** Draw a small up-arrow icon (remote branch indicator) */
+function drawRemoteIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+): number {
+  const iconW = 7;
+  const halfH = 5;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  // Vertical stem
+  ctx.moveTo(x + iconW / 2, y + halfH);
+  ctx.lineTo(x + iconW / 2, y - halfH);
+  // Arrow head
+  ctx.moveTo(x + 1, y - halfH + 3);
+  ctx.lineTo(x + iconW / 2, y - halfH);
+  ctx.lineTo(x + iconW - 1, y - halfH + 3);
+  ctx.stroke();
+  ctx.restore();
+  return iconW + 3;
+}
+
+/** Draw a small file-edit icon for WIP row */
+function drawFileEditIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+): number {
+  const iconW = 10;
+  const halfH = 5;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  // Paper outline
+  ctx.moveTo(x + 1, y - halfH);
+  ctx.lineTo(x + iconW - 2, y - halfH);
+  ctx.lineTo(x + iconW - 2, y + halfH);
+  ctx.lineTo(x + 1, y + halfH);
+  ctx.closePath();
+  ctx.stroke();
+  // Lines on paper
+  ctx.beginPath();
+  ctx.moveTo(x + 3, y - 2);
+  ctx.lineTo(x + iconW - 4, y - 2);
+  ctx.moveTo(x + 3, y + 1);
+  ctx.lineTo(x + iconW - 4, y + 1);
+  ctx.stroke();
+  ctx.restore();
+  return iconW + 3;
+}
+
+interface MergedBranchGroup {
+  baseName: string;
+  local: BranchInfo | null;
+  remote: BranchInfo | null;
+  isHead: boolean;
+}
+
+function groupBranches(branches: BranchInfo[]): MergedBranchGroup[] {
+  const map = new Map<string, MergedBranchGroup>();
+  for (const b of branches) {
+    const baseName = b.is_remote ? b.name.replace(/^[^/]+\//, "") : b.name;
+    const existing = map.get(baseName) ?? {
+      baseName,
+      local: null,
+      remote: null,
+      isHead: false,
+    };
+    if (b.is_remote) {
+      existing.remote = b;
+    } else {
+      existing.local = b;
+      existing.isHead = existing.isHead || b.is_head;
+    }
+    map.set(baseName, existing);
+  }
+  // Sort: HEAD first, then local+remote, then local-only, then remote-only
+  return [...map.values()].sort((a, b) => {
+    if (a.isHead !== b.isHead) return a.isHead ? -1 : 1;
+    const aScore = (a.local ? 2 : 0) + (a.remote ? 1 : 0);
+    const bScore = (b.local ? 2 : 0) + (b.remote ? 1 : 0);
+    return bScore - aScore;
+  });
+}
+
+/** Draw a merged branch pill with local/remote indicator icons */
+function drawMergedBranchPill(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  group: MergedBranchGroup,
+): number {
+  const bColor = nameColor(group.baseName);
+  const isRemoteOnly = !group.local && !!group.remote;
+  const bgAlpha = group.isHead ? 0.3 : 0.15;
+
+  const bg = isRemoteOnly
+    ? "rgba(255,255,255,0.08)"
+    : `${bColor}${Math.round(bgAlpha * 255)
+        .toString(16)
+        .padStart(2, "0")}`;
+  const textCol = isRemoteOnly ? "hsl(0 0% 55%)" : bColor;
+
+  // Measure text
+  ctx.font = '10px "Geist", system-ui, sans-serif';
+  const textWidth = ctx.measureText(group.baseName).width;
+
+  // Calculate icon widths
+  let iconsWidth = 0;
+  if (group.local) iconsWidth += 11;
+  if (group.remote) iconsWidth += 10;
+
+  const pillWidth = LABEL_PAD_X + iconsWidth + textWidth + LABEL_PAD_X;
+  const pillY = y - LABEL_HEIGHT / 2;
+
+  // Background
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, LABEL_RADIUS);
+  ctx.fill();
+
+  // Icons
+  let iconX = x + LABEL_PAD_X;
+  if (group.local) {
+    drawLocalIcon(ctx, iconX, y, textCol);
+    iconX += 11;
+  }
+  if (group.remote) {
+    drawRemoteIcon(ctx, iconX, y, textCol);
+    iconX += 10;
+  }
+
+  // Text
+  ctx.font = '10px "Geist", system-ui, sans-serif';
+  ctx.fillStyle = textCol;
+  ctx.fillText(group.baseName, x + LABEL_PAD_X + iconsWidth, y);
+
+  return pillWidth;
+}
+
 /** Stored badge position for hit testing */
 interface BadgeHitArea {
   x: number;
@@ -140,6 +326,8 @@ interface CommitGraphCanvasProps {
   tags: TagInfo[];
   stashes: StashInfo[];
   hasUncommittedChanges: boolean;
+  fileStatusCount: number;
+  isWipSelected: boolean;
   onClickWip: () => void;
   onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
 }
@@ -156,6 +344,8 @@ export function CommitGraphCanvas({
   tags,
   stashes,
   hasUncommittedChanges,
+  fileStatusCount,
+  isWipSelected,
   onClickWip,
   onCommitContextMenu,
 }: CommitGraphCanvasProps) {
@@ -328,11 +518,18 @@ export function CommitGraphCanvas({
       }
     }
 
+    // WIP row selected highlight
+    if (isWipSelected && hasWip && 0 >= firstVisibleRow && 0 <= lastVisibleRow) {
+      ctx.fillStyle = "hsl(0 0% 14.9%)";
+      ctx.fillRect(0, 0 * ROW_HEIGHT - scrollTop, width, ROW_HEIGHT);
+    }
+
     if (
       hoveredRow !== null &&
       hoveredRow >= firstVisibleRow &&
       hoveredRow <= lastVisibleRow &&
-      hoveredRow !== selectedRow
+      hoveredRow !== selectedRow &&
+      !(isWipSelected && hasWip && hoveredRow === 0)
     ) {
       if (hoveredRow === headRow) {
         ctx.fillStyle = headHighlightColor;
@@ -406,17 +603,25 @@ export function CommitGraphCanvas({
         ctx.globalAlpha = 1;
       }
 
-      // Empty circle node
+      // Empty circle node (subtle fill when selected)
       ctx.strokeStyle = "hsl(0 0% 50%)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(nodeX, wipY, NODE_RADIUS, 0, Math.PI * 2);
+      if (isWipSelected) {
+        ctx.fillStyle = "hsl(0 0% 25%)";
+        ctx.fill();
+      }
       ctx.stroke();
 
-      // "// WIP" label
-      ctx.font = 'italic 13px "Geist", system-ui, sans-serif';
-      ctx.fillStyle = "hsl(0 0% 60%)";
-      ctx.fillText("// WIP", textOffset, wipY);
+      // File edit icon + change count
+      const wipTextColor = "hsl(0 0% 70%)";
+      const wipIconW = drawFileEditIcon(ctx, textOffset, wipY, wipTextColor);
+      ctx.font = '12px "Geist", system-ui, sans-serif';
+      ctx.fillStyle = wipTextColor;
+      const changeText =
+        fileStatusCount === 1 ? "1 change" : `${fileStatusCount} changes`;
+      ctx.fillText(changeText, textOffset + wipIconW, wipY);
     }
 
     // --- Commit rows ---
@@ -499,37 +704,27 @@ export function CommitGraphCanvas({
       if (hasLabels) {
         let usedWidth = 0;
         let labelCount = 0;
-        const totalLabels = commitBranches.length + commitTags.length;
+        const branchGroups = groupBranches(commitBranches);
+        const totalLabels = branchGroups.length + commitTags.length;
 
-        // Draw branch pills
-        for (const branch of commitBranches) {
+        // Draw merged branch pills
+        for (const group of branchGroups) {
           if (usedWidth > maxLabelArea - 40) {
-            // Draw overflow "+N"
             const remaining = totalLabels - labelCount;
             if (remaining > 0) {
               drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", "hsl(0 0% 60%)");
             }
             break;
           }
-          const displayName = branch.is_remote
-            ? branch.name.replace(/^origin\//, "↑")
-            : branch.name;
-          // Color by branch name so different branches are always distinguishable
-          const bColor = nameColor(branch.name.replace(/^origin\//, ""));
-          const bgAlpha = branch.is_head ? 0.3 : 0.15;
-          const bg = branch.is_remote
-            ? `rgba(255,255,255,0.08)`
-            : `${bColor}${Math.round(bgAlpha * 255).toString(16).padStart(2, "0")}`;
-          const textCol = branch.is_remote ? "hsl(0 0% 55%)" : bColor;
           const pillX = labelX + usedWidth;
-          const w = drawPill(ctx, pillX, y, displayName, bg, textCol);
-          // Store hit area for double-click checkout (use absolute Y with scrollTop)
+          const w = drawMergedBranchPill(ctx, pillX, y, group);
+          // Store hit area — prefer local branch name for checkout
           hitAreas.push({
             x: pillX,
             y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
             width: w,
             height: LABEL_HEIGHT,
-            branchName: branch.name,
+            branchName: group.local?.name ?? group.remote!.name,
             row: visRow,
           });
           usedWidth += w + LABEL_GAP;
@@ -583,7 +778,7 @@ export function CommitGraphCanvas({
     }
 
     badgeHitAreasRef.current = hitAreas;
-  }, [commits, edges, selectedCommitId, headCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches]);
+  }, [commits, edges, selectedCommitId, headCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches, isWipSelected, fileStatusCount]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);

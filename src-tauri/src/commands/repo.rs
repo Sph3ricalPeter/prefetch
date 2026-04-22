@@ -2,28 +2,77 @@ use crate::background::BackgroundFetcher;
 use crate::error::AppError;
 use crate::events;
 use crate::git::{
-    lfs,
     repository,
     types::{
-        BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData, StashInfo, TagInfo,
-        UndoAction,
+        BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData, StashInfo,
+        TagInfo, UndoAction,
     },
 };
 use crate::watcher::RepoWatcher;
 use crate::AppState;
 use tauri::{Emitter, State};
+use tracing::{debug, instrument, warn};
 
+/// Extract the repo path from state (convenience helper).
+fn repo_path(state: &State<'_, AppState>) -> Result<String, AppError> {
+    let lock = state
+        .repo_path
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    lock.as_ref()
+        .cloned()
+        .ok_or_else(|| AppError::Other("No repository open".to_string()))
+}
+
+/// Build profile environment variables from the active profile in AppState.
+/// Returns an empty Vec when no profile is active (no-op for git commands).
+fn get_profile_env(state: &State<'_, AppState>) -> Vec<(String, String)> {
+    let profile = state
+        .active_profile
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    repository::profile_env(&profile)
+}
+
+/// Extract the active profile's ID (for profile-scoped token lookup).
+fn get_profile_id(state: &State<'_, AppState>) -> Option<String> {
+    state
+        .active_profile
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()))
+}
+
+/// Run a blocking closure on the tokio thread pool instead of the main thread.
+///
+/// Tauri v2 runs sync `#[tauri::command]` functions on the main thread, which
+/// freezes the window during subprocess spawns and git2-rs operations. This
+/// helper moves the work off the main thread.
+async fn offload<F, T>(f: F) -> Result<T, AppError>
+where
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
+// ── Repo open ────────────────────────────────────────────────────────────────
+
+#[instrument(skip(state, app), fields(repo = %path))]
 #[tauri::command]
 pub fn open_repo(
     path: String,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, AppError> {
-    // Verify it's a valid git repo by trying to open it
+    // open_repo stays sync: the state mutations (mutex locks, thread spawns)
+    // are fast and need direct State access. The git2 open is also fast.
     let _repo = git2::Repository::open(&path)?;
     let name = repository::repo_name(&path);
 
-    // Update repo path
     {
         let mut repo_path = state
             .repo_path
@@ -32,600 +81,409 @@ pub fn open_repo(
         *repo_path = Some(path.clone());
     }
 
-    // Start file watcher for the new repo (drops old watcher if any)
     {
         let mut watcher_lock = state
             .watcher
             .lock()
             .map_err(|e| AppError::Other(e.to_string()))?;
-        *watcher_lock = None; // Drop old watcher first
+        *watcher_lock = None;
         match RepoWatcher::start(&path, app.clone()) {
             Ok(w) => *watcher_lock = Some(w),
-            Err(e) => eprintln!("Warning: failed to start file watcher: {e}"),
+            Err(e) => warn!("failed to start file watcher: {e}"),
         }
     }
 
-    // Start background fetcher for the new repo (drops old fetcher if any)
     {
+        let profile = state
+            .active_profile
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
         let mut fetcher_lock = state
             .fetcher
             .lock()
             .map_err(|e| AppError::Other(e.to_string()))?;
-        *fetcher_lock = None; // Drop old fetcher first
-        *fetcher_lock = Some(BackgroundFetcher::start(path.clone(), app));
+        *fetcher_lock = None;
+        *fetcher_lock = Some(BackgroundFetcher::start(path.clone(), app, profile));
     }
 
-    // Auto-install LFS hooks if this repo uses LFS (non-fatal)
-    if let Err(e) = lfs::ensure_lfs_hooks(&path) {
-        eprintln!("Warning: LFS hook setup failed: {e}");
-    }
-
+    debug!(repo_name = %name, "repo opened");
     Ok(name)
 }
 
+// ── Read operations (all async → offloaded to thread pool) ───────────────────
+
+#[instrument(skip(state))]
 #[tauri::command]
-pub fn get_commits(
+pub async fn get_commits(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<GraphData, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
+    let path = repo_path(&state)?;
+    offload(move || repository::walk_commits(&path, limit.unwrap_or(10_000))).await
+}
 
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_branches(state: State<'_, AppState>) -> Result<Vec<BranchInfo>, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::list_branches(&path)).await
+}
 
-    repository::walk_commits(path, limit.unwrap_or(10_000))
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_file_status(state: State<'_, AppState>) -> Result<Vec<FileStatus>, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_status(&path)).await
 }
 
 #[tauri::command]
-pub fn get_branches(state: State<'_, AppState>) -> Result<Vec<BranchInfo>, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::list_branches(path)
-}
-
-#[tauri::command]
-pub fn checkout_branch(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::checkout_branch(path, &name)
-}
-
-#[tauri::command]
-pub fn reset_branch_to_remote(
-    branch: String,
-    remote_ref: String,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::reset_branch_to_remote(path, &branch, &remote_ref)
-}
-
-#[tauri::command]
-pub fn create_branch(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::create_branch(path, &name)
-}
-
-#[tauri::command]
-pub fn fetch_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::fetch_all(path, |progress| {
-        app.emit(events::GIT_PROGRESS, progress).ok();
-    })
-}
-
-#[tauri::command]
-pub fn force_push_repo(
-    state: State<'_, AppState>,
-    app: tauri::AppHandle,
-) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::force_push(path, |progress| {
-        app.emit(events::GIT_PROGRESS, progress).ok();
-    })
-}
-
-#[tauri::command]
-pub fn pull_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::pull(path, |progress| {
-        app.emit(events::GIT_PROGRESS, progress).ok();
-    })
-}
-
-#[tauri::command]
-pub fn push_repo(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::push(path, |progress| {
-        app.emit(events::GIT_PROGRESS, progress).ok();
-    })
-}
-
-#[tauri::command]
-pub fn get_file_status(state: State<'_, AppState>) -> Result<Vec<FileStatus>, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::get_status(path)
-}
-
-#[tauri::command]
-pub fn get_file_diff(
+pub async fn get_file_diff(
     file_path: String,
     staged: bool,
     state: State<'_, AppState>,
 ) -> Result<FileDiff, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::get_file_diff(path, &file_path, staged)
+    let path = repo_path(&state)?;
+    offload(move || repository::get_file_diff(&path, &file_path, staged)).await
 }
 
 #[tauri::command]
-pub fn resolve_conflict_ours(
+pub async fn get_commit_files(
+    commit_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileStatus>, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_commit_files(&path, &commit_id)).await
+}
+
+#[tauri::command]
+pub async fn get_commit_file_diff(
+    commit_id: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<FileDiff, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_commit_file_diff(&path, &commit_id, &file_path)).await
+}
+
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_stashes(state: State<'_, AppState>) -> Result<Vec<StashInfo>, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::list_stashes(&path)).await
+}
+
+#[tauri::command]
+pub async fn get_stash_files(
+    index: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileStatus>, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_stash_files(&path, index)).await
+}
+
+#[tauri::command]
+pub async fn get_stash_file_diff(
+    index: usize,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<FileDiff, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_stash_file_diff(&path, index, &file_path)).await
+}
+
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_tags(state: State<'_, AppState>) -> Result<Vec<TagInfo>, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::list_tags(&path)).await
+}
+
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_undo_action(state: State<'_, AppState>) -> Result<UndoAction, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_undo_action(&path)).await
+}
+
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_conflict_state(state: State<'_, AppState>) -> Result<ConflictState, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_conflict_state(&path)).await
+}
+
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_git_identity(state: State<'_, AppState>) -> Result<GitIdentity, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || Ok(repository::get_git_identity(&path))).await
+}
+
+// ── Write / mutation operations (all async → offloaded to thread pool) ───────
+
+#[tauri::command]
+pub async fn checkout_branch(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::checkout_branch(&path, &name)).await
+}
+
+#[tauri::command]
+pub async fn reset_branch_to_remote(
+    branch: String,
+    remote_ref: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::reset_branch_to_remote(&path, &branch, &remote_ref)).await
+}
+
+#[tauri::command]
+pub async fn create_branch(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::create_branch(&path, &name)).await
+}
+
+#[tauri::command]
+pub async fn fetch_repo(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    let pid = get_profile_id(&state);
+    offload(move || {
+        repository::fetch_all(
+            &path,
+            |progress| {
+                app.emit(events::GIT_PROGRESS, progress).ok();
+            },
+            &env,
+            pid.as_deref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn pull_repo(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    let pid = get_profile_id(&state);
+    offload(move || {
+        repository::pull(
+            &path,
+            |progress| {
+                app.emit(events::GIT_PROGRESS, progress).ok();
+            },
+            &env,
+            pid.as_deref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn push_repo(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    let pid = get_profile_id(&state);
+    offload(move || {
+        repository::push(
+            &path,
+            |progress| {
+                app.emit(events::GIT_PROGRESS, progress).ok();
+            },
+            &env,
+            pid.as_deref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn force_push_repo(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    let pid = get_profile_id(&state);
+    offload(move || {
+        repository::force_push(
+            &path,
+            |progress| {
+                app.emit(events::GIT_PROGRESS, progress).ok();
+            },
+            &env,
+            pid.as_deref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn resolve_conflict_ours(
     file_path: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::resolve_ours(path, &file_path)
+    let path = repo_path(&state)?;
+    offload(move || repository::resolve_ours(&path, &file_path)).await
 }
 
 #[tauri::command]
-pub fn resolve_conflict_theirs(
+pub async fn resolve_conflict_theirs(
     file_path: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::resolve_theirs(path, &file_path)
+    let path = repo_path(&state)?;
+    offload(move || repository::resolve_theirs(&path, &file_path)).await
 }
 
 #[tauri::command]
-pub fn discard_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::discard_files(path, &paths)
+pub async fn discard_files(
+    paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    offload(move || repository::discard_files(&repo, &paths)).await
 }
 
 #[tauri::command]
-pub fn discard_all_changes(state: State<'_, AppState>) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::discard_all(path)
+pub async fn discard_all_changes(state: State<'_, AppState>) -> Result<(), AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::discard_all(&path)).await
 }
 
 #[tauri::command]
-pub fn stage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::stage_files(path, &paths)
+pub async fn stage_files(
+    paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    offload(move || repository::stage_files(&repo, &paths)).await
 }
 
 #[tauri::command]
-pub fn unstage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::unstage_files(path, &paths)
+pub async fn unstage_files(
+    paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    offload(move || repository::unstage_files(&repo, &paths)).await
 }
 
 #[tauri::command]
-pub fn create_commit(
+pub async fn create_commit(
     message: String,
     amend: bool,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::create_commit(path, &message, amend)
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::create_commit(&path, &message, amend, &env)).await
 }
 
 #[tauri::command]
-pub fn get_commit_files(
-    commit_id: String,
+pub async fn stash_save(
+    message: Option<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<FileStatus>, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::get_commit_files(path, &commit_id)
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::stash_push(&path, message.as_deref(), &env)).await
 }
 
 #[tauri::command]
-pub fn get_commit_file_diff(
-    commit_id: String,
-    file_path: String,
-    state: State<'_, AppState>,
-) -> Result<FileDiff, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::get_commit_file_diff(path, &commit_id, &file_path)
+pub async fn stash_pop(index: usize, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::stash_pop(&path, index)).await
 }
 
 #[tauri::command]
-pub fn get_stashes(state: State<'_, AppState>) -> Result<Vec<StashInfo>, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::list_stashes(path)
+pub async fn stash_drop(index: usize, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::stash_drop(&path, index)).await
 }
 
 #[tauri::command]
-pub fn stash_save(message: Option<String>, state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::stash_push(path, message.as_deref())
-}
-
-#[tauri::command]
-pub fn stash_pop(index: usize, state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::stash_pop(path, index)
-}
-
-#[tauri::command]
-pub fn stash_drop(index: usize, state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::stash_drop(path, index)
-}
-
-#[tauri::command]
-pub fn get_stash_files(
-    index: usize,
-    state: State<'_, AppState>,
-) -> Result<Vec<FileStatus>, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::get_stash_files(path, index)
-}
-
-#[tauri::command]
-pub fn get_stash_file_diff(
-    index: usize,
-    file_path: String,
-    state: State<'_, AppState>,
-) -> Result<FileDiff, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-
-    repository::get_stash_file_diff(path, index, &file_path)
-}
-
-#[tauri::command]
-pub fn get_tags(state: State<'_, AppState>) -> Result<Vec<TagInfo>, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::list_tags(path)
-}
-
-#[tauri::command]
-pub fn create_tag(
+pub async fn create_tag(
     name: String,
     commit: Option<String>,
     message: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::create_tag(path, &name, commit.as_deref(), message.as_deref())
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || {
+        repository::create_tag(&path, &name, commit.as_deref(), message.as_deref(), &env)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_tag(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::delete_tag(path, &name)
+pub async fn delete_tag(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::delete_tag(&path, &name)).await
 }
 
 #[tauri::command]
-pub fn push_tag(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::push_tag(path, &name)
+pub async fn push_tag(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    let pid = get_profile_id(&state);
+    offload(move || repository::push_tag(&path, &name, &env, pid.as_deref())).await
 }
 
 #[tauri::command]
-pub fn get_undo_action(state: State<'_, AppState>) -> Result<UndoAction, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::get_undo_action(path)
+pub async fn undo_last(state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::undo_last(&path, &env)).await
 }
 
 #[tauri::command]
-pub fn undo_last(state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::undo_last(path)
-}
-
-#[tauri::command]
-pub fn reset_to_commit(
+pub async fn reset_to_commit(
     commit_id: String,
     mode: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::reset_to_commit(path, &commit_id, &mode)
+    let path = repo_path(&state)?;
+    offload(move || repository::reset_to_commit(&path, &commit_id, &mode)).await
 }
 
 #[tauri::command]
-pub fn cherry_pick(commit_id: String, state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::cherry_pick(path, &commit_id)
+pub async fn cherry_pick(
+    commit_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::cherry_pick(&path, &commit_id, &env)).await
 }
 
 #[tauri::command]
-pub fn rebase_onto(target: String, state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::rebase_onto(path, &target)
+pub async fn rebase_onto(target: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::rebase_onto(&path, &target, &env)).await
 }
 
 #[tauri::command]
-pub fn get_conflict_state(state: State<'_, AppState>) -> Result<ConflictState, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::get_conflict_state(path)
+pub async fn abort_operation(state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::abort_operation(&path)).await
 }
 
 #[tauri::command]
-pub fn abort_operation(state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::abort_operation(path)
-}
-
-#[tauri::command]
-pub fn continue_operation(state: State<'_, AppState>) -> Result<String, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    repository::continue_operation(path)
-}
-
-#[tauri::command]
-pub fn get_git_identity(state: State<'_, AppState>) -> Result<GitIdentity, AppError> {
-    let repo_path = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let path = repo_path
-        .as_ref()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))?;
-    Ok(repository::get_git_identity(path))
+pub async fn continue_operation(state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::continue_operation(&path, &env)).await
 }

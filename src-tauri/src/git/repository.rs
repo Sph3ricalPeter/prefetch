@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::git::forge;
 use crate::git::graph::assign_lanes;
+use crate::git::profile::ActiveProfile;
 use crate::git::types::{
     BranchInfo, CoAuthor, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff, FileStatus,
     GraphData, StashInfo, TagInfo, UndoAction,
@@ -31,6 +32,29 @@ pub(crate) fn git_cmd() -> Command {
     cmd
 }
 
+/// Build environment variable overrides for git commands from the active profile.
+///
+/// When a profile is active, these env vars override whatever the user's git
+/// config says for identity and SSH key. Returns an empty Vec when no profile.
+pub fn profile_env(profile: &Option<ActiveProfile>) -> Vec<(String, String)> {
+    let Some(p) = profile else {
+        return vec![];
+    };
+    let mut env = vec![
+        ("GIT_AUTHOR_NAME".into(), p.user_name.clone()),
+        ("GIT_AUTHOR_EMAIL".into(), p.user_email.clone()),
+        ("GIT_COMMITTER_NAME".into(), p.user_name.clone()),
+        ("GIT_COMMITTER_EMAIL".into(), p.user_email.clone()),
+    ];
+    if let Some(ref ssh_path) = p.ssh_key_path {
+        env.push((
+            "GIT_SSH_COMMAND".into(),
+            format!("ssh -i \"{ssh_path}\" -o IdentitiesOnly=yes"),
+        ));
+    }
+    env
+}
+
 /// Get the repository display name from its path.
 pub fn repo_name(path: &str) -> String {
     Path::new(path)
@@ -54,7 +78,7 @@ pub fn get_git_identity(path: &str) -> super::types::GitIdentity {
 
     for (scope_flag, scope_name) in scopes.iter().zip(scope_names.iter()) {
         if resolved_name.is_none() {
-            if let Ok(val) = run_git(path, &["config", scope_flag, "user.name"]) {
+            if let Ok(val) = run_git(path, &["config", scope_flag, "user.name"], &[]) {
                 let val = val.trim().to_string();
                 if !val.is_empty() {
                     resolved_name = Some((val, scope_name));
@@ -62,7 +86,7 @@ pub fn get_git_identity(path: &str) -> super::types::GitIdentity {
             }
         }
         if resolved_email.is_none() {
-            if let Ok(val) = run_git(path, &["config", scope_flag, "user.email"]) {
+            if let Ok(val) = run_git(path, &["config", scope_flag, "user.email"], &[]) {
                 let val = val.trim().to_string();
                 if !val.is_empty() {
                     resolved_email = Some((val, scope_name));
@@ -227,21 +251,21 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
 
 /// Checkout a branch using git CLI subprocess.
 pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", name])?;
+    run_git(path, &["checkout", name], &[])?;
     Ok(())
 }
 
 /// Checkout a branch and reset it to match a remote ref.
 /// Used for "Reset Local to Remote" when checking out a remote branch.
 pub fn reset_branch_to_remote(path: &str, branch: &str, remote_ref: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", branch])?;
-    run_git(path, &["reset", "--hard", remote_ref])?;
+    run_git(path, &["checkout", branch], &[])?;
+    run_git(path, &["reset", "--hard", remote_ref], &[])?;
     Ok(())
 }
 
 /// Create a new branch and check it out.
 pub fn create_branch(path: &str, name: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", "-b", name])?;
+    run_git(path, &["checkout", "-b", name], &[])?;
     Ok(())
 }
 
@@ -249,58 +273,82 @@ pub fn create_branch(path: &str, name: &str) -> Result<(), AppError> {
 ///
 /// When a forge token is stored for an HTTPS remote, credentials are
 /// injected automatically so the user doesn't need a separate credential
-/// helper.
-pub fn fetch_all<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path) {
+/// helper. Profile env vars are applied for SSH key injection.
+pub fn fetch_all<F: Fn(&str)>(
+    path: &str,
+    on_progress: F,
+    extra_env: &[(String, String)],
+    profile_id: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
         run_git_with_progress(
             path,
             &["fetch", &url, "--prune", "--progress"],
             &on_progress,
+            extra_env,
         )
     } else {
         run_git_with_progress(
             path,
             &["fetch", "--all", "--prune", "--progress"],
             &on_progress,
+            extra_env,
         )
     }
 }
 
 /// Force push to remote (used after reset when local diverges from remote).
-pub fn force_push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path) {
+pub fn force_push<F: Fn(&str)>(
+    path: &str,
+    on_progress: F,
+    extra_env: &[(String, String)],
+    profile_id: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
         run_git_with_progress(
             path,
             &["push", &url, "--force-with-lease", "--progress"],
             &on_progress,
+            extra_env,
         )
     } else {
         run_git_with_progress(
             path,
             &["push", "--force-with-lease", "--progress"],
             &on_progress,
+            extra_env,
         )
     }
 }
 
 /// Pull from the current branch's upstream with progress streaming.
-pub fn pull<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path) {
-        run_git_with_progress(path, &["pull", &url, "--progress"], &on_progress)
+pub fn pull<F: Fn(&str)>(
+    path: &str,
+    on_progress: F,
+    extra_env: &[(String, String)],
+    profile_id: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
+        run_git_with_progress(path, &["pull", &url, "--progress"], &on_progress, extra_env)
     } else {
-        run_git_with_progress(path, &["pull", "--progress"], &on_progress)
+        run_git_with_progress(path, &["pull", "--progress"], &on_progress, extra_env)
     }
 }
 
 /// Push to the current branch's upstream with progress streaming, setting upstream if needed.
-pub fn push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError> {
-    let authed_url = forge::authenticated_remote_url(path);
+pub fn push<F: Fn(&str)>(
+    path: &str,
+    on_progress: F,
+    extra_env: &[(String, String)],
+    profile_id: Option<&str>,
+) -> Result<String, AppError> {
+    let authed_url = forge::authenticated_remote_url(path, profile_id);
 
     // Try normal push first
     let result = if let Some(ref url) = authed_url {
-        run_git_with_progress(path, &["push", url, "--progress"], &on_progress)
+        run_git_with_progress(path, &["push", url, "--progress"], &on_progress, extra_env)
     } else {
-        run_git_with_progress(path, &["push", "--progress"], &on_progress)
+        run_git_with_progress(path, &["push", "--progress"], &on_progress, extra_env)
     };
     if result.is_ok() {
         return result;
@@ -315,20 +363,33 @@ pub fn push<F: Fn(&str)>(path: &str, on_progress: F) -> Result<String, AppError>
             path,
             &["push", "-u", url, branch_name, "--progress"],
             &on_progress,
+            extra_env,
         )
     } else {
         run_git_with_progress(
             path,
             &["push", "-u", "origin", branch_name, "--progress"],
             &on_progress,
+            extra_env,
         )
     }
 }
 
 /// Run a git CLI command in the given repo directory.
 /// Returns combined stdout+stderr on success, or AppError on failure.
-pub(crate) fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
-    let output = git_cmd()
+///
+/// `extra_env` allows injecting environment variables (e.g. profile identity
+/// overrides). Pass `&[]` for read-only operations that don't need them.
+pub(crate) fn run_git(
+    path: &str,
+    args: &[&str],
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    let mut cmd = git_cmd();
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let output = cmd
         .args(args)
         .current_dir(path)
         .output()
@@ -355,12 +416,20 @@ pub(crate) fn run_git(path: &str, args: &[&str]) -> Result<String, AppError> {
 /// This function reads stderr in chunks, splits on `\r`/`\n`, and calls
 /// `on_progress` with each line. The `--progress` flag must be included
 /// in `args` to force progress output on piped stderr.
+///
+/// `extra_env` allows injecting environment variables (e.g. profile identity
+/// overrides). Pass `&[]` for operations that don't need them.
 pub(crate) fn run_git_with_progress<F: Fn(&str)>(
     path: &str,
     args: &[&str],
     on_progress: &F,
+    extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
-    let mut child = git_cmd()
+    let mut cmd = git_cmd();
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
         .args(args)
         .current_dir(path)
         .stdout(Stdio::piped())
@@ -463,6 +532,13 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         .map_err(|e| AppError::Other(format!("Failed to run git status: {e}")))?;
 
     let text = String::from_utf8_lossy(&output.stdout);
+
+    // Fast path: no changes at all → skip the 2 expensive `git diff --numstat`
+    // subprocess spawns (~100ms saved on Windows). The poller hits this path
+    // most of the time when the user isn't actively editing files.
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
 
     // Get line stats for staged and unstaged changes
     let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
@@ -701,15 +777,15 @@ fn parse_hunk_header(line: &str) -> (u32, u32, u32, u32) {
 /// untracked files via `git clean`.
 /// Resolve a conflict by accepting our version of the file.
 pub fn resolve_ours(path: &str, file_path: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", "--ours", "--", file_path])?;
-    run_git(path, &["add", file_path])?;
+    run_git(path, &["checkout", "--ours", "--", file_path], &[])?;
+    run_git(path, &["add", file_path], &[])?;
     Ok(())
 }
 
 /// Resolve a conflict by accepting their version of the file.
 pub fn resolve_theirs(path: &str, file_path: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", "--theirs", "--", file_path])?;
-    run_git(path, &["add", file_path])?;
+    run_git(path, &["checkout", "--theirs", "--", file_path], &[])?;
+    run_git(path, &["add", file_path], &[])?;
     Ok(())
 }
 
@@ -718,17 +794,17 @@ pub fn discard_files(path: &str, files: &[String]) -> Result<(), AppError> {
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     let mut reset_args = vec!["reset", "HEAD", "--"];
     reset_args.extend(file_refs.clone());
-    let _ = run_git(path, &reset_args);
+    let _ = run_git(path, &reset_args, &[]);
 
     // Restore tracked files to HEAD state
     let mut restore_args = vec!["checkout", "--"];
     restore_args.extend(file_refs.clone());
-    let _ = run_git(path, &restore_args);
+    let _ = run_git(path, &restore_args, &[]);
 
     // Clean untracked files
     let mut clean_args = vec!["clean", "-f", "--"];
     clean_args.extend(file_refs);
-    let _ = run_git(path, &clean_args);
+    let _ = run_git(path, &clean_args, &[]);
 
     Ok(())
 }
@@ -736,11 +812,11 @@ pub fn discard_files(path: &str, files: &[String]) -> Result<(), AppError> {
 /// Discard ALL changes — revert entire working tree to HEAD.
 pub fn discard_all(path: &str) -> Result<(), AppError> {
     // Unstage everything
-    let _ = run_git(path, &["reset", "HEAD"]);
+    let _ = run_git(path, &["reset", "HEAD"], &[]);
     // Revert all tracked files
-    run_git(path, &["checkout", "--", "."])?;
+    run_git(path, &["checkout", "--", "."], &[])?;
     // Remove all untracked files
-    run_git(path, &["clean", "-fd"])?;
+    run_git(path, &["clean", "-fd"], &[])?;
     Ok(())
 }
 
@@ -749,7 +825,7 @@ pub fn stage_files(path: &str, files: &[String]) -> Result<(), AppError> {
     let mut args = vec!["add", "--"];
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     args.extend(file_refs);
-    run_git(path, &args)?;
+    run_git(path, &args, &[])?;
     Ok(())
 }
 
@@ -758,16 +834,21 @@ pub fn unstage_files(path: &str, files: &[String]) -> Result<(), AppError> {
     let mut args = vec!["reset", "HEAD", "--"];
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     args.extend(file_refs);
-    run_git(path, &args)?;
+    run_git(path, &args, &[])?;
     Ok(())
 }
 
 /// Create a commit using git CLI.
-pub fn create_commit(path: &str, message: &str, amend: bool) -> Result<String, AppError> {
+pub fn create_commit(
+    path: &str,
+    message: &str,
+    amend: bool,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
     if amend {
-        run_git(path, &["commit", "--amend", "-m", message])
+        run_git(path, &["commit", "--amend", "-m", message], extra_env)
     } else {
-        run_git(path, &["commit", "-m", message])
+        run_git(path, &["commit", "-m", message], extra_env)
     }
 }
 
@@ -906,25 +987,29 @@ pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
 }
 
 /// Stash current changes (including untracked files).
-pub fn stash_push(path: &str, message: Option<&str>) -> Result<String, AppError> {
+pub fn stash_push(
+    path: &str,
+    message: Option<&str>,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
     let mut args = vec!["stash", "push", "-u"];
     if let Some(msg) = message {
         args.push("-m");
         args.push(msg);
     }
-    run_git(path, &args)
+    run_git(path, &args, extra_env)
 }
 
 /// Pop a stash entry (apply and remove from stash list).
 pub fn stash_pop(path: &str, index: usize) -> Result<String, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
-    run_git(path, &["stash", "pop", &stash_ref])
+    run_git(path, &["stash", "pop", &stash_ref], &[])
 }
 
 /// Drop a stash entry without applying.
 pub fn stash_drop(path: &str, index: usize) -> Result<String, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
-    run_git(path, &["stash", "drop", &stash_ref])
+    run_git(path, &["stash", "drop", &stash_ref], &[])
 }
 
 /// Get the list of files changed in a stash entry.
@@ -1027,6 +1112,7 @@ pub fn create_tag(
     name: &str,
     commit: Option<&str>,
     message: Option<&str>,
+    extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
     let mut args = vec!["tag"];
     if let Some(msg) = message {
@@ -1040,20 +1126,25 @@ pub fn create_tag(
     if let Some(c) = commit {
         args.push(c);
     }
-    run_git(path, &args)
+    run_git(path, &args, extra_env)
 }
 
 /// Delete a local tag.
 pub fn delete_tag(path: &str, name: &str) -> Result<String, AppError> {
-    run_git(path, &["tag", "-d", name])
+    run_git(path, &["tag", "-d", name], &[])
 }
 
 /// Push a tag to the remote.
-pub fn push_tag(path: &str, name: &str) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path) {
-        run_git(path, &["push", &url, name])
+pub fn push_tag(
+    path: &str,
+    name: &str,
+    extra_env: &[(String, String)],
+    profile_id: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
+        run_git(path, &["push", &url, name], extra_env)
     } else {
-        run_git(path, &["push", "origin", name])
+        run_git(path, &["push", "origin", name], extra_env)
     }
 }
 
@@ -1156,7 +1247,7 @@ fn classify_reflog_action(action: &str) -> (bool, String) {
 }
 
 /// Execute an undo by reading the reflog and performing the inverse operation.
-pub fn undo_last(path: &str) -> Result<String, AppError> {
+pub fn undo_last(path: &str, extra_env: &[(String, String)]) -> Result<String, AppError> {
     let output = git_cmd()
         .args(["reflog", "--format=%H %gs", "-n", "2"])
         .current_dir(path)
@@ -1183,7 +1274,7 @@ pub fn undo_last(path: &str) -> Result<String, AppError> {
         if let Some(rest) = action.strip_prefix("checkout: moving from ") {
             let parts: Vec<&str> = rest.split(" to ").collect();
             if !parts.is_empty() {
-                return run_git(path, &["checkout", parts[0]]);
+                return run_git(path, &["checkout", parts[0]], &[]);
             }
         }
         Err(AppError::Other(
@@ -1191,7 +1282,7 @@ pub fn undo_last(path: &str) -> Result<String, AppError> {
         ))
     } else if action_lower.starts_with("commit") && !action_lower.starts_with("commit (initial)") {
         // Soft reset keeps changes staged
-        run_git(path, &["reset", "--soft", "HEAD~1"])
+        run_git(path, &["reset", "--soft", "HEAD~1"], extra_env)
     } else if action_lower.starts_with("merge")
         || action_lower.starts_with("rebase")
         || action_lower.starts_with("pull")
@@ -1199,7 +1290,7 @@ pub fn undo_last(path: &str) -> Result<String, AppError> {
         if lines.len() >= 2 {
             let prev_sha = lines[1].split_once(' ').map(|(sha, _)| sha).unwrap_or("");
             if !prev_sha.is_empty() {
-                return run_git(path, &["reset", "--hard", prev_sha]);
+                return run_git(path, &["reset", "--hard", prev_sha], extra_env);
             }
         }
         Err(AppError::Other(
@@ -1209,7 +1300,7 @@ pub fn undo_last(path: &str) -> Result<String, AppError> {
         if lines.len() >= 2 {
             let prev_sha = lines[1].split_once(' ').map(|(sha, _)| sha).unwrap_or("");
             if !prev_sha.is_empty() {
-                return run_git(path, &["reset", "--hard", prev_sha]);
+                return run_git(path, &["reset", "--hard", prev_sha], extra_env);
             }
         }
         Err(AppError::Other(
@@ -1223,17 +1314,25 @@ pub fn undo_last(path: &str) -> Result<String, AppError> {
 /// Reset the current branch to a specific commit.
 /// `mode` should be "--soft" or "--hard".
 pub fn reset_to_commit(path: &str, commit_id: &str, mode: &str) -> Result<String, AppError> {
-    run_git(path, &["reset", mode, commit_id])
+    run_git(path, &["reset", mode, commit_id], &[])
 }
 
 /// Cherry-pick a commit onto the current branch.
-pub fn cherry_pick(path: &str, commit_id: &str) -> Result<String, AppError> {
-    run_git(path, &["cherry-pick", commit_id])
+pub fn cherry_pick(
+    path: &str,
+    commit_id: &str,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    run_git(path, &["cherry-pick", commit_id], extra_env)
 }
 
 /// Rebase the current branch onto a target branch (non-interactive).
-pub fn rebase_onto(path: &str, target: &str) -> Result<String, AppError> {
-    run_git(path, &["rebase", target])
+pub fn rebase_onto(
+    path: &str,
+    target: &str,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    run_git(path, &["rebase", target], extra_env)
 }
 
 /// Detect if a merge, rebase, or cherry-pick is in progress.
@@ -1271,20 +1370,20 @@ pub fn get_conflict_state(path: &str) -> Result<ConflictState, AppError> {
 pub fn abort_operation(path: &str) -> Result<String, AppError> {
     let state = get_conflict_state(path)?;
     match state.operation.as_str() {
-        "rebase" => run_git(path, &["rebase", "--abort"]),
-        "cherry-pick" => run_git(path, &["cherry-pick", "--abort"]),
-        "merge" => run_git(path, &["merge", "--abort"]),
+        "rebase" => run_git(path, &["rebase", "--abort"], &[]),
+        "cherry-pick" => run_git(path, &["cherry-pick", "--abort"], &[]),
+        "merge" => run_git(path, &["merge", "--abort"], &[]),
         _ => Err(AppError::Other("No operation in progress".to_string())),
     }
 }
 
 /// Continue the current in-progress operation after conflict resolution.
-pub fn continue_operation(path: &str) -> Result<String, AppError> {
+pub fn continue_operation(path: &str, extra_env: &[(String, String)]) -> Result<String, AppError> {
     let state = get_conflict_state(path)?;
     match state.operation.as_str() {
-        "rebase" => run_git(path, &["rebase", "--continue"]),
-        "cherry-pick" => run_git(path, &["cherry-pick", "--continue"]),
-        "merge" => run_git(path, &["merge", "--continue"]),
+        "rebase" => run_git(path, &["rebase", "--continue"], extra_env),
+        "cherry-pick" => run_git(path, &["cherry-pick", "--continue"], extra_env),
+        "merge" => run_git(path, &["merge", "--continue"], extra_env),
         _ => Err(AppError::Other("No operation in progress".to_string())),
     }
 }

@@ -4,6 +4,7 @@ import { AppLayout } from "@/components/layout/app-layout";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
+import { useProfileStore } from "@/stores/profile-store";
 import { initDatabase } from "@/lib/database";
 import { UpdateChecker } from "@/components/updater";
 
@@ -16,24 +17,30 @@ import { UpdateChecker } from "@/components/updater";
  */
 function DatabaseInit() {
   const loadRecentRepos = useRepoStore((s) => s.loadRecentRepos);
+  const loadProfiles = useProfileStore((s) => s.loadProfiles);
+  const restoreActiveProfile = useProfileStore((s) => s.restoreActiveProfile);
 
   useEffect(() => {
+    let cancelled = false;
     let retries = 0;
     const tryInit = async () => {
       try {
         await initDatabase();
-        await loadRecentRepos();
-        // Future: add a setting to auto-open last repo on launch
-        // For now, always show the landing page with recent repos
+        if (cancelled) return;
+        await Promise.all([
+          loadRecentRepos(),
+          loadProfiles().then(() => restoreActiveProfile()),
+        ]);
       } catch {
-        if (retries < 3) {
+        if (!cancelled && retries < 3) {
           retries++;
           setTimeout(tryInit, 1000);
         }
       }
     };
     tryInit();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { cancelled = true; };
+  }, [loadRecentRepos, loadProfiles, restoreActiveProfile]);
 
   return null;
 }
@@ -45,6 +52,7 @@ function DatabaseInit() {
 function RepoEventListener() {
   const repoPath = useRepoStore((s) => s.repoPath);
   const loadStatus = useRepoStore((s) => s.loadStatus);
+  const reloadRefs = useRepoStore((s) => s.reloadRefs);
   const reloadAll = useRepoStore((s) => s.reloadAll);
 
   useEffect(() => {
@@ -58,8 +66,12 @@ function RepoEventListener() {
           loadStatus();
           break;
         case "Refs":
+          // Branch/tag refs changed (fetch, push) — only commits + branches
+          // need refreshing. Working tree is unaffected.
+          reloadRefs();
+          break;
         case "Head":
-          // Branches/tags/HEAD changed — full reload
+          // HEAD changed (checkout) — full reload including status
           reloadAll();
           break;
       }
@@ -68,7 +80,7 @@ function RepoEventListener() {
     return () => {
       unlistenPromise.then((unlisten) => unlisten());
     };
-  }, [repoPath, loadStatus, reloadAll]);
+  }, [repoPath, loadStatus, reloadRefs, reloadAll]);
 
   return null;
 }

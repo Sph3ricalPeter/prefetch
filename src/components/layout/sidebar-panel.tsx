@@ -5,6 +5,8 @@ import { BranchList } from "@/components/sidebar/branch-list";
 import { StashList } from "@/components/sidebar/stash-list";
 import { TagList } from "@/components/sidebar/tag-list";
 import { SettingsModal } from "@/components/ui/settings-modal";
+import { ProfileSwitcher } from "@/components/ui/profile-switcher";
+import { ProfileModal } from "@/components/ui/profile-modal";
 import {
   Tooltip,
   TooltipTrigger,
@@ -17,6 +19,7 @@ export function SidebarPanel() {
   const lfsInfo = useRepoStore((s) => s.lfsInfo);
   const [filter, setFilter] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showProfiles, setShowProfiles] = useState(false);
 
   if (!repoPath) {
     return (
@@ -57,9 +60,11 @@ export function SidebarPanel() {
         <TagList filter={filter} />
       </div>
 
-      {/* Sidebar footer — forge status + settings */}
-      <div className="border-t border-border px-3 py-2 flex items-center justify-between">
-        <span className="text-xs text-muted-foreground truncate flex items-center">
+      {/* Sidebar footer — profile switcher + forge status + settings */}
+      <div className="border-t border-border px-3 py-2 flex items-center gap-2">
+        <ProfileSwitcher onManageProfiles={() => setShowProfiles(true)} />
+
+        <span className="text-xs text-muted-foreground truncate flex items-center ml-auto">
           {forgeStatus?.host && (
             <>
               <span
@@ -98,6 +103,10 @@ export function SidebarPanel() {
 
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+
+      {showProfiles && (
+        <ProfileModal onClose={() => setShowProfiles(false)} />
       )}
     </div>
   );

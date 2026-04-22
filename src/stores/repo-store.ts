@@ -56,6 +56,7 @@ import {
   getConflictState,
   abortOperation as abortOperationCmd,
   continueOperation as continueOperationCmd,
+  lfsCheckInitialized,
   lfsGetInfo,
   lfsInitialize,
   lfsTrackPattern as lfsTrackCmd,
@@ -207,7 +208,9 @@ interface RepoState {
   loadUndoAction: () => Promise<void>;
   undo: () => Promise<void>;
 
-  /** Reload all repo data — called by file watcher events */
+  /** Reload commits + branches only — called on Refs watcher events (fetch updated refs) */
+  reloadRefs: () => Promise<void>;
+  /** Reload all repo data — called by file watcher Head events (checkout) */
   reloadAll: () => Promise<void>;
 
   // Git identity
@@ -221,24 +224,25 @@ interface RepoState {
   openPr: (url: string) => Promise<void>;
 
   // LFS actions
-  loadLfsInfo: () => Promise<void>;
+  loadLfsInfo: (full?: boolean) => Promise<void>;
   initializeLfs: () => Promise<void>;
   trackLfsPattern: (pattern: string) => Promise<void>;
   untrackLfsPattern: (pattern: string) => Promise<void>;
   pruneLfsObjects: () => Promise<void>;
 }
 
-async function reloadRepoData(set: (s: Partial<RepoState>) => void) {
+/** Fetch commits + branches without calling set(). Callers merge into their own set(). */
+async function fetchRepoData(): Promise<Partial<RepoState>> {
   const [data, branchList] = await Promise.all([getCommits(), getBranches()]);
   const head = branchList.find((b) => b.is_head);
-  set({
+  return {
     commits: data.commits,
     edges: data.edges,
     totalLanes: data.total_lanes,
     headCommitId: data.head_commit_id,
     branches: branchList,
     currentBranch: head?.name ?? null,
-  });
+  };
 }
 
 export const useRepoStore = create<RepoState>()((set, get) => ({
@@ -301,26 +305,61 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       commitFiles: [],
       commitMessage: "",
       commitDescription: "",
+      lfsInfo: null,
+      forgeStatus: null,
+      gitIdentity: null,
     });
     try {
+      // openRepo MUST complete first — it sets up Rust-side state (watcher,
+      // fetcher, repo_path) that all subsequent IPC commands depend on.
       const name = await openRepo(path);
       set({ repoPath: path, repoName: name });
-      await reloadRepoData(set);
-      const [statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
+
+      // Import profile store early so autoSwitch can run in the parallel batch
+      const { useProfileStore } = await import("@/stores/profile-store");
+
+      // Launch ALL independent data loads in a single parallel batch.
+      // Previously these ran as two sequential rounds (commits/branches first,
+      // then status/stashes/tags), adding 200-500ms of dead wait time.
+      const [, data, branchList, statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
+        useProfileStore.getState().autoSwitchForRepo(path),
+        getCommits(),
+        getBranches(),
         getFileStatus(),
         getStashes(),
         getTags(),
         getUndoAction(),
         getConflictState(),
       ]);
-      set({ isLoading: false, fileStatuses: statuses, stashes: stashList, tags: tagList, undoInfo: undoAction, conflictState: conflict });
+      const head = branchList.find((b) => b.is_head);
+
+      // Single set() call for all core data — avoids intermediate re-renders
+      // that previously caused the canvas to redraw 2-3 times during load.
+      set({
+        isLoading: false,
+        commits: data.commits,
+        edges: data.edges,
+        totalLanes: data.total_lanes,
+        headCommitId: data.head_commit_id,
+        branches: branchList,
+        currentBranch: head?.name ?? null,
+        fileStatuses: statuses,
+        stashes: stashList,
+        tags: tagList,
+        undoInfo: undoAction,
+        conflictState: conflict,
+      });
+
       // Load LFS, forge, and identity info after core data (non-blocking, fire-and-forget)
-      get().loadLfsInfo().catch(() => {});
-      get().loadForgeStatus().catch(() => {});
-      get().loadGitIdentity().catch(() => {});
-      // Track in recent repos + save as last opened (fire-and-forget)
       Promise.all([
-        addRecentRepo(path, name).then(() => get().loadRecentRepos()),
+        get().loadLfsInfo(),
+        get().loadForgeStatus(),
+        get().loadGitIdentity(),
+      ]).catch(() => {});
+      // Track in recent repos + save as last opened (fire-and-forget)
+      const activeProfile = useProfileStore.getState().activeProfile;
+      Promise.all([
+        addRecentRepo(path, name, activeProfile?.id ?? null).then(() => get().loadRecentRepos()),
         setUiState("last_repo_path", path),
       ]).catch(() => {});
     } catch (e) {
@@ -343,6 +382,22 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   loadStatus: async () => {
     try {
       const statuses = await getFileStatus();
+      // Skip state update if nothing changed — avoids an unnecessary React
+      // re-render on every 5-second poll when no files have been modified.
+      const current = get().fileStatuses;
+      if (
+        statuses.length === current.length &&
+        statuses.every(
+          (s, i) =>
+            s.path === current[i].path &&
+            s.status_type === current[i].status_type &&
+            s.is_staged === current[i].is_staged &&
+            s.additions === current[i].additions &&
+            s.deletions === current[i].deletions,
+        )
+      ) {
+        return;
+      }
       set({ fileStatuses: statuses });
     } catch (e) {
       toast.error(String(e));
@@ -370,9 +425,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ isLoading: true, error: null });
       try {
         await checkoutBranch(localName);
-        await reloadRepoData(set);
-        const statuses = await getFileStatus();
-        set({ isLoading: false, fileStatuses: statuses });
+        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+        set({ ...repoData, isLoading: false, fileStatuses: statuses });
         toast.success(`Checked out ${localName} (tracking ${name})`);
       } catch (e) {
         set({ isLoading: false });
@@ -385,9 +439,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await checkoutBranch(name);
-      await reloadRepoData(set);
-      const statuses = await getFileStatus();
-      set({ isLoading: false, fileStatuses: statuses });
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses });
       toast.success(`Checked out ${name}`);
     } catch (e) {
       set({ isLoading: false });
@@ -401,9 +454,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ remoteCheckoutPending: null, isLoading: true, error: null });
     try {
       await resetBranchToRemote(pending.localName, pending.remoteName);
-      await reloadRepoData(set);
-      const statuses = await getFileStatus();
-      set({ isLoading: false, fileStatuses: statuses });
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses });
       toast.success(`Reset ${pending.localName} to ${pending.remoteName}`);
     } catch (e) {
       set({ isLoading: false });
@@ -416,9 +468,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   createBranch: async (name: string) => {
     try {
       await createBranchCmd(name);
-      await reloadRepoData(set);
-      const statuses = await getFileStatus();
-      set({ fileStatuses: statuses });
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, fileStatuses: statuses });
       toast.success(`Created and checked out ${name}`);
     } catch (e) {
       toast.error(String(e));
@@ -433,8 +484,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     });
     try {
       await fetchRepo();
-      await reloadRepoData(set);
-      set({ isLoading: false, prCache: {} }); // invalidate PR cache after fetch
+      const repoData = await fetchRepoData();
+      set({ ...repoData, isLoading: false, prCache: {} }); // invalidate PR cache after fetch
       clearPrCacheCmd().catch(() => {});
       toast.success("Fetch complete", { id: toastId });
     } catch (e) {
@@ -453,9 +504,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     });
     try {
       await pullRepo();
-      await reloadRepoData(set);
-      const statuses = await getFileStatus();
-      set({ isLoading: false, fileStatuses: statuses, prCache: {} }); // invalidate PR cache
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, prCache: {} }); // invalidate PR cache
       clearPrCacheCmd().catch(() => {});
       toast.success("Pull complete", { id: toastId });
     } catch (e) {
@@ -689,9 +739,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await createCommit(fullMessage, amend);
-      await reloadRepoData(set);
-      const statuses = await getFileStatus();
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({
+        ...repoData,
         isLoading: false,
         fileStatuses: statuses,
         commitMessage: "",
@@ -842,9 +892,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await resetToCommitCmd(commitId, `--${mode}`);
-      await reloadRepoData(set);
-      const statuses = await getFileStatus();
-      set({ isLoading: false, fileStatuses: statuses });
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses });
       toast.success(mode === "soft" ? "Reset (soft) — changes kept staged" : "Reset (hard) — working tree clean");
     } catch (e) {
       set({ isLoading: false });
@@ -856,9 +905,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await cherryPickCommit(commitId);
-      await reloadRepoData(set);
-      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
-      set({ isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
         toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
       } else {
@@ -869,9 +917,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // Check if the error is a conflict (git cherry-pick exits non-zero on conflict)
       const conflict = await getConflictState().catch(() => null);
       if (conflict?.in_progress) {
-        await reloadRepoData(set);
-        const statuses = await getFileStatus().catch(() => []);
-        set({ fileStatuses: statuses, conflictState: conflict });
+        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
+        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
         toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
       } else {
         toast.error(String(e));
@@ -883,9 +930,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await rebaseOntoCmd(targetBranch);
-      await reloadRepoData(set);
-      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
-      set({ isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
         toast.error("Rebase has conflicts — resolve them, then continue or abort");
       } else {
@@ -895,9 +941,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ isLoading: false });
       const conflict = await getConflictState().catch(() => null);
       if (conflict?.in_progress) {
-        await reloadRepoData(set);
-        const statuses = await getFileStatus().catch(() => []);
-        set({ fileStatuses: statuses, conflictState: conflict });
+        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
+        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
         toast.error("Rebase has conflicts — resolve them, then continue or abort");
       } else {
         toast.error(String(e));
@@ -908,9 +953,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   abortOperation: async () => {
     try {
       await abortOperationCmd();
-      await reloadRepoData(set);
-      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
-      set({ fileStatuses: statuses, conflictState: conflict });
+      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
+      set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
       toast.success("Operation aborted");
     } catch (e) {
       toast.error(String(e));
@@ -920,9 +964,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   continueOperation: async () => {
     try {
       await continueOperationCmd();
-      await reloadRepoData(set);
-      const [statuses, conflict] = await Promise.all([getFileStatus(), getConflictState()]);
-      set({ fileStatuses: statuses, conflictState: conflict });
+      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
+      set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
         toast.error("Still has conflicts — resolve remaining files");
       } else {
@@ -962,12 +1005,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ undoInfo: null, lastUndoTime: Date.now() });
     try {
       await undoLast();
-      await reloadRepoData(set);
-      const [statuses, stashList] = await Promise.all([
+      const [repoData, statuses, stashList] = await Promise.all([
+        fetchRepoData(),
         getFileStatus(),
         getStashes(),
       ]);
-      set({ fileStatuses: statuses, stashes: stashList });
+      set({ ...repoData, fileStatuses: statuses, stashes: stashList });
       toast.success(info.description);
     } catch (e) {
       toast.error(String(e));
@@ -993,20 +1036,35 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  reloadRefs: async () => {
+    if (!get().repoPath) return;
+    try {
+      // Refs changed (fetch, push, remote branch update) — only commits and
+      // branches need refreshing. Working tree / status is unaffected.
+      const repoData = await fetchRepoData();
+      set(repoData);
+    } catch {
+      // Silently handle — background refresh
+    }
+  },
+
   reloadAll: async () => {
     if (!get().repoPath) return;
     try {
-      await reloadRepoData(set);
       // Skip undo refresh for 3s after an undo to prevent undo-of-undo loop
       const suppressUndo = Date.now() - get().lastUndoTime < 3000;
-      const [statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
+      // Single parallel batch + single set() to avoid double re-renders.
+      // Previously reloadRepoData called set() first (canvas redraw), then
+      // a second set() for status/stashes/tags (another canvas redraw).
+      const [repoData, statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
+        fetchRepoData(),
         getFileStatus(),
         getStashes(),
         getTags(),
         suppressUndo ? Promise.resolve(null) : getUndoAction(),
         getConflictState(),
       ]);
-      const update: Partial<RepoState> = { fileStatuses: statuses, stashes: stashList, tags: tagList, conflictState: conflict };
+      const update: Partial<RepoState> = { ...repoData, fileStatuses: statuses, stashes: stashList, tags: tagList, conflictState: conflict };
       if (undoAction !== null) {
         update.undoInfo = undoAction;
       }
@@ -1021,7 +1079,20 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   loadGitIdentity: async () => {
     try {
       const identity = await getGitIdentityCmd();
-      set({ gitIdentity: identity });
+      // If a profile is active, display the profile's identity instead of git config
+      const { useProfileStore } = await import("@/stores/profile-store");
+      const activeProfile = useProfileStore.getState().activeProfile;
+      if (activeProfile) {
+        set({
+          gitIdentity: {
+            name: activeProfile.user_name,
+            email: activeProfile.user_email,
+            source: "profile",
+          },
+        });
+      } else {
+        set({ gitIdentity: identity });
+      }
     } catch {
       // Non-critical
     }
@@ -1080,9 +1151,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   // ── LFS actions ────────────────────────────────────────────────────────────
 
-  loadLfsInfo: async () => {
+  loadLfsInfo: async (full = false) => {
     try {
-      const info = await lfsGetInfo();
+      // Default: lightweight file-read check (<1ms) — just sets initialized flag
+      // for the sidebar badge. Full details (tracked patterns, file counts) are
+      // loaded on-demand when the user opens the LFS panel, because spawning
+      // git lfs Go binaries takes 2-5s on Windows and freezes the app.
+      const info = full ? await lfsGetInfo() : await lfsCheckInitialized();
       set({ lfsInfo: info });
     } catch {
       // LFS info is non-critical — silently ignore
@@ -1094,7 +1169,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await lfsInitialize();
       toast.success("LFS initialised in this repository");
-      await get().loadLfsInfo();
+      await get().loadLfsInfo(true);
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -1107,7 +1182,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await lfsTrackCmd(pattern);
       toast.success(`Tracking "${pattern}" with LFS`);
-      await get().loadLfsInfo();
+      await get().loadLfsInfo(true);
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -1120,7 +1195,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await lfsUntrackCmd(pattern);
       toast.success(`Untracked "${pattern}" from LFS`);
-      await get().loadLfsInfo();
+      await get().loadLfsInfo(true);
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -1133,7 +1208,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await lfsPruneCmd();
       toast.success("LFS objects pruned");
-      await get().loadLfsInfo();
+      await get().loadLfsInfo(true);
     } catch (e) {
       toast.error(String(e));
     } finally {

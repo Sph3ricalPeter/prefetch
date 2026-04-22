@@ -12,6 +12,7 @@ const SOURCE_LABELS: Record<string, string> = {
   local: "Local repo config",
   global: "Global git config",
   system: "System git config",
+  profile: "Profile",
   unknown: "Unknown source",
 };
 

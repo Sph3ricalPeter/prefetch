@@ -102,14 +102,17 @@ Ship this. Use it. Iterate.
 11. **Undo** via reflog — see implementation spec below
 12. **Cherry-pick & rebase** — cherry-pick commits onto current branch, non-interactive rebase onto target branch
 13. **Tags** — create, delete, push tags
-14. **Command palette** (Cmd+K) — quick branch switch, repo switch, action trigger
 
 ### v0.3 — rounding out
 
-15. **Conflict resolution** — pick ours/theirs per hunk, no 3-pane editor needed
-16. **Git config editor** — global and local, UI for user.name / user.email / default branch
-17. **Branch divergence indicators** — ahead/behind counts in branch list
-18. **Remote management** — add, remove, rename remotes
+14. **Conflict resolution** — pick ours/theirs per hunk, no 3-pane editor needed
+15. **Branch divergence indicators** — ahead/behind counts in branch list
+16. **Remote management** — add, remove, rename remotes
+
+### v0.4 — nice to haves
+
+17. **Command palette** (Cmd+K) — quick branch switch, repo switch, action trigger
+18. **Git config editor** — global and local, UI for user.name / user.email / default branch
 
 ### Explicitly out of scope (not even v1)
 
@@ -280,19 +283,21 @@ CC loses context between sessions. A tight `ARCHITECTURE.md` that describes:
 4. Stage/unstage + diff (Shiki) + commit
 5. Stash
 ── ship v0.1 ── ✅
-6. Tags (create, delete, push)
-7. Cherry-pick & non-interactive rebase
-8. Undo via reflog
-9. Persistence (remember open project, sidebar sizes, UI state)
-10. Projects (add/remove repo folders, switch between them)
-11. Command palette (Cmd+K)
+6. Tags (create, delete, push)                          ✅
+7. Cherry-pick & non-interactive rebase                 ✅
+8. Undo via reflog                                      ✅
+9. Forge integration (GitHub/GitLab PAT, open PR)       ✅
+10. Global settings, author identity, LFS               ✅
+11. Profiles (work/personal) with auto-switch
+12. GitHub/GitLab OAuth (upgrade PAT → OAuth per profile)
 ── ship v0.2 ──
-12. Profiles (work/personal) with auto-switch
-13. GitHub/GitLab OAuth + open PR in browser
-14. Conflict resolution (pick ours/theirs)
-15. Branch divergence indicators
-16. Remote management
-17. Git config editor
+13. Conflict resolution (pick ours/theirs)
+14. Branch divergence indicators
+15. Remote management
+── ship v0.3 ──
+16. Command palette (Cmd+K)
+17. Git config editor UI
+── ship v0.4 ──
 ```
 
 ---
