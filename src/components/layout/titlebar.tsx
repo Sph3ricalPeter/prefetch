@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
+import { platform } from "@tauri-apps/plugin-os";
 import {
   Minus,
   Square,
@@ -19,6 +20,11 @@ import {
   GitBranchPlus,
   MoreHorizontal,
 } from "lucide-react";
+
+/** Detect macOS — synchronous, safe to call at module level */
+const IS_MAC = (() => {
+  try { return platform() === "macos"; } catch { return false; }
+})();
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import {
@@ -65,8 +71,12 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
       className="flex h-10 shrink-0 items-center border-b border-border bg-background select-none"
       data-tauri-drag-region
     >
-      {/* Left: Brand */}
-      <div className="flex items-center gap-2.5 pl-3.5 pr-4" data-tauri-drag-region>
+      {/* Left: Brand — extra left padding on macOS for native traffic lights */}
+      <div
+        className="flex items-center gap-2.5 pr-4"
+        style={{ paddingLeft: IS_MAC ? 78 : 14 }}
+        data-tauri-drag-region
+      >
         <PrefetchLogo className="h-4 w-4 shrink-0" />
         <span
           className="text-xs font-semibold tracking-tight text-foreground"
@@ -89,47 +99,49 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
         {/* Action buttons — hidden in settings */}
         {!settingsOpen && <TitlebarActionsGroup />}
 
-        {/* Separator — only shown when actions are visible */}
-        {!settingsOpen && <div className="mx-1.5 h-4 w-px bg-border" />}
-
-        {/* Window controls — Change 7: replaced title attrs with Tooltip */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => getAppWindow()?.minimize()}
-              className="flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Minimize</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => getAppWindow()?.toggleMaximize()}
-              className="flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            >
-              {isMaximized ? (
-                <Copy className="h-3 w-3" />
-              ) : (
-                <Square className="h-3 w-3" />
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{isMaximized ? "Restore" : "Maximize"}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => getAppWindow()?.close()}
-              className="flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-red-500/20 hover:text-red-400"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Close</TooltipContent>
-        </Tooltip>
+        {/* Window controls — Windows/Linux only (macOS uses native traffic lights) */}
+        {!IS_MAC && (
+          <>
+            {!settingsOpen && <div className="mx-1.5 h-4 w-px bg-border" />}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => getAppWindow()?.minimize()}
+                  className="flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Minimize</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => getAppWindow()?.toggleMaximize()}
+                  className="flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  {isMaximized ? (
+                    <Copy className="h-3 w-3" />
+                  ) : (
+                    <Square className="h-3 w-3" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{isMaximized ? "Restore" : "Maximize"}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => getAppWindow()?.close()}
+                  className="flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-red-500/20 hover:text-red-400"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Close</TooltipContent>
+            </Tooltip>
+          </>
+        )}
       </div>
     </div>
   );
@@ -285,14 +297,16 @@ function TitlebarActionsGroup() {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    // Observe the titlebar's center flex area to decide collapse
-    const parent = container.parentElement;
-    if (!parent) return;
+    // Observe the full titlebar width to decide collapse.
+    // Brand ~130px, repo switcher ~200px, window controls ~130px (0 on macOS),
+    // action buttons need ~560px → collapse below ~960px total.
+    const titlebar = container.closest("[data-tauri-drag-region]") as HTMLElement;
+    if (!titlebar) return;
     const observer = new ResizeObserver(() => {
-      // Each button is ~75px, 7 buttons + separators ~ 560px
-      setCollapsed(parent.clientWidth < 620);
+      const threshold = IS_MAC ? 830 : 960;
+      setCollapsed(titlebar.clientWidth < threshold);
     });
-    observer.observe(parent);
+    observer.observe(titlebar);
     return () => observer.disconnect();
   }, []);
 

@@ -34,6 +34,21 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            // On macOS: enable native decorations (traffic lights + rounded corners)
+            // and set overlay title bar style so content extends behind the title bar.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::TitleBarStyle;
+                let window = app.get_webview_window("main")
+                    .expect("main window not found");
+                window.set_decorations(true)?;
+                window.set_title_bar_style(TitleBarStyle::Overlay)?;
+            }
+            // Suppress unused variable warning on non-macOS
+            let _ = app;
+            Ok(())
+        })
         .manage(AppState {
             repo_path: Mutex::new(None),
             active_profile: Mutex::new(None),
