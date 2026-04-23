@@ -1,17 +1,21 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ResizeHandle } from "@/components/ui/resize-handle";
 import { Titlebar } from "./titlebar";
 import { SidebarPanel } from "./sidebar-panel";
 import { GraphPanel } from "./graph-panel";
 import { DetailPanel } from "./detail-panel";
+import { SettingsPage } from "@/components/ui/settings-page";
 import { getUiState, setUiState } from "@/lib/database";
 
 const SIDEBAR_DEFAULT = 256; // w-64
-const DETAIL_DEFAULT = 320;  // w-80
+const DETAIL_DEFAULT = 370;
 
 export function AppLayout() {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const [detailWidth, setDetailWidth] = useState(DETAIL_DEFAULT);
 
   // Restore saved widths on mount — retries if DB not initialized yet
   useEffect(() => {
@@ -24,11 +28,19 @@ export function AppLayout() {
           getUiState("detail_width"),
         ]);
         if (cancelled) return;
-        if (savedSidebar && sidebarRef.current) {
-          sidebarRef.current.style.width = `${savedSidebar}px`;
+        if (savedSidebar) {
+          const w = Number(savedSidebar);
+          setSidebarWidth(w);
+          if (sidebarRef.current) {
+            sidebarRef.current.style.width = `${w}px`;
+          }
         }
-        if (savedDetail && detailRef.current) {
-          detailRef.current.style.width = `${savedDetail}px`;
+        if (savedDetail) {
+          const w = Number(savedDetail);
+          setDetailWidth(w);
+          if (detailRef.current) {
+            detailRef.current.style.width = `${w}px`;
+          }
         }
       } catch {
         // DB not initialized yet — retry after a short delay
@@ -43,51 +55,59 @@ export function AppLayout() {
   }, []);
 
   const saveSidebarWidth = useCallback((width: number) => {
+    setSidebarWidth(width);
     setUiState("sidebar_width", String(width)).catch(() => {});
   }, []);
 
   const saveDetailWidth = useCallback((width: number) => {
+    setDetailWidth(width);
     setUiState("detail_width", String(width)).catch(() => {});
   }, []);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground select-none">
       {/* Custom titlebar — replaces native window chrome */}
-      <Titlebar />
+      <Titlebar settingsOpen={settingsOpen} />
 
-      {/* Three-panel content area */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left sidebar — branches */}
-        <div ref={sidebarRef} className="shrink-0" style={{ width: SIDEBAR_DEFAULT }}>
-          <SidebarPanel />
+      {/* Settings fullpage view OR three-panel repo view */}
+      {settingsOpen ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <SettingsPage onClose={() => setSettingsOpen(false)} sidebarWidth={sidebarWidth} onSidebarResize={saveSidebarWidth} />
         </div>
+      ) : (
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          {/* Left sidebar — branches */}
+          <div ref={sidebarRef} className="shrink-0" style={{ width: sidebarWidth }}>
+            <SidebarPanel onOpenSettings={() => setSettingsOpen(true)} />
+          </div>
 
-        <ResizeHandle
-          side="left"
-          panelRef={sidebarRef}
-          minWidth={192}
-          maxWidth={320}
-          onResizeEnd={saveSidebarWidth}
-        />
+          <ResizeHandle
+            side="left"
+            panelRef={sidebarRef}
+            minWidth={192}
+            maxWidth={320}
+            onResizeEnd={saveSidebarWidth}
+          />
 
-        {/* Center — commit graph */}
-        <div className="flex-1 min-w-0">
-          <GraphPanel />
+          {/* Center — commit graph */}
+          <div className="flex-1 min-w-0">
+            <GraphPanel />
+          </div>
+
+          <ResizeHandle
+            side="right"
+            panelRef={detailRef}
+            minWidth={256}
+            maxWidth={480}
+            onResizeEnd={saveDetailWidth}
+          />
+
+          {/* Right detail — commit info / diff */}
+          <div ref={detailRef} className="shrink-0" style={{ width: detailWidth }}>
+            <DetailPanel />
+          </div>
         </div>
-
-        <ResizeHandle
-          side="right"
-          panelRef={detailRef}
-          minWidth={256}
-          maxWidth={480}
-          onResizeEnd={saveDetailWidth}
-        />
-
-        {/* Right detail — commit info / diff */}
-        <div ref={detailRef} className="shrink-0" style={{ width: DETAIL_DEFAULT }}>
-          <DetailPanel />
-        </div>
-      </div>
+      )}
     </div>
   );
 }

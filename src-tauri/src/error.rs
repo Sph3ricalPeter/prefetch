@@ -6,6 +6,9 @@ pub enum AppError {
     #[error("Git error: {0}")]
     Git(String),
 
+    #[error("[hook:{hook_name}] {output}")]
+    HookFailed { hook_name: String, output: String },
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

@@ -3,10 +3,10 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
+  FolderTree,
+  List,
   Tag,
   Trash2,
-  List,
-  FolderTree,
   Folder,
   FolderOpen,
 } from "lucide-react";
@@ -81,6 +81,8 @@ export function DetailPanel() {
   const selectCommitFile = useRepoStore((s) => s.selectCommitFile);
   const selectStashFile = useRepoStore((s) => s.selectStashFile);
   const discardAll = useRepoStore((s) => s.discardAll);
+  const fileViewMode = useRepoStore((s) => s.fileViewMode);
+  const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
 
   const [showDiscardAll, setShowDiscardAll] = useState(false);
 
@@ -126,17 +128,36 @@ export function DetailPanel() {
             <span className="ml-2 text-xs text-faint">
               {fileStatuses.length}
             </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setShowDiscardAll(true)}
-                  className="ml-auto rounded p-1 text-faint hover:bg-destructive/20 hover:text-red-400 transition-colors"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Discard all changes</TooltipContent>
-            </Tooltip>
+            <div className="ml-auto flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setFileViewMode(fileViewMode === "flat" ? "tree" : "flat")}
+                    className="rounded p-1 text-faint hover:text-muted-foreground transition-colors"
+                  >
+                    {fileViewMode === "flat" ? (
+                      <FolderTree className="h-3.5 w-3.5" />
+                    ) : (
+                      <List className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {fileViewMode === "flat" ? "Tree view" : "Flat view"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowDiscardAll(true)}
+                    className="rounded p-1 text-faint hover:bg-destructive/20 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Discard all changes</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
           <div className="mx-3 my-1 border-t border-border" />
         </div>

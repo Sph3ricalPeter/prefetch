@@ -82,6 +82,16 @@ import {
 /** Files with more than this many changed lines show a "Load anyway" guard */
 const LARGE_DIFF_THRESHOLD = 10_000;
 
+/** Parse a Tauri error to detect hook failures.
+ *  Hook errors are serialized as `[hook:<name>] <output>` by the Rust backend. */
+function parseError(e: unknown): { hookName: string | null; message: string } {
+  const msg = String(e);
+  const match = msg.match(/^\[hook:([\w-]+)\]\s*(.*)/s);
+  return match
+    ? { hookName: match[1], message: match[2] || "Hook failed" }
+    : { hookName: null, message: msg };
+}
+
 interface RepoState {
   repoPath: string | null;
   repoName: string | null;
@@ -519,7 +529,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Pull complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e), { id: toastId });
+      const { hookName, message } = parseError(e);
+      if (hookName) {
+        toast.error(`Hook '${hookName}' failed`, { id: toastId, description: message.slice(0, 300), duration: 10000 });
+      } else {
+        toast.error(message, { id: toastId });
+      }
     } finally {
       unlisten();
     }
@@ -537,13 +552,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Push complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
-      const errMsg = String(e);
-      // Detect rejected push (diverged history after reset)
-      if (errMsg.includes("rejected") || errMsg.includes("non-fast-forward") || errMsg.includes("fetch first")) {
+      const { hookName, message } = parseError(e);
+      if (hookName) {
+        toast.error(`Hook '${hookName}' failed`, { id: toastId, description: message.slice(0, 300), duration: 10000 });
+      } else if (message.includes("rejected") || message.includes("non-fast-forward") || message.includes("fetch first")) {
+        // Detect rejected push (diverged history after reset)
         toast.error("Push rejected — remote has diverged", { id: toastId });
         set({ forcePushPending: true });
       } else {
-        toast.error(errMsg, { id: toastId });
+        toast.error(message, { id: toastId });
       }
     } finally {
       unlisten();
@@ -761,7 +778,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Committed successfully");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      const { hookName, message } = parseError(e);
+      if (hookName) {
+        toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
+      } else {
+        toast.error(message);
+      }
     }
   },
 
@@ -930,7 +952,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
         toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
       } else {
-        toast.error(String(e));
+        const { hookName, message } = parseError(e);
+        if (hookName) {
+          toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
+        } else {
+          toast.error(message);
+        }
       }
     }
   },
@@ -954,7 +981,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
         toast.error("Rebase has conflicts — resolve them, then continue or abort");
       } else {
-        toast.error(String(e));
+        const { hookName, message } = parseError(e);
+        if (hookName) {
+          toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
+        } else {
+          toast.error(message);
+        }
       }
     }
   },

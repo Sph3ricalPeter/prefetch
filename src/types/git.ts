@@ -40,6 +40,10 @@ export interface BranchInfo {
   is_head: boolean;
   commit_id: string;
   short_commit_id: string;
+  /** Commits ahead of upstream (null if no upstream or remote branch). */
+  ahead: number | null;
+  /** Commits behind upstream (null if no upstream or remote branch). */
+  behind: number | null;
 }
 
 export interface FileStatus {

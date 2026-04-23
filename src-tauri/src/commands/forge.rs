@@ -84,29 +84,57 @@ pub async fn get_forge_status(state: State<'_, AppState>) -> Result<ForgeStatus,
 // ── Token management ──────────────────────────────────────────────────────────
 
 /// Store a PAT for the given host in the OS keychain.
+///
+/// If `profile_id` is provided, the token is stored under that profile.
+/// Otherwise falls back to the active profile from state, or legacy (no profile) key.
 #[tauri::command]
 pub async fn save_forge_token(
     host: String,
     token: String,
+    profile_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let profile_id = state
-        .active_profile
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
-    offload(move || forge::save_token_for_profile(profile_id.as_deref(), &host, &token)).await
+    let pid = profile_id.or_else(|| {
+        state
+            .active_profile
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()))
+    });
+    offload(move || forge::save_token_for_profile(pid.as_deref(), &host, &token)).await
 }
 
 /// Remove the PAT for the given host from the OS keychain.
+///
+/// If `profile_id` is provided, deletes the token for that profile.
+/// Otherwise falls back to the active profile from state, or legacy (no profile) key.
 #[tauri::command]
-pub async fn delete_forge_token(host: String, state: State<'_, AppState>) -> Result<(), AppError> {
-    let profile_id = state
-        .active_profile
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
-    offload(move || forge::delete_token_for_profile(profile_id.as_deref(), &host)).await
+pub async fn delete_forge_token(
+    host: String,
+    profile_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let pid = profile_id.or_else(|| {
+        state
+            .active_profile
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()))
+    });
+    offload(move || forge::delete_token_for_profile(pid.as_deref(), &host)).await
+}
+
+/// Check whether a token exists for a given profile + host.
+///
+/// Used by the settings UI to show token status per-profile without
+/// needing a repo open (unlike `get_forge_status` which requires a repo).
+#[tauri::command]
+pub async fn check_profile_token(profile_id: String, host: String) -> Result<bool, AppError> {
+    offload(move || {
+        let token = forge::load_token_for_profile(Some(&profile_id), &host)?;
+        Ok(token.is_some())
+    })
+    .await
 }
 
 // ── PR / MR lookup ────────────────────────────────────────────────────────────

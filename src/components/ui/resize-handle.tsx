@@ -78,8 +78,9 @@ export function ResizeHandle({
     <div
       onMouseDown={onMouseDown}
       className={cn(
-        "w-1 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-accent",
-        isDragging && "bg-accent",
+        "relative w-px shrink-0 cursor-col-resize transition-colors",
+        "before:absolute before:inset-y-0 before:-left-1.5 before:w-3 before:cursor-col-resize",
+        isDragging ? "bg-accent" : "bg-border hover:bg-accent",
       )}
     />
   );

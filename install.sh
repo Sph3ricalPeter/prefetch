@@ -42,7 +42,12 @@ curl -fSL "$URL" -o "$DMG_PATH"
 
 # Mount, copy, unmount
 echo "  Installing to /Applications..."
-MOUNT_POINT=$(hdiutil attach "$DMG_PATH" -nobrowse -quiet | grep '/Volumes' | awk '{print $NF}')
+MOUNT_POINT=$(hdiutil attach "$DMG_PATH" -nobrowse -quiet | grep -o '/Volumes/.*')
+
+if [ -z "$MOUNT_POINT" ]; then
+  echo "  Error: failed to mount DMG" >&2
+  exit 1
+fi
 
 # Find the .app inside the mounted volume
 APP_NAME=$(ls "$MOUNT_POINT" | grep '\.app$' | head -1)

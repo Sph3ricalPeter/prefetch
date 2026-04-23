@@ -5,8 +5,6 @@ import {
   Plus,
   Minus,
   Trash2,
-  List,
-  FolderTree,
   Folder,
   FolderOpen,
 } from "lucide-react";
@@ -31,8 +29,6 @@ function matchesLfsPattern(filePath: string, pattern: string): boolean {
   return regex.test(fileName) || regex.test(filePath);
 }
 
-type ViewMode = "flat" | "tree";
-
 export function FileList() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
@@ -45,9 +41,7 @@ export function FileList() {
   const selectFile = useRepoStore((s) => s.selectFile);
   const isLoading = useRepoStore((s) => s.isLoading);
 
-  /** Check if a file is tracked by LFS */
   const fileViewMode = useRepoStore((s) => s.fileViewMode);
-  const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
 
   const isLfsFile = (filePath: string) =>
     lfsInfo?.initialized &&
@@ -61,8 +55,6 @@ export function FileList() {
   const conflicted = fileStatuses.filter((f) => f.is_conflicted);
   const staged = fileStatuses.filter((f) => f.is_staged && !f.is_conflicted);
   const unstaged = fileStatuses.filter((f) => !f.is_staged && !f.is_conflicted);
-
-  const toggleViewMode = () => setFileViewMode(viewMode === "flat" ? "tree" : "flat");
 
   if (fileStatuses.length === 0) {
     return (
@@ -84,8 +76,6 @@ export function FileList() {
           actionLabel=""
           actionDisabled={true}
           labelClassName="text-red-400 hover:text-red-300"
-          viewMode={viewMode}
-          onToggleViewMode={toggleViewMode}
         >
           {conflicted.map((file) => (
             <ConflictRow
@@ -114,8 +104,6 @@ export function FileList() {
             : undefined
         }
         actionDisabled={isLoading}
-        viewMode={viewMode}
-        onToggleViewMode={toggleViewMode}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -162,8 +150,6 @@ export function FileList() {
             : undefined
         }
         actionDisabled={isLoading}
-        viewMode={viewMode}
-        onToggleViewMode={toggleViewMode}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -221,8 +207,6 @@ function FileSection({
   onAction,
   actionDisabled,
   labelClassName,
-  viewMode,
-  onToggleViewMode,
   children,
 }: {
   label: string;
@@ -233,8 +217,6 @@ function FileSection({
   onAction?: () => void;
   actionDisabled: boolean;
   labelClassName?: string;
-  viewMode: ViewMode;
-  onToggleViewMode: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -255,24 +237,6 @@ function FileSection({
           </span>
         </button>
         <div className="ml-auto flex items-center gap-1.5">
-          {/* View mode toggle */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onToggleViewMode}
-                className="rounded p-0.5 text-faint hover:text-muted-foreground transition-colors"
-              >
-                {viewMode === "flat" ? (
-                  <FolderTree className="h-3 w-3" />
-                ) : (
-                  <List className="h-3 w-3" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {viewMode === "flat" ? "Tree view" : "Flat view"}
-            </TooltipContent>
-          </Tooltip>
           {onAction && count > 0 && (
             <button
               onClick={onAction}

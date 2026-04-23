@@ -4,7 +4,6 @@ import { useRepoStore } from "@/stores/repo-store";
 import { BranchList } from "@/components/sidebar/branch-list";
 import { StashList } from "@/components/sidebar/stash-list";
 import { TagList } from "@/components/sidebar/tag-list";
-import { SettingsModal } from "@/components/ui/settings-modal";
 import { ProfileSwitcher } from "@/components/ui/profile-switcher";
 import { ProfileModal } from "@/components/ui/profile-modal";
 import {
@@ -13,12 +12,11 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 
-export function SidebarPanel() {
+export function SidebarPanel({ onOpenSettings }: { onOpenSettings: () => void }) {
   const repoPath = useRepoStore((s) => s.repoPath);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
   const lfsInfo = useRepoStore((s) => s.lfsInfo);
   const [filter, setFilter] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
   const [showProfiles, setShowProfiles] = useState(false);
 
   if (!repoPath) {
@@ -91,7 +89,7 @@ export function SidebarPanel() {
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setShowSettings(true)}
+              onClick={onOpenSettings}
               className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             >
               <Settings className="h-3 w-3" />
@@ -100,10 +98,6 @@ export function SidebarPanel() {
           <TooltipContent>Settings</TooltipContent>
         </Tooltip>
       </div>
-
-      {showSettings && (
-        <SettingsModal onClose={() => setShowSettings(false)} />
-      )}
 
       {showProfiles && (
         <ProfileModal onClose={() => setShowProfiles(false)} />

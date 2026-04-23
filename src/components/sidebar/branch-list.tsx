@@ -217,6 +217,15 @@ function BranchRow({
       <GitBranch className="h-3 w-3 shrink-0" />
       <span className="truncate">{displayName}</span>
 
+      {/* Ahead/behind badges */}
+      {((branch.ahead != null && branch.ahead > 0) ||
+        (branch.behind != null && branch.behind > 0)) && (
+        <span className="flex items-center gap-0.5 text-caption text-faint shrink-0">
+          {branch.ahead ? <span>↑{branch.ahead}</span> : null}
+          {branch.behind ? <span>↓{branch.behind}</span> : null}
+        </span>
+      )}
+
       {/* PR badge — only shown when there's an open PR */}
       {pr && onPrClick && (
         <Tooltip>

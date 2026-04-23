@@ -64,8 +64,19 @@ impl BackgroundFetcher {
                 for (k, v) in &env_vars {
                     cmd.env(k, v);
                 }
-                if let Some(url) = forge::authenticated_remote_url(&repo_path, pid.as_deref()) {
-                    cmd.args(["fetch", &url, "--prune"]);
+                if let Some(authed) = forge::authenticated_remote_url(&repo_path, pid.as_deref()) {
+                    // Suppress GCM to prevent caching of embedded credentials
+                    for (k, v) in &authed.extra_env {
+                        cmd.env(k, v);
+                    }
+                    // -c flags must come before the subcommand
+                    let mut args: Vec<String> = authed.extra_args.clone();
+                    args.extend([
+                        "fetch".to_string(),
+                        authed.url.clone(),
+                        "--prune".to_string(),
+                    ]);
+                    cmd.args(&args);
                 } else {
                     cmd.args(["fetch", "--all", "--prune"]);
                 }

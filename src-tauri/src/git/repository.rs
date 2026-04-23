@@ -191,6 +191,63 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
 }
 
 /// List all branches (local and remote).
+/// Batch-compute ahead/behind counts for all local branches in a single subprocess.
+///
+/// Uses `git for-each-ref --format='%(refname:short)\t%(upstream:track)'` which outputs
+/// lines like `main\t[ahead 3, behind 1]` or `feature\t` (no upstream).
+fn get_all_divergence(path: &str) -> HashMap<String, (u32, u32)> {
+    let output = git_cmd()
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short)\t%(upstream:track)",
+            "refs/heads/",
+        ])
+        .current_dir(path)
+        .output();
+
+    let mut map = HashMap::new();
+    let out = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return map,
+    };
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        let parts: Vec<&str> = line.splitn(2, '\t').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        let branch_name = parts[0];
+        let track = parts[1]; // e.g. "[ahead 3, behind 1]" or "[ahead 2]" or ""
+
+        if track.is_empty() {
+            continue;
+        }
+
+        let mut ahead = 0u32;
+        let mut behind = 0u32;
+
+        // Parse "ahead N"
+        if let Some(pos) = track.find("ahead ") {
+            let rest = &track[pos + 6..];
+            let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            ahead = num_str.parse().unwrap_or(0);
+        }
+        // Parse "behind N"
+        if let Some(pos) = track.find("behind ") {
+            let rest = &track[pos + 7..];
+            let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            behind = num_str.parse().unwrap_or(0);
+        }
+
+        if ahead > 0 || behind > 0 {
+            map.insert(branch_name.to_string(), (ahead, behind));
+        }
+    }
+
+    map
+}
+
 pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
     let repo = Repository::open(path)?;
 
@@ -199,6 +256,9 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
         .head()
         .ok()
         .and_then(|h| h.shorthand().map(|s| s.to_string()));
+
+    // Batch-fetch ahead/behind for all local branches (single subprocess)
+    let divergence = get_all_divergence(path);
 
     let mut branches = Vec::new();
 
@@ -228,12 +288,24 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
 
             let is_head = !is_remote && head_name.as_deref() == Some(&name);
 
+            // Look up ahead/behind for local branches
+            let (ahead, behind) = if !is_remote {
+                divergence
+                    .get(&name)
+                    .map(|&(a, b)| (Some(a), Some(b)))
+                    .unwrap_or((Some(0), Some(0)))
+            } else {
+                (None, None)
+            };
+
             branches.push(BranchInfo {
                 name,
                 is_remote,
                 is_head,
                 commit_id,
                 short_commit_id,
+                ahead,
+                behind,
             });
         }
     }
@@ -280,13 +352,10 @@ pub fn fetch_all<F: Fn(&str)>(
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
-        run_git_with_progress(
-            path,
-            &["fetch", &url, "--prune", "--progress"],
-            &on_progress,
-            extra_env,
-        )
+    if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
+        let args = authed.build_args(&["fetch", &authed.url, "--prune", "--progress"]);
+        let env = authed.merge_env(extra_env);
+        run_git_with_progress(path, &args, &on_progress, &env)
     } else {
         run_git_with_progress(
             path,
@@ -304,13 +373,10 @@ pub fn force_push<F: Fn(&str)>(
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
-        run_git_with_progress(
-            path,
-            &["push", &url, "--force-with-lease", "--progress"],
-            &on_progress,
-            extra_env,
-        )
+    if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
+        let args = authed.build_args(&["push", &authed.url, "--force-with-lease", "--progress"]);
+        let env = authed.merge_env(extra_env);
+        run_git_with_progress(path, &args, &on_progress, &env)
     } else {
         run_git_with_progress(
             path,
@@ -328,8 +394,10 @@ pub fn pull<F: Fn(&str)>(
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
-        run_git_with_progress(path, &["pull", &url, "--progress"], &on_progress, extra_env)
+    if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
+        let args = authed.build_args(&["pull", &authed.url, "--progress"]);
+        let env = authed.merge_env(extra_env);
+        run_git_with_progress(path, &args, &on_progress, &env)
     } else {
         run_git_with_progress(path, &["pull", "--progress"], &on_progress, extra_env)
     }
@@ -342,11 +410,13 @@ pub fn push<F: Fn(&str)>(
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
-    let authed_url = forge::authenticated_remote_url(path, profile_id);
+    let authed = forge::authenticated_remote_url(path, profile_id);
 
     // Try normal push first
-    let result = if let Some(ref url) = authed_url {
-        run_git_with_progress(path, &["push", url, "--progress"], &on_progress, extra_env)
+    let result = if let Some(ref a) = authed {
+        let args = a.build_args(&["push", &a.url, "--progress"]);
+        let env = a.merge_env(extra_env);
+        run_git_with_progress(path, &args, &on_progress, &env)
     } else {
         run_git_with_progress(path, &["push", "--progress"], &on_progress, extra_env)
     };
@@ -358,13 +428,10 @@ pub fn push<F: Fn(&str)>(
     let repo = Repository::open(path)?;
     let head = repo.head()?;
     let branch_name = head.shorthand().unwrap_or("HEAD");
-    if let Some(ref url) = authed_url {
-        run_git_with_progress(
-            path,
-            &["push", "-u", url, branch_name, "--progress"],
-            &on_progress,
-            extra_env,
-        )
+    if let Some(ref a) = authed {
+        let args = a.build_args(&["push", "-u", &a.url, branch_name, "--progress"]);
+        let env = a.merge_env(extra_env);
+        run_git_with_progress(path, &args, &on_progress, &env)
     } else {
         run_git_with_progress(
             path,
@@ -373,6 +440,96 @@ pub fn push<F: Fn(&str)>(
             extra_env,
         )
     }
+}
+
+// ── Hook failure detection ────────────────────────────────────────────────────
+
+/// Known git-internal error strings that should NOT be classified as hook failures,
+/// even when the candidate hook file exists.
+const GIT_INTERNAL_ERRORS: &[&str] = &[
+    "nothing to commit",
+    "nothing added to commit",
+    "empty commit message",
+    "no changes added to commit",
+    "pathspec",
+    "did not match any file",
+    "unable to access",
+    "could not resolve host",
+    "Authentication failed",
+    "Permission denied",
+    "rejected",
+    "non-fast-forward",
+    "failed to push",
+];
+
+/// Map a git subcommand to the hook names that can fire during that command.
+fn candidate_hooks(subcommand: &str) -> &'static [&'static str] {
+    match subcommand {
+        "commit" => &["pre-commit", "prepare-commit-msg", "commit-msg"],
+        "push" => &["pre-push"],
+        "merge" => &["pre-merge-commit"],
+        "rebase" => &["pre-rebase"],
+        "checkout" | "switch" => &["post-checkout"],
+        _ => &[],
+    }
+}
+
+/// Resolve the hooks directory for the given repository.
+///
+/// Checks `core.hooksPath` first (used by husky, lefthook, pre-commit framework).
+/// Falls back to `.git/hooks/`.
+fn hooks_dir(path: &str) -> std::path::PathBuf {
+    // Try to read core.hooksPath
+    if let Ok(output) = git_cmd()
+        .args(["config", "core.hooksPath"])
+        .current_dir(path)
+        .output()
+    {
+        if output.status.success() {
+            let custom = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !custom.is_empty() {
+                let p = std::path::Path::new(&custom);
+                if p.is_absolute() {
+                    return p.to_path_buf();
+                } else {
+                    return std::path::Path::new(path).join(&custom);
+                }
+            }
+        }
+    }
+    std::path::Path::new(path).join(".git").join("hooks")
+}
+
+/// Detect whether a git command failure was caused by a hook.
+///
+/// Returns `Some(hook_name)` if a candidate hook file exists for the given
+/// subcommand AND the stderr doesn't contain known git-internal error strings.
+/// Returns `None` otherwise (the error should be treated as a generic git error).
+fn detect_hook_failure(path: &str, args: &[&str], stderr: &str) -> Option<String> {
+    let subcommand = args.first().copied().unwrap_or("");
+    let candidates = candidate_hooks(subcommand);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // If stderr matches a known git-internal error, it's not a hook failure
+    let lower = stderr.to_lowercase();
+    for pattern in GIT_INTERNAL_ERRORS {
+        if lower.contains(&pattern.to_lowercase()) {
+            return None;
+        }
+    }
+
+    // Check if any candidate hook file exists
+    let hooks = hooks_dir(path);
+    for hook_name in candidates {
+        let hook_path = hooks.join(hook_name);
+        if hook_path.exists() {
+            return Some(hook_name.to_string());
+        }
+    }
+
+    None
 }
 
 /// Run a git CLI command in the given repo directory.
@@ -396,8 +553,14 @@ pub(crate) fn run_git(
         .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Git(stderr.trim().to_string()));
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if let Some(hook_name) = detect_hook_failure(path, args, &stderr) {
+            return Err(AppError::HookFailed {
+                hook_name,
+                output: stderr,
+            });
+        }
+        return Err(AppError::Git(stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -488,7 +651,14 @@ pub(crate) fn run_git_with_progress<F: Fn(&str)>(
         .map_err(|e| AppError::Other(format!("Failed to wait for git: {e}")))?;
 
     if !status.success() {
-        return Err(AppError::Git(all_stderr.trim().to_string()));
+        let stderr_str = all_stderr.trim().to_string();
+        if let Some(hook_name) = detect_hook_failure(path, args, &stderr_str) {
+            return Err(AppError::HookFailed {
+                hook_name,
+                output: stderr_str,
+            });
+        }
+        return Err(AppError::Git(stderr_str));
     }
 
     let result = stdout_text.trim().to_string();
@@ -1141,8 +1311,10 @@ pub fn push_tag(
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
-    if let Some(url) = forge::authenticated_remote_url(path, profile_id) {
-        run_git(path, &["push", &url, name], extra_env)
+    if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
+        let args = authed.build_args(&["push", &authed.url, name]);
+        let env = authed.merge_env(extra_env);
+        run_git(path, &args, &env)
     } else {
         run_git(path, &["push", "origin", name], extra_env)
     }

@@ -40,7 +40,7 @@ function getAppWindow(): TauriWindow | null {
   return _appWindow;
 }
 
-export function Titlebar() {
+export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -79,18 +79,18 @@ export function Titlebar() {
         </span>
       </div>
 
-      {/* Center: Repo context */}
+      {/* Center: Repo context — hidden in settings */}
       <div className="flex flex-1 items-center min-w-0" data-tauri-drag-region>
-        <TitlebarRepoSwitcher />
+        {!settingsOpen && <TitlebarRepoSwitcher />}
       </div>
 
       {/* Right: Actions + Window controls */}
       <div className="flex items-center gap-0.5 pr-0">
-        {/* Change 5: Responsive action buttons group */}
-        <TitlebarActionsGroup />
+        {/* Action buttons — hidden in settings */}
+        {!settingsOpen && <TitlebarActionsGroup />}
 
-        {/* Separator */}
-        <div className="mx-1.5 h-4 w-px bg-border" />
+        {/* Separator — only shown when actions are visible */}
+        {!settingsOpen && <div className="mx-1.5 h-4 w-px bg-border" />}
 
         {/* Window controls — Change 7: replaced title attrs with Tooltip */}
         <Tooltip>
@@ -189,23 +189,22 @@ function TitlebarRepoSwitcher() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 rounded-md px-2.5 py-1 transition-colors hover:bg-secondary"
+        className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
       >
-        <span className="text-xs font-medium text-foreground">{repoName}</span>
+        <span className="font-medium text-foreground">{repoName}</span>
         {currentBranch && (
           <>
             <span className="text-faint">/</span>
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
               <GitBranch className="h-3 w-3" />
               {currentBranch}
             </span>
           </>
         )}
-        {/* Change 5: Commit count next to repo picker */}
         {commits.length > 0 && (
           <>
             <span className="text-faint">&middot;</span>
-            <span className="text-label text-faint">
+            <span className="text-faint">
               {commits.length.toLocaleString()}
             </span>
           </>

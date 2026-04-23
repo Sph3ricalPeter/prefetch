@@ -51,6 +51,10 @@ pub struct BranchInfo {
     pub is_head: bool,
     pub commit_id: String,
     pub short_commit_id: String,
+    /// Commits ahead of upstream (None if no upstream configured or remote branch).
+    pub ahead: Option<u32>,
+    /// Commits behind upstream (None if no upstream configured or remote branch).
+    pub behind: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]

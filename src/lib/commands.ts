@@ -220,12 +220,16 @@ export async function getForgeStatus(): Promise<ForgeStatus> {
   return tracedInvoke<ForgeStatus>("get_forge_status");
 }
 
-export async function saveForgeToken(host: string, token: string): Promise<void> {
-  return tracedInvoke<void>("save_forge_token", { host, token });
+export async function saveForgeToken(host: string, token: string, profileId?: string): Promise<void> {
+  return tracedInvoke<void>("save_forge_token", { host, token, profileId });
 }
 
-export async function deleteForgeToken(host: string): Promise<void> {
-  return tracedInvoke<void>("delete_forge_token", { host });
+export async function deleteForgeToken(host: string, profileId?: string): Promise<void> {
+  return tracedInvoke<void>("delete_forge_token", { host, profileId });
+}
+
+export async function checkProfileToken(profileId: string, host: string): Promise<boolean> {
+  return tracedInvoke<boolean>("check_profile_token", { profileId, host });
 }
 
 export async function getPrForBranch(branch: string): Promise<PrInfo | null> {
