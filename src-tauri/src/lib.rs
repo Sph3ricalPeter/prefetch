@@ -39,8 +39,9 @@ pub fn run() {
             // and set overlay title bar style so content extends behind the title bar.
             #[cfg(target_os = "macos")]
             {
-                use tauri::TitleBarStyle;
-                let window = app.get_webview_window("main")
+                use tauri::{Manager, TitleBarStyle};
+                let window = app
+                    .get_webview_window("main")
                     .expect("main window not found");
                 window.set_decorations(true)?;
                 window.set_title_bar_style(TitleBarStyle::Overlay)?;
