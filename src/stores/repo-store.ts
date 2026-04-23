@@ -548,7 +548,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     });
     try {
       await pushRepo();
-      set({ isLoading: false });
+      const repoData = await fetchRepoData();
+      set({ ...repoData, isLoading: false });
       toast.success("Push complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
@@ -575,7 +576,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     });
     try {
       await forcePushRepo();
-      set({ isLoading: false });
+      const repoData = await fetchRepoData();
+      set({ ...repoData, isLoading: false });
       toast.success("Force push complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
