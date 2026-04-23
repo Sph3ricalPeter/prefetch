@@ -108,11 +108,18 @@ function truncateText(
 ): string {
   if (maxWidth <= 0) return "";
   if (ctx.measureText(text).width <= maxWidth) return text;
-  let t = text;
-  while (t.length > 0 && ctx.measureText(t + "\u2026").width > maxWidth) {
-    t = t.slice(0, -1);
+  // Binary search for the longest prefix that fits with ellipsis — O(log n) measureText calls
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ctx.measureText(text.slice(0, mid) + "\u2026").width <= maxWidth) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
   }
-  return t + "\u2026";
+  return lo > 0 ? text.slice(0, lo) + "\u2026" : "\u2026";
 }
 
 /** Draw a small tag icon (matches lucide Tag shape) */
@@ -546,6 +553,31 @@ export function CommitGraphCanvas({
     [commitColorMap],
   );
 
+  // Pre-compute HEAD row info to avoid O(n) findIndex inside draw() on every frame
+  const headInfo = useMemo(() => {
+    let idx = headCommitId
+      ? commits.findIndex((c) => c.id === headCommitId || c.id.startsWith(headCommitId))
+      : -1;
+    if (idx < 0) {
+      const headBranch = branches.find((b) => b.is_head && !b.is_remote);
+      if (headBranch) {
+        idx = commits.findIndex((c) => c.id.startsWith(headBranch.commit_id));
+      }
+    }
+    const isDetached = !branches.some((b) => b.is_head && !b.is_remote);
+    const highlightColor = isDetached
+      ? COLOR_MUTED
+      : (idx >= 0 && commits[idx] ? (commitColorMap.get(commits[idx].id) ?? laneColor(commits[idx].lane)) : COLOR_FG);
+    return { row: idx >= 0 ? idx + rowOffset : -1, isDetached, highlightColor };
+  }, [headCommitId, commits, branches, rowOffset, commitColorMap]);
+
+  // Pre-compute selected row to avoid O(n) findIndex inside draw() on every frame
+  const selectedRowIdx = useMemo(() => {
+    if (!selectedCommitId) return -1;
+    const idx = commits.findIndex((c) => c.id === selectedCommitId);
+    return idx >= 0 ? idx + rowOffset : -1;
+  }, [selectedCommitId, commits, rowOffset]);
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const scroll = scrollRef.current;
@@ -580,24 +612,9 @@ export function CommitGraphCanvas({
     const avatarHitAreas: AvatarHitArea[] = [];
 
     // --- HEAD row highlight (permanent "you are here") ---
-    // Use headCommitId from the backend -- works for both branch checkout and detached HEAD (tag checkout)
-    let headCommitIdx = headCommitId
-      ? commits.findIndex((c) => c.id === headCommitId || c.id.startsWith(headCommitId))
-      : -1;
-    // Fallback: try via branch is_head flag
-    if (headCommitIdx < 0) {
-      const headBranch = branches.find((b) => b.is_head && !b.is_remote);
-      if (headBranch) {
-        headCommitIdx = commits.findIndex((c) => c.id.startsWith(headBranch.commit_id));
-      }
-    }
-    const headRow = headCommitIdx >= 0 ? headCommitIdx + rowOffset : -1;
-    const isDetachedHead = !branches.some((b) => b.is_head && !b.is_remote);
-
-    // HEAD highlight color: branch color when on a branch, neutral gray when detached (tag checkout)
-    const headHighlightColor = isDetachedHead
-      ? COLOR_MUTED
-      : (commits[headCommitIdx] ? getCommitColor(commits[headCommitIdx]) : COLOR_FG);
+    const headRow = headInfo.row;
+    const isDetachedHead = headInfo.isDetached;
+    const headHighlightColor = headInfo.highlightColor;
 
     // Change 1: All row highlights use roundRect instead of fillRect
     if (headRow >= firstVisibleRow && headRow <= lastVisibleRow) {
@@ -610,9 +627,7 @@ export function CommitGraphCanvas({
     }
 
     // --- Selected row highlight ---
-    const selectedRow = selectedCommitId
-      ? commits.findIndex((c) => c.id === selectedCommitId) + rowOffset
-      : -1;
+    const selectedRow = selectedRowIdx;
 
     if (selectedRow >= firstVisibleRow && selectedRow <= lastVisibleRow) {
       if (selectedRow === headRow) {
@@ -661,45 +676,52 @@ export function CommitGraphCanvas({
       }
     }
 
-    // --- Edges (offset by rowOffset) ---
+    // --- Edges (offset by rowOffset) — batched by color to minimize stroke() calls ---
     ctx.lineWidth = 1.5;
+    const edgesByColor = new Map<string, { fX: number; fY: number; tX: number; tY: number; sameLane: boolean }[]>();
     for (const edge of edges) {
       const fromRow = edge.from_row + rowOffset;
       const toRow = edge.to_row + rowOffset;
       if (fromRow > lastVisibleRow + 5 || toRow < firstVisibleRow - 5) continue;
 
-      const fromX = laneX(edge.from_lane);
-      const fromY = fromRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
-      const toX = laneX(edge.to_lane);
-      const toY = toRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
-
       // Color first-parent edges by source commit (branch continuity),
       // merge-parent edges by target commit (shows incoming branch)
+      let color: string;
       if (edge.edge_type === "Merge") {
         const toCommit = commits[edge.to_row];
-        ctx.strokeStyle = toCommit ? getCommitColor(toCommit) : laneColor(edge.to_lane);
+        color = toCommit ? getCommitColor(toCommit) : laneColor(edge.to_lane);
       } else {
         const fromCommit = commits[edge.from_row];
-        ctx.strokeStyle = fromCommit ? getCommitColor(fromCommit) : laneColor(edge.from_lane);
-      }
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.moveTo(fromX, fromY);
-
-      if (edge.from_lane === edge.to_lane) {
-        // Straight vertical line
-        ctx.lineTo(toX, toY);
-      } else {
-        // Curved connector between different lanes
-        // Use a cubic bezier: leave source vertically, arrive at target vertically
-        const cp1Y = fromY + (toY - fromY) * 0.4;
-        const cp2Y = fromY + (toY - fromY) * 0.6;
-        ctx.bezierCurveTo(fromX, cp1Y, toX, cp2Y, toX, toY);
+        color = fromCommit ? getCommitColor(fromCommit) : laneColor(edge.from_lane);
       }
 
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      let group = edgesByColor.get(color);
+      if (!group) { group = []; edgesByColor.set(color, group); }
+      group.push({
+        fX: laneX(edge.from_lane),
+        fY: fromRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2,
+        tX: laneX(edge.to_lane),
+        tY: toRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2,
+        sameLane: edge.from_lane === edge.to_lane,
+      });
     }
+    ctx.globalAlpha = 0.7;
+    for (const [color, segs] of edgesByColor) {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      for (const s of segs) {
+        ctx.moveTo(s.fX, s.fY);
+        if (s.sameLane) {
+          ctx.lineTo(s.tX, s.tY);
+        } else {
+          const cp1Y = s.fY + (s.tY - s.fY) * 0.4;
+          const cp2Y = s.fY + (s.tY - s.fY) * 0.6;
+          ctx.bezierCurveTo(s.fX, cp1Y, s.tX, cp2Y, s.tX, s.tY);
+        }
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
 
     // --- WIP row ---
     if (hasWip && firstVisibleRow === 0) {
@@ -959,7 +981,7 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, selectedCommitId, headCommitId, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches, isWipSelected, fileStatusCount, timeGroupBoundaries]);
+  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);

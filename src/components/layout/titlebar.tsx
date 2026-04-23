@@ -95,7 +95,7 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
       </div>
 
       {/* Right: Actions + Window controls */}
-      <div className="flex items-center gap-0.5 pr-0">
+      <div className={`flex items-center gap-0.5 ${IS_MAC ? "pr-2.5" : "pr-0"}`}>
         {/* Action buttons — hidden in settings */}
         {!settingsOpen && <TitlebarActionsGroup />}
 
