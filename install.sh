@@ -59,18 +59,28 @@ fi
 
 # Remove old version if present
 if [ -d "/Applications/$APP_NAME" ]; then
-  rm -rf "/Applications/$APP_NAME"
+  echo "  Removing previous installation..."
+  sudo rm -rf "/Applications/$APP_NAME"
 fi
 
-cp -R "$MOUNT_POINT/$APP_NAME" /Applications/
+echo "  Copying $APP_NAME to /Applications (may require password)..."
+sudo cp -R "$MOUNT_POINT/$APP_NAME" /Applications/
 hdiutil detach "$MOUNT_POINT" -quiet
 
 # Cleanup
 rm -rf "$TMPDIR"
 
 # Remove quarantine attribute so it opens without Gatekeeper warning
-xattr -rd com.apple.quarantine "/Applications/$APP_NAME" 2>/dev/null || true
+sudo xattr -cr "/Applications/$APP_NAME" 2>/dev/null || true
 
-echo ""
-echo "  Prefetch $VERSION installed to /Applications/$APP_NAME"
-echo ""
+# Verify installation
+if [ -d "/Applications/$APP_NAME" ]; then
+  echo ""
+  echo "  ✓ Prefetch $VERSION installed to /Applications/$APP_NAME"
+  echo ""
+else
+  echo ""
+  echo "  ✗ Installation failed — app not found in /Applications/" >&2
+  echo ""
+  exit 1
+fi

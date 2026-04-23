@@ -436,7 +436,7 @@ export function CommitGraphCanvas({
 }: CommitGraphCanvasProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [hoveredRow, setHoveredRow] = useState<number | null>(null);
+  const hoveredRowRef = useRef<number | null>(null);
   const rafRef = useRef<number>(0);
   const badgeHitAreasRef = useRef<BadgeHitArea[]>([]);
   const bodyHitAreasRef = useRef<BodyHitArea[]>([]);       // Change 6
@@ -638,6 +638,7 @@ export function CommitGraphCanvas({
       ctx.fill();
     }
 
+    const hoveredRow = hoveredRowRef.current;
     if (
       hoveredRow !== null &&
       hoveredRow >= firstVisibleRow &&
@@ -958,7 +959,7 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, selectedCommitId, headCommitId, hoveredRow, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches, isWipSelected, fileStatusCount, timeGroupBoundaries]);
+  }, [commits, edges, selectedCommitId, headCommitId, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, branches, isWipSelected, fileStatusCount, timeGroupBoundaries]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -1032,7 +1033,11 @@ export function CommitGraphCanvas({
       const y = my + scroll.scrollTop;
       const row = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
 
-      setHoveredRow(row >= 0 && row < totalRows ? row : null);
+      const newHovered = row >= 0 && row < totalRows ? row : null;
+      if (newHovered !== hoveredRowRef.current) {
+        hoveredRowRef.current = newHovered;
+        requestDrawRef.current();
+      }
 
       // Change cursor to pointer when hovering a branch badge
       const overBadge = badgeHitAreasRef.current.some(
@@ -1094,7 +1099,8 @@ export function CommitGraphCanvas({
   );
 
   const handleMouseLeave = useCallback(() => {
-    setHoveredRow(null);
+    hoveredRowRef.current = null;
+    requestDrawRef.current();
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     setCanvasHover(null);
   }, []);
