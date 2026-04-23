@@ -27,10 +27,6 @@ jobs:
             runner: macos-latest
             platform: macos
             args: --target aarch64-apple-darwin
-          - label: macOS x64
-            runner: macos-13
-            platform: macos
-            args: --target x86_64-apple-darwin
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -44,7 +40,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -64,8 +60,7 @@ jobs:
           releaseBody: |
             Download the installer for your platform:
             - **Windows**: `.msi` or `.exe` (NSIS installer)
-            - **macOS Apple Silicon**: `_aarch64.dmg`
-            - **macOS Intel**: `_x64.dmg`
+            - **macOS Apple Silicon**: `.dmg`
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
