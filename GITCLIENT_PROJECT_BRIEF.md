@@ -76,20 +76,18 @@ A Rust background thread runs `git fetch --all` on a configurable timer (default
 
 ## Feature scope
 
-### What shipped (v0.1 → v0.3)
+### What shipped (v0.1 → v0.5)
 
-> Original version boundaries didn't hold — features shipped faster than planned. Current release: **v0.3.0**.
+> Original version boundaries didn't hold — features shipped faster than planned. Current release: **v0.5.0**.
 
-**Core (originally v0.1):**
+**Core (v0.1–v0.3):**
 1. ✅ **Commit graph** — Canvas API, virtualized, lane algorithm
 2. ✅ **Branch list** — checkout on click, smart remote tracking
 3. ✅ **Fetch / pull / push** — with live progress indicators
-4. ✅ **Stage / unstage files** — file-level (hunk staging deferred to diff overhaul)
-5. ✅ **Diff viewer** — read-only, plain HTML with grouped hunks (Shiki deferred to diff overhaul)
+4. ✅ **Stage / unstage files** — file-level staging
+5. ✅ **Diff viewer** — read-only, plain HTML with grouped hunks
 6. ✅ **Commit** — message + description, amend
 7. ✅ **Stash** — push / pop / drop
-
-**Shipped beyond original MVP:**
 8. ✅ **Tags** — create, delete, push
 9. ✅ **Cherry-pick & rebase** — cherry-pick, non-interactive rebase, reset (soft/hard)
 10. ✅ **Undo** via reflog (Ctrl+Z)
@@ -99,6 +97,18 @@ A Rust background thread runs `git fetch --all` on a configurable timer (default
 14. ✅ **GitHub / GitLab PAT** — OS keychain storage, per-profile tokens, PR badges on branches
 15. ✅ **Profiles** — full CRUD, auto-switch by repo path, SSH key injection, env var identity
 16. ⚠️ **Git LFS** — initialize, track/untrack, prune, file badges (~85%, missing pull/fetch with progress)
+
+**v0.4.0 — Polish & infrastructure:**
+17. ✅ **Settings redesign** — full-page settings with extensible layout
+18. ✅ **Git hooks UX** — detect hook failures, show hook name + output in toast
+19. ✅ **Branch divergence** — ahead/behind counts in branch list
+20. ✅ **macOS fixes** — native titlebar, traffic lights, Intel build dropped
+
+**v0.5.0 — Diff & staging overhaul + rebase:**
+21. ✅ **Shiki syntax-highlighted diffs** — VS Code grammar engine, dark theme, language detection
+22. ✅ **Hunk/line staging** — CodeMirror 6 interactive diff with line-level click selection, bulk hunk staging
+23. ✅ **Conflict editor** — three-pane CodeMirror UI (ours/theirs/output), chunk & line toggles, drag-to-resize, works for merge and rebase conflicts
+24. ✅ **Rebase with conflict handling** — `rebase_onto()` with conflict detection, progress tracking, conflict editor integration
 
 **Infrastructure:**
 - ✅ Background auto-fetch (5 min)
@@ -111,24 +121,25 @@ Errors surfaced via **toast notifications** (bottom-right). Auth failures, push 
 
 One repo at a time with recent-repos quick-switch. Tabbed multi-repo is a future consideration.
 
-### Next up
+### Next up (v1.0.0)
 
-17. **LFS pull/fetch** — complete the remaining 15% of LFS (pull/fetch with progress streaming)
-18. **Diff & staging overhaul** — Shiki for read-only diffs, CodeMirror 6 for hunk/line staging, merge conflict editor upgrade
-19. **Git hooks UX** — detect hook failures, show hook name + output in toast (not generic error)
-20. **Command palette** (Cmd+K) — fuzzy-search all actions, keyboard-driven workflows
+25. **Interactive rebase editor** — commit reorder, squash, drop, edit via drag-and-drop (#18)
+26. **Right-click menu expansion** — full context menu for branches, commits, files (#16)
+27. **UI polish** — visual refinements, spacing, animations (#15)
+28. **IPC security hardening** — lock down Tauri config before stable release (#12)
+29. **GitHub/GitLab OAuth** — upgrade from PAT to OAuth per profile (#7)
+30. **Stashes in commit graph** — visual stash badges similar to tag badges (#14)
 
-### Future
+### Future (v2.0.0)
 
-21. **GitHub/GitLab OAuth** — upgrade from PAT to OAuth per profile (requires app registration)
-22. **Branch divergence indicators** — ahead/behind counts in branch list
-23. **Remote management** — add, remove, rename remotes
-24. **Git config editor** — global and local, UI for user.name / user.email / default branch
+31. **LFS pull/fetch** — complete the remaining 15% of LFS (pull/fetch with progress streaming) (#1)
+32. **Command palette** (Cmd+K) — fuzzy-search all actions, keyboard-driven workflows (#3)
+33. **Remote management** — add, remove, rename remotes (#9)
+34. **Git config editor** — global and local, UI for user.name / user.email / default branch (#10)
+35. **Worktree support** (#17)
 
-### Explicitly out of scope (not even v1)
+### Explicitly out of scope
 
-- Interactive rebase with commit reordering
-- Worktrees UI
 - Bitbucket / Azure DevOps
 - AI commit messages (easy to add later via Anthropic API)
 - Team collaboration / cloud workspaces
