@@ -654,6 +654,18 @@ function ConflictRow({
         </TooltipTrigger>
         <TooltipContent>Keep their version</TooltipContent>
       </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={(e) => { e.stopPropagation(); onSelect(); }}
+            disabled={disabled}
+            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
+          >
+            Edit
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Open merge editor</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

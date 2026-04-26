@@ -4,7 +4,7 @@ use crate::events;
 use crate::git::{
     repository,
     types::{
-        BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData, StashInfo,
+        self, BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData, StashInfo,
         TagInfo, UndoAction,
     },
 };
@@ -368,6 +368,37 @@ pub async fn stage_files(paths: Vec<String>, state: State<'_, AppState>) -> Resu
 pub async fn unstage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
     offload(move || repository::unstage_files(&repo, &paths)).await
+}
+
+#[tauri::command]
+pub async fn stage_patch(patch: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    offload(move || repository::stage_patch(&repo, &patch)).await
+}
+
+#[tauri::command]
+pub async fn unstage_patch(patch: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    offload(move || repository::unstage_patch(&repo, &patch)).await
+}
+
+#[tauri::command]
+pub async fn get_conflict_contents(
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<types::ConflictContents, AppError> {
+    let repo = repo_path(&state)?;
+    offload(move || repository::get_conflict_contents(&repo, &file_path)).await
+}
+
+#[tauri::command]
+pub async fn resolve_conflict_manual(
+    file_path: String,
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    offload(move || repository::resolve_conflict_with_content(&repo, &file_path, &content)).await
 }
 
 #[tauri::command]

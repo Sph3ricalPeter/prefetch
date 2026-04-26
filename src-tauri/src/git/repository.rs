@@ -3,8 +3,8 @@ use crate::git::forge;
 use crate::git::graph::assign_lanes;
 use crate::git::profile::ActiveProfile;
 use crate::git::types::{
-    BranchInfo, CoAuthor, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff, FileStatus,
-    GraphData, StashInfo, TagInfo, UndoAction,
+    self as types, BranchInfo, CoAuthor, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff,
+    FileStatus, GraphData, StashInfo, TagInfo, UndoAction,
 };
 use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
@@ -882,10 +882,14 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
 
 fn parse_unified_diff(diff_text: &str) -> Vec<DiffHunk> {
     let mut hunks: Vec<DiffHunk> = Vec::new();
+    let mut old_counter: u32 = 0;
+    let mut new_counter: u32 = 0;
 
     for line in diff_text.lines() {
         if line.starts_with("@@") {
             let (old_start, old_lines, new_start, new_lines) = parse_hunk_header(line);
+            old_counter = old_start;
+            new_counter = new_start;
             hunks.push(DiffHunk {
                 header: line.to_string(),
                 old_start,
@@ -910,11 +914,31 @@ fn parse_unified_diff(diff_text: &str) -> Vec<DiffHunk> {
                     line.to_string()
                 };
 
+            let (old_lineno, new_lineno) = match origin {
+                '+' => {
+                    let n = new_counter;
+                    new_counter += 1;
+                    (None, Some(n))
+                }
+                '-' => {
+                    let o = old_counter;
+                    old_counter += 1;
+                    (Some(o), None)
+                }
+                _ => {
+                    let o = old_counter;
+                    let n = new_counter;
+                    old_counter += 1;
+                    new_counter += 1;
+                    (Some(o), Some(n))
+                }
+            };
+
             hunk.lines.push(DiffLine {
                 origin,
                 content,
-                old_lineno: None,
-                new_lineno: None,
+                old_lineno,
+                new_lineno,
             });
         }
     }
@@ -1005,6 +1029,174 @@ pub fn unstage_files(path: &str, files: &[String]) -> Result<(), AppError> {
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     args.extend(file_refs);
     run_git(path, &args, &[])?;
+    Ok(())
+}
+
+/// Stage a partial patch (hunk/line staging) using `git apply --cached`.
+pub fn stage_patch(repo_path: &str, patch_text: &str) -> Result<(), AppError> {
+    apply_patch_impl(repo_path, patch_text, false)
+}
+
+/// Unstage a partial patch using `git apply --cached --reverse`.
+pub fn unstage_patch(repo_path: &str, patch_text: &str) -> Result<(), AppError> {
+    apply_patch_impl(repo_path, patch_text, true)
+}
+
+fn apply_patch_impl(repo_path: &str, patch_text: &str, reverse: bool) -> Result<(), AppError> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut args = vec!["apply", "--cached", "--unidiff-zero"];
+    if reverse {
+        args.push("--reverse");
+    }
+    args.push("-");
+
+    let mut child = git_cmd()
+        .args(&args)
+        .current_dir(repo_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Other(format!("Failed to spawn git apply: {e}")))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(patch_text.as_bytes())
+            .map_err(|e| AppError::Other(format!("Failed to write patch to stdin: {e}")))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| AppError::Other(format!("Failed to wait for git apply: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::Git(format!("git apply failed: {stderr}")));
+    }
+
+    Ok(())
+}
+
+/// Get the base, ours, and theirs versions of a conflicted file,
+/// along with commit hashes and branch names for display.
+pub fn get_conflict_contents(
+    repo_path: &str,
+    file_path: &str,
+) -> Result<types::ConflictContents, AppError> {
+    // :1: = base (common ancestor), :2: = ours, :3: = theirs
+    let base = git_show_stage(repo_path, 1, file_path).ok();
+    let ours = git_show_stage(repo_path, 2, file_path)
+        .unwrap_or_default();
+    let theirs = git_show_stage(repo_path, 3, file_path)
+        .unwrap_or_default();
+
+    // Ours commit info
+    let ours_commit_id = run_git(repo_path, &["rev-parse", "--short", "HEAD"], &[])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let ours_branch = run_git(repo_path, &["symbolic-ref", "--short", "HEAD"], &[])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| ours_commit_id.clone());
+
+    // Theirs commit info (try MERGE_HEAD first, then REBASE_HEAD)
+    let theirs_ref = if std::path::Path::new(repo_path).join(".git/MERGE_HEAD").exists() {
+        "MERGE_HEAD"
+    } else {
+        "REBASE_HEAD"
+    };
+    let theirs_commit_id = run_git(repo_path, &["rev-parse", "--short", theirs_ref], &[])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    // Try to extract theirs branch name from MERGE_MSG (most reliable),
+    // then fallback to name-rev (validating output), then commit hash.
+    let theirs_branch = extract_branch_from_merge_msg(repo_path)
+        .or_else(|| {
+            run_git(
+                repo_path,
+                &["name-rev", "--name-only", "--no-undefined", theirs_ref],
+                &[],
+            )
+            .ok()
+            .map(|s| s.trim().to_string())
+            // name-rev can leak stderr warnings into stdout via run_git —
+            // filter out anything that doesn't look like a branch name.
+            .filter(|s| !s.is_empty() && !s.contains(' ') && !s.contains("Could not"))
+            .map(|s| {
+                s.strip_prefix("remotes/origin/")
+                    .unwrap_or(&s)
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|| theirs_commit_id.clone());
+
+    Ok(types::ConflictContents {
+        base,
+        ours,
+        theirs,
+        ours_commit_id,
+        theirs_commit_id,
+        ours_branch,
+        theirs_branch,
+    })
+}
+
+/// Extract the theirs branch name from `.git/MERGE_MSG`.
+///
+/// Git writes this file during merge and it typically contains lines like:
+/// - `Merge branch 'feature-x'`
+/// - `Merge branch 'feature-x' into main`
+/// - `Merge remote-tracking branch 'origin/feature-x'`
+fn extract_branch_from_merge_msg(repo_path: &str) -> Option<String> {
+    let msg_path = std::path::Path::new(repo_path).join(".git/MERGE_MSG");
+    let content = std::fs::read_to_string(msg_path).ok()?;
+    let first_line = content.lines().next()?;
+
+    // "Merge branch 'branch-name'" or "Merge branch 'branch-name' into ..."
+    if let Some(rest) = first_line.strip_prefix("Merge branch '") {
+        return rest.split('\'').next().map(|s| s.to_string());
+    }
+    // "Merge remote-tracking branch 'origin/branch-name'"
+    if let Some(rest) = first_line.strip_prefix("Merge remote-tracking branch '") {
+        let full = rest.split('\'').next()?;
+        return Some(
+            full.strip_prefix("origin/")
+                .unwrap_or(full)
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn git_show_stage(repo_path: &str, stage: u8, file_path: &str) -> Result<String, AppError> {
+    let spec = format!(":{stage}:{file_path}");
+    let output = git_cmd()
+        .args(["show", &spec])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git show: {e}")))?;
+
+    if !output.status.success() {
+        return Err(AppError::Git(format!(
+            "Stage {stage} not available for {file_path}"
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Resolve a conflict by writing custom content and staging the file.
+pub fn resolve_conflict_with_content(
+    repo_path: &str,
+    file_path: &str,
+    content: &str,
+) -> Result<(), AppError> {
+    let abs_path = std::path::Path::new(repo_path).join(file_path);
+    std::fs::write(&abs_path, content)
+        .map_err(|e| AppError::Other(format!("Failed to write resolved file: {e}")))?;
+    run_git(repo_path, &["add", "--", file_path], &[])?;
     Ok(())
 }
 
@@ -1133,10 +1325,11 @@ pub fn get_commit_file_diff(
     })
 }
 
-/// List all stashes.
+/// List all stashes with commit and parent IDs.
 pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
+    // Use --format to get: <stash_hash>\t<parent_hash>\t<refname>\t<message>
     let output = git_cmd()
-        .args(["stash", "list"])
+        .args(["stash", "list", "--format=%H%x09%P%x09%gd%x09%gs"])
         .current_dir(path)
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
@@ -1144,12 +1337,23 @@ pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
     let text = String::from_utf8_lossy(&output.stdout);
     let mut stashes = Vec::new();
 
-    for line in text.lines() {
-        // Parse "stash@{0}: WIP on main: abc1234 message"
-        if let (Some(idx_start), Some(idx_end)) = (line.find('{'), line.find('}')) {
-            let index: usize = line[idx_start + 1..idx_end].parse().unwrap_or(0);
-            let message = line[idx_end + 2..].trim().to_string();
-            stashes.push(StashInfo { index, message });
+    for (idx, line) in text.lines().enumerate() {
+        let parts: Vec<&str> = line.splitn(4, '\t').collect();
+        if parts.len() >= 4 {
+            let commit_id = parts[0].to_string();
+            // Parent field may contain multiple parents separated by spaces; take the first
+            let parent_commit_id = parts[1]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let message = parts[3].to_string();
+            stashes.push(StashInfo {
+                index: idx,
+                message,
+                commit_id,
+                parent_commit_id,
+            });
         }
     }
 

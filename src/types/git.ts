@@ -82,12 +82,36 @@ export interface DiffLine {
 export interface StashInfo {
   index: number;
   message: string;
+  commit_id: string;
+  parent_commit_id: string;
 }
 
 export interface TagInfo {
   name: string;
   commit_id: string;
   message: string | null;
+}
+
+export interface ConflictContents {
+  /** Base (common ancestor) — null if file didn't exist in base */
+  base: string | null;
+  /** Ours (current branch version) */
+  ours: string;
+  /** Theirs (incoming branch version) */
+  theirs: string;
+  /** Short commit hash for ours (HEAD) */
+  ours_commit_id: string;
+  /** Short commit hash for theirs (MERGE_HEAD / REBASE_HEAD) */
+  theirs_commit_id: string;
+  /** Branch name for ours (current branch) */
+  ours_branch: string;
+  /** Branch or ref name for theirs (incoming) */
+  theirs_branch: string;
+}
+
+export interface HunkLineSelection {
+  hunkIndex: number;
+  lineIndex: number;
 }
 
 export interface ConflictState {

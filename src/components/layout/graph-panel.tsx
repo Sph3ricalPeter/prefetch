@@ -11,6 +11,7 @@ import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
+import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import {
   Tooltip,
@@ -33,6 +34,7 @@ export function GraphPanel() {
   const tags = useRepoStore((s) => s.tags);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
   const headCommitId = useRepoStore((s) => s.headCommitId);
+  const selectedFileStaged = useRepoStore((s) => s.selectedFileStaged);
   const largeDiffPending = useRepoStore((s) => s.largeDiffPending);
   const diffLoading = useRepoStore((s) => s.diffLoading);
 
@@ -57,7 +59,9 @@ export function GraphPanel() {
   const resetTo = useRepoStore((s) => s.resetTo);
   const abortOp = useRepoStore((s) => s.abortOperation);
   const continueOp = useRepoStore((s) => s.continueOperation);
+  const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
+  const selectStash = useRepoStore((s) => s.selectStash);
 
   const [commitContextMenu, setCommitContextMenu] = useState<{
     commitId: string;
@@ -179,6 +183,10 @@ export function GraphPanel() {
 
   const showDiff = activeDiff !== null;
   const showLargeDiffGuard = largeDiffPending !== null;
+  const isConflictedFile = selectedFilePath
+    ? fileStatuses.some((f) => f.path === selectedFilePath && f.is_conflicted)
+    : false;
+  const showConflictEditor = isConflictedFile && !selectedCommitId && selectedStashIndex == null;
 
   return (
     <div className="relative flex h-full flex-col bg-background">
@@ -205,26 +213,36 @@ export function GraphPanel() {
 
       {/* Conflict banner */}
       {conflictState?.in_progress && (() => {
-        const unresolvedCount = fileStatuses.filter((f) => f.is_conflicted).length;
+        const conflictedFiles = fileStatuses.filter((f) => f.is_conflicted);
+        const unresolvedCount = conflictedFiles.length;
         return (
           <div className="flex items-center gap-2 border-b border-yellow-500/30 bg-yellow-500/10 px-4 py-2">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
             <span className="flex-1 text-xs text-yellow-200">
               {conflictState.operation.charAt(0).toUpperCase() + conflictState.operation.slice(1)} in progress
-              {unresolvedCount > 0 && (
-                <> — <span className="font-medium text-yellow-100">{unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""} to resolve</span></>
-              )}
             </span>
+            {unresolvedCount > 0 && (
+              <button
+                onClick={() => {
+                  const first = conflictedFiles[0];
+                  if (first) selectFile(first.path, false);
+                }}
+                title="Go to first conflict"
+                className="rounded-md bg-yellow-500/20 px-3 py-1 text-xs font-medium text-yellow-100 transition-colors hover:bg-yellow-500/30"
+              >
+                {unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""} to resolve
+              </button>
+            )}
             <button
               onClick={continueOp}
               disabled={unresolvedCount > 0}
-              className="rounded px-2 py-0.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded-md bg-secondary px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Continue
             </button>
             <button
               onClick={abortOp}
-              className="rounded px-2 py-0.5 text-xs font-medium text-red-400 hover:bg-destructive/20 transition-colors"
+              className="rounded-md bg-red-500/20 px-3 py-1 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/30"
             >
               Abort
             </button>
@@ -247,9 +265,19 @@ export function GraphPanel() {
               Load anyway
             </button>
           </div>
+        ) : showConflictEditor && selectedFilePath ? (
+          <ConflictEditor filePath={selectedFilePath} />
         ) : showDiff ? (
           <div className="h-full overflow-auto">
-            <DiffViewer diff={activeDiff} />
+            <DiffViewer
+              diff={activeDiff}
+              filePath={selectedFilePath ?? activeDiff.path}
+              mode={
+                selectedCommitId || selectedStashIndex != null || selectedFileStaged
+                  ? "readonly"
+                  : "interactive"
+              }
+            />
           </div>
         ) : (
           <CommitGraphCanvas
@@ -267,6 +295,7 @@ export function GraphPanel() {
             fileStatusCount={fileStatuses.length}
             isWipSelected={selectedCommitId === null && selectedStashIndex === null}
             onClickWip={() => { clearSelection(); loadStatus(); }}
+            onSelectStash={(index) => selectStash(index)}
             onCommitContextMenu={(commitId, x, y) => setCommitContextMenu({ commitId, x, y })}
           />
         )}

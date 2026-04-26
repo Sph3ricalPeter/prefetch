@@ -2,6 +2,8 @@
 
 **GitKraken UX, Linear design, MIT licensed, no subscription.**
 
+> ⚠️ **Alpha software** — This is an early-stage project and **will** have bugs. Prefetch is primarily a personal GitKraken replacement built for my own workflow. Use at your own risk.
+
 A desktop git client built for developers who want a visual commit graph, profile-based multi-account support, and a fast native app — without a monthly subscription.
 
 <!-- Screenshot coming soon -->
@@ -90,6 +92,10 @@ git push origin v0.1.1
 ```
 
 This builds Windows (.exe) and macOS (.dmg) installers and uploads them to GitHub Releases.
+
+## Contributing
+
+Contributions are **not accepted** at this time. This is a personal project and I'm not looking for outside contributions. Feel free to fork it and make it your own though!
 
 ## License
 

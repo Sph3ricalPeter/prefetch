@@ -369,6 +369,39 @@ function drawMergedBranchPill(
   return pillWidth;
 }
 
+/** Draw a small stash/archive icon (layers/stack) */
+function drawStashIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+): number {
+  const w = 12;
+  const h = 9;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  // Three stacked horizontal lines (archive/layers icon)
+  ctx.beginPath();
+  // Top layer (diamond shape)
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + w / 2, y - h / 2);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w / 2, y + h / 2);
+  ctx.closePath();
+  ctx.stroke();
+  // Middle line
+  ctx.beginPath();
+  ctx.moveTo(x, y + 2);
+  ctx.lineTo(x + w / 2, y + h / 2 + 2);
+  ctx.lineTo(x + w, y + 2);
+  ctx.stroke();
+  ctx.restore();
+  return w + 5;
+}
+
 /** Stored badge position for hit testing */
 interface BadgeHitArea {
   x: number;
@@ -377,6 +410,7 @@ interface BadgeHitArea {
   height: number;
   branchName: string;
   row: number;
+  stashIndex?: number;
 }
 
 /** Stored body-text position for hover tooltip (Change 6) */
@@ -421,6 +455,7 @@ interface CommitGraphCanvasProps {
   fileStatusCount: number;
   isWipSelected: boolean;
   onClickWip: () => void;
+  onSelectStash?: (index: number) => void;
   onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
 }
 
@@ -439,6 +474,7 @@ export function CommitGraphCanvas({
   fileStatusCount,
   isWipSelected,
   onClickWip,
+  onSelectStash,
   onCommitContextMenu,
 }: CommitGraphCanvasProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -489,8 +525,19 @@ export function CommitGraphCanvas({
     return map;
   }, [tags, commits]);
 
-  // Stashes don't have commit_id mapping yet -- future: map to commits
-  void stashes;
+  const stashMap = useMemo(() => {
+    const map = new Map<string, StashInfo[]>();
+    for (const s of stashes) {
+      if (!s.parent_commit_id) continue;
+      const commit = commits.find((c) => c.id.startsWith(s.parent_commit_id));
+      if (commit) {
+        const existing = map.get(commit.id) ?? [];
+        existing.push(s);
+        map.set(commit.id, existing);
+      }
+    }
+    return map;
+  }, [stashes, commits]);
 
   // Change 3: Pre-compute time-group boundaries
   const timeGroupBoundaries = useMemo(() => {
@@ -836,18 +883,19 @@ export function CommitGraphCanvas({
         avatarHitAreas.push({ cx: x, cy: y, row: visRow, commitIdx: commitIdx });
       }
 
-      // --- Labels (branches + tags) ---
+      // --- Labels (branches + tags + stashes) ---
       let labelX = textOffset;
       const commitBranches = branchMap.get(commit.id) ?? [];
       const commitTags = tagMap.get(commit.id) ?? [];
-      const hasLabels = commitBranches.length > 0 || commitTags.length > 0;
+      const commitStashes = stashMap.get(commit.id) ?? [];
+      const hasLabels = commitBranches.length > 0 || commitTags.length > 0 || commitStashes.length > 0;
       const maxLabelArea = 260; // Change 2: was 220
 
       if (hasLabels) {
         let usedWidth = 0;
         let labelCount = 0;
         const branchGroups = groupBranches(commitBranches);
-        const totalLabels = branchGroups.length + commitTags.length;
+        const totalLabels = branchGroups.length + commitTags.length + commitStashes.length;
 
         // Draw merged branch pills
         for (const group of branchGroups) {
@@ -891,6 +939,33 @@ export function CommitGraphCanvas({
             height: LABEL_HEIGHT,
             branchName: tag.name, // reuse branchName field -- checkout works for tags too
             row: visRow,
+          });
+          usedWidth += w + LABEL_GAP;
+          labelCount++;
+        }
+
+        // Draw stash pills
+        for (const stash of commitStashes) {
+          if (usedWidth > maxLabelArea - 40) {
+            const remaining = totalLabels - labelCount;
+            if (remaining > 0) {
+              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", COLOR_DIM);
+            }
+            break;
+          }
+          const stashPillX = labelX + usedWidth;
+          // Truncate stash message for the pill
+          ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+          const stashLabel = truncateText(ctx, stash.message, 120);
+          const w = drawPill(ctx, stashPillX, y, stashLabel, "rgba(255,255,255,0.08)", COLOR_DIM, drawStashIcon);
+          hitAreas.push({
+            x: stashPillX,
+            y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
+            width: w,
+            height: LABEL_HEIGHT,
+            branchName: `stash@{${stash.index}}`,
+            row: visRow,
+            stashIndex: stash.index,
           });
           usedWidth += w + LABEL_GAP;
           labelCount++;
@@ -981,7 +1056,7 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries]);
+  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -1028,7 +1103,7 @@ export function CommitGraphCanvas({
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
 
-      // Check if double-click hit a branch badge
+      // Check if double-click hit a badge
       for (const badge of badgeHitAreasRef.current) {
         if (
           clickX >= badge.x &&
@@ -1036,12 +1111,16 @@ export function CommitGraphCanvas({
           clickY >= badge.y &&
           clickY <= badge.y + badge.height
         ) {
-          onCheckoutBranch(badge.branchName);
+          if (badge.stashIndex != null && onSelectStash) {
+            onSelectStash(badge.stashIndex);
+          } else {
+            onCheckoutBranch(badge.branchName);
+          }
           return;
         }
       }
     },
-    [onCheckoutBranch],
+    [onCheckoutBranch, onSelectStash],
   );
 
   const handleMouseMove = useCallback(

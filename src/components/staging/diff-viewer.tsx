@@ -1,10 +1,18 @@
 import type { FileDiff } from "@/types/git";
+import { DiffViewerReadonly } from "@/components/staging/diff-viewer-readonly";
+import { DiffViewerInteractive } from "@/components/staging/diff-viewer-interactive";
 
 interface DiffViewerProps {
   diff: FileDiff;
+  filePath?: string;
+  mode?: "readonly" | "interactive";
 }
 
-export function DiffViewer({ diff }: DiffViewerProps) {
+/**
+ * Orchestrator component that renders the appropriate diff viewer
+ * based on the context (readonly for commits/stashes, interactive for working tree).
+ */
+export function DiffViewer({ diff, filePath, mode = "readonly" }: DiffViewerProps) {
   if (diff.is_binary) {
     return (
       <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
@@ -21,49 +29,11 @@ export function DiffViewer({ diff }: DiffViewerProps) {
     );
   }
 
-  return (
-    <div className="overflow-auto text-xs font-mono leading-5">
-      {diff.hunks.map((hunk, hi) => (
-        <div key={hi} style={{ contentVisibility: "auto", containIntrinsicSize: `auto ${hunk.lines.length * 20}px` }}>
-          {/* Hunk header */}
-          <div className="sticky top-0 bg-secondary px-3 py-1 text-muted-foreground backdrop-blur-sm">
-            {hunk.header}
-          </div>
+  const resolvedPath = filePath ?? diff.path;
 
-          {/* Lines */}
-          {hunk.lines.map((line, li) => {
-            const bgClass =
-              line.origin === "+"
-                ? "bg-green-500/10"
-                : line.origin === "-"
-                  ? "bg-red-500/10"
-                  : "";
+  if (mode === "interactive") {
+    return <DiffViewerInteractive diff={diff} filePath={resolvedPath} />;
+  }
 
-            const textClass =
-              line.origin === "+"
-                ? "text-green-400"
-                : line.origin === "-"
-                  ? "text-red-400"
-                  : "text-muted-foreground";
-
-            return (
-              <div key={li} className={`flex ${bgClass}`}>
-                {/* Origin column */}
-                <span
-                  className={`w-5 shrink-0 text-center select-none ${textClass}`}
-                >
-                  {line.origin === " " ? "" : line.origin}
-                </span>
-
-                {/* Content */}
-                <pre className={`flex-1 px-2 whitespace-pre-wrap break-all ${textClass}`}>
-                  {line.content || " "}
-                </pre>
-              </div>
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
+  return <DiffViewerReadonly diff={diff} filePath={resolvedPath} />;
 }

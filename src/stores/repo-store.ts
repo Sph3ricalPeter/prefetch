@@ -4,12 +4,14 @@ import { toast } from "sonner";
 import type {
   BranchInfo,
   CommitInfo,
+  ConflictContents,
   ConflictState,
   FileDiff,
   FileStatus,
   ForgeStatus,
   GitIdentity,
   GraphEdge,
+  HunkLineSelection,
   LfsInfo,
   PrInfo,
   StashInfo,
@@ -69,7 +71,12 @@ import {
   getPrForBranch as getPrForBranchCmd,
   clearPrCache as clearPrCacheCmd,
   openUrl as openUrlCmd,
+  stagePatch as stagePatchCmd,
+  unstagePatch as unstagePatchCmd,
+  getConflictContents as getConflictContentsCmd,
+  resolveConflictManual as resolveConflictManualCmd,
 } from "@/lib/commands";
+import { generatePatch, generateHunkPatch } from "@/lib/patch";
 import {
   addRecentRepo,
   getRecentRepos,
@@ -142,6 +149,7 @@ interface RepoState {
 
   // Conflict state
   conflictState: ConflictState | null;
+  conflictContents: ConflictContents | null;
 
   // Remote checkout dialog
   remoteCheckoutPending: {
@@ -197,6 +205,12 @@ interface RepoState {
   discardAll: () => Promise<void>;
   resolveOurs: (filePath: string) => Promise<void>;
   resolveTheirs: (filePath: string) => Promise<void>;
+  stageHunk: (filePath: string, hunkIndex: number) => Promise<void>;
+  unstageHunk: (filePath: string, hunkIndex: number) => Promise<void>;
+  stageLines: (filePath: string, selections: HunkLineSelection[]) => Promise<void>;
+  unstageLines: (filePath: string, selections: HunkLineSelection[]) => Promise<void>;
+  loadConflictContents: (filePath: string) => Promise<void>;
+  resolveConflictManual: (filePath: string, content: string) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
   setCommitMessage: (msg: string) => void;
   setCommitDescription: (desc: string) => void;
@@ -289,6 +303,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   tags: [],
   forcePushPending: false,
   conflictState: null,
+  conflictContents: null,
   remoteCheckoutPending: null,
   undoInfo: null,
   lastUndoTime: 0,
@@ -751,6 +766,89 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await resolveTheirsCmd(filePath);
       await get().loadStatus();
       toast.success(`Resolved ${filePath.split("/").pop()} — kept theirs`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  stageHunk: async (filePath, hunkIndex) => {
+    try {
+      const diff = get().activeDiff;
+      if (!diff) return;
+      const patch = generateHunkPatch(diff, hunkIndex);
+      if (!patch.trim()) return;
+      await stagePatchCmd(patch);
+      await get().loadStatus();
+      // Reload the diff (it changed after staging)
+      const newDiff = await getFileDiff(filePath, false);
+      set({ activeDiff: newDiff });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  unstageHunk: async (filePath, hunkIndex) => {
+    try {
+      const diff = get().activeDiff;
+      if (!diff) return;
+      const patch = generateHunkPatch(diff, hunkIndex);
+      if (!patch.trim()) return;
+      await unstagePatchCmd(patch);
+      await get().loadStatus();
+      const newDiff = await getFileDiff(filePath, true);
+      set({ activeDiff: newDiff });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  stageLines: async (filePath, selections) => {
+    try {
+      const diff = get().activeDiff;
+      if (!diff) return;
+      const lineKeys = new Set(selections.map((s) => `${s.hunkIndex}:${s.lineIndex}`));
+      const patch = generatePatch(diff, lineKeys);
+      if (!patch.trim()) return;
+      await stagePatchCmd(patch);
+      await get().loadStatus();
+      const newDiff = await getFileDiff(filePath, false);
+      set({ activeDiff: newDiff });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  unstageLines: async (filePath, selections) => {
+    try {
+      const diff = get().activeDiff;
+      if (!diff) return;
+      const lineKeys = new Set(selections.map((s) => `${s.hunkIndex}:${s.lineIndex}`));
+      const patch = generatePatch(diff, lineKeys);
+      if (!patch.trim()) return;
+      await unstagePatchCmd(patch);
+      await get().loadStatus();
+      const newDiff = await getFileDiff(filePath, true);
+      set({ activeDiff: newDiff });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  loadConflictContents: async (filePath) => {
+    try {
+      const contents = await getConflictContentsCmd(filePath);
+      set({ conflictContents: contents });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  resolveConflictManual: async (filePath, content) => {
+    try {
+      await resolveConflictManualCmd(filePath, content);
+      await get().loadStatus();
+      set({ conflictContents: null, activeDiff: null, selectedFilePath: null });
+      toast.success(`Resolved ${filePath.split("/").pop()}`);
     } catch (e) {
       toast.error(String(e));
     }

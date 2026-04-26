@@ -98,6 +98,8 @@ pub struct DiffLine {
 pub struct StashInfo {
     pub index: usize,
     pub message: String,
+    pub commit_id: String,
+    pub parent_commit_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +115,25 @@ pub struct ConflictState {
     pub in_progress: bool,
     /// "rebase", "cherry-pick", "merge", or ""
     pub operation: String,
+}
+
+/// The three versions of a conflicted file for merge resolution.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConflictContents {
+    /// Base (common ancestor) — None if file didn't exist in base.
+    pub base: Option<String>,
+    /// Ours (current branch version).
+    pub ours: String,
+    /// Theirs (incoming branch version).
+    pub theirs: String,
+    /// Short commit hash for ours (HEAD).
+    pub ours_commit_id: String,
+    /// Short commit hash for theirs (MERGE_HEAD / REBASE_HEAD).
+    pub theirs_commit_id: String,
+    /// Branch name for ours (current branch).
+    pub ours_branch: String,
+    /// Branch or ref name for theirs (incoming).
+    pub theirs_branch: String,
 }
 
 /// Describes the last undoable action from the reflog.

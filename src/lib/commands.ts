@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BranchInfo,
+  ConflictContents,
   ConflictState,
   FileDiff,
   FileStatus,
@@ -94,6 +95,22 @@ export async function stageFiles(paths: string[]): Promise<void> {
 
 export async function unstageFiles(paths: string[]): Promise<void> {
   return tracedInvoke<void>("unstage_files", { paths });
+}
+
+export async function stagePatch(patch: string): Promise<void> {
+  return tracedInvoke<void>("stage_patch", { patch });
+}
+
+export async function unstagePatch(patch: string): Promise<void> {
+  return tracedInvoke<void>("unstage_patch", { patch });
+}
+
+export async function getConflictContents(filePath: string): Promise<ConflictContents> {
+  return tracedInvoke<ConflictContents>("get_conflict_contents", { filePath });
+}
+
+export async function resolveConflictManual(filePath: string, content: string): Promise<void> {
+  return tracedInvoke<void>("resolve_conflict_manual", { filePath, content });
 }
 
 export async function createCommit(
