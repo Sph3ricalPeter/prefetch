@@ -820,9 +820,10 @@ const sourceGutter = gutter({
   },
   domEventHandlers: {
     click(view, line) {
-      // Don't handle remove clicks when manually edited
-      if (view.dom.classList.contains("cm-manually-edited")) return false;
       const lineNo = view.state.doc.lineAt(line.from).number;
+      // Only handle clicks on tracked (ours/theirs) lines
+      const tracked = view.state.field(trackedLineInfoField);
+      if (!tracked[lineNo - 1]) return false;
       view.dispatch({ effects: removeOutputLineEffect.of(lineNo) });
       return true;
     },
@@ -888,6 +889,8 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const conflictContents = useRepoStore((s) => s.conflictContents);
   const resolveConflictManual = useRepoStore((s) => s.resolveConflictManual);
   const loadConflictContents = useRepoStore((s) => s.loadConflictContents);
+  const rebaseProgress = useRepoStore((s) => s.rebaseProgress);
+  const conflictState = useRepoStore((s) => s.conflictState);
 
   const [saving, setSaving] = useState(false);
   const [selections, setSelections] = useState<Map<number, ChunkSelection>>(
@@ -896,6 +899,12 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const [manuallyEdited, setManuallyEdited] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
+
+  // ── Resizable split state ──────────────────────────────────
+  const [hSplit, setHSplit] = useState(50); // ours/theirs horizontal %
+  const [vSplit, setVSplit] = useState(60); // reference/output vertical %
+  const refPanesRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadConflictContents(filePath);
@@ -1394,9 +1403,88 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     setManuallyEdited(false);
   }, [regions, changedChunkIndices]);
 
+  // Accept Ours/Theirs buttons: select all + save immediately
+  const handleAcceptOurs = useCallback(async () => {
+    const next = new Map<number, ChunkSelection>();
+    for (const idx of changedChunkIndices) {
+      next.set(idx, selectAllOurs(regions[idx]));
+    }
+    const { text } = buildOutputWithSources(regions, next);
+    setSaving(true);
+    try {
+      await resolveConflictManual(filePath, text);
+    } finally {
+      setSaving(false);
+    }
+  }, [regions, changedChunkIndices, filePath, resolveConflictManual]);
+
+  const handleAcceptTheirs = useCallback(async () => {
+    const next = new Map<number, ChunkSelection>();
+    for (const idx of changedChunkIndices) {
+      next.set(idx, selectAllTheirs(regions[idx]));
+    }
+    const { text } = buildOutputWithSources(regions, next);
+    setSaving(true);
+    try {
+      await resolveConflictManual(filePath, text);
+    } finally {
+      setSaving(false);
+    }
+  }, [regions, changedChunkIndices, filePath, resolveConflictManual]);
+
   const resetSelections = useCallback(() => {
     setSelections(new Map());
     setManuallyEdited(false);
+  }, []);
+
+  // ── Resize drag handlers ────────────────────────────────────
+
+  const onHDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = refPanesRef.current;
+    if (!container) return;
+    const startX = e.clientX;
+    const totalWidth = container.getBoundingClientRect().width;
+    const oursEl = container.firstElementChild as HTMLElement | null;
+    const startPct = oursEl
+      ? (oursEl.getBoundingClientRect().width / totalWidth) * 100
+      : 50;
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX;
+      const pct = startPct + (delta / totalWidth) * 100;
+      setHSplit(Math.max(20, Math.min(80, pct)));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
+  const onVDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = contentRef.current;
+    if (!container) return;
+    const startY = e.clientY;
+    const totalHeight = container.getBoundingClientRect().height;
+    const refEl = refPanesRef.current;
+    const startPct = refEl
+      ? (refEl.getBoundingClientRect().height / totalHeight) * 100
+      : 60;
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientY - startY;
+      const pct = startPct + (delta / totalHeight) * 100;
+      setVSplit(Math.max(20, Math.min(80, pct)));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -1448,6 +1536,14 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           {changedChunkIndices.length} conflict
           {changedChunkIndices.length !== 1 ? "s" : ""}
         </span>
+        {rebaseProgress && conflictState?.operation === "rebase" && (
+          <span className="text-xs text-muted-foreground/60">
+            · Step {rebaseProgress.step}/{rebaseProgress.total}
+            {rebaseProgress.commit_id && (
+              <span className="font-mono ml-1">{rebaseProgress.commit_id}</span>
+            )}
+          </span>
+        )}
         <div className="flex items-center gap-1 ml-auto">
           {manuallyEdited && (
             <button
@@ -1469,174 +1565,193 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
         </div>
       </div>
 
-      {/* Reference panes */}
-      <div className="flex min-h-0" style={{ flex: 3 }}>
-        {/* Ours pane */}
-        <div className="flex-1 flex flex-col overflow-hidden border-r border-border">
-          {/* Header with master checkbox + icon + accept-all button */}
-          <div className="shrink-0 px-3 py-1.5 border-b border-border bg-blue-500/5 flex items-center gap-1.5">
-            {/* Master checkbox */}
-            <button
-              onClick={handleMasterOurs}
-              className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
-                masterSide === "ours"
-                  ? "bg-blue-500 text-white"
-                  : "border border-muted-foreground/30 hover:border-blue-400/50"
-              }`}
-              title="Accept all from ours"
-            >
-              {masterSide === "ours" && <Check className="w-2.5 h-2.5" />}
-            </button>
-            <OursIcon />
-            <div className="flex-1 min-w-0 flex items-center">
-              <span className="text-xs font-medium text-blue-400">
-                Ours ({oursLabel})
-              </span>
-              {oursHash && (
-                <span className="text-[10px] text-muted-foreground/50 ml-1.5 font-mono">
-                  {oursHash}
+      {/* Resizable content area */}
+      <div ref={contentRef} className="flex flex-col min-h-0 flex-1">
+        {/* Reference panes */}
+        <div ref={refPanesRef} className="flex min-h-0" style={{ flex: vSplit }}>
+          {/* Ours pane */}
+          <div className="flex flex-col overflow-hidden" style={{ flex: hSplit }}>
+            {/* Header with master checkbox + icon + accept-all button */}
+            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-blue-500/5 flex items-center gap-1.5">
+              {/* Master checkbox */}
+              <button
+                onClick={handleMasterOurs}
+                className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
+                  masterSide === "ours"
+                    ? "bg-blue-500 text-white"
+                    : "border border-muted-foreground/30 hover:border-blue-400/50"
+                }`}
+                title="Accept all from ours"
+              >
+                {masterSide === "ours" && <Check className="w-2.5 h-2.5" />}
+              </button>
+              <OursIcon />
+              <div className="flex-1 min-w-0 flex items-center">
+                <span className="text-xs font-medium text-blue-400">
+                  Ours ({oursLabel})
                 </span>
-              )}
+                {oursHash && (
+                  <span className="text-[10px] text-muted-foreground/50 ml-1.5 font-mono">
+                    {oursHash}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={handleAcceptOurs}
+                disabled={saving}
+                className="shrink-0 flex items-center gap-1.5 rounded-md bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/30 disabled:opacity-50"
+              >
+                <Save className="w-3 h-3" />
+                Accept Ours
+              </button>
             </div>
-            <button
-              onClick={handleMasterOurs}
-              className="shrink-0 flex items-center gap-1.5 rounded-md bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/30"
-            >
-              Accept Ours
-            </button>
-          </div>
-          <div className="overflow-auto flex-1 text-xs font-mono leading-5">
-            {regions.map((region, ri) => {
-              const lineStart = regionLineInfo[ri].oursStart;
-              if (region.type === "unchanged") {
+            <div className="overflow-auto flex-1 text-xs font-mono leading-5">
+              {regions.map((region, ri) => {
+                const lineStart = regionLineInfo[ri].oursStart;
+                if (region.type === "unchanged") {
+                  return (
+                    <UnchangedBlock
+                      key={ri}
+                      lines={region.aLines}
+                      tokens={oursTokens}
+                      startTokenLine={lineStart}
+                      startLineNo={region.aStartLine}
+                    />
+                  );
+                }
+                const sel = selections.get(ri);
+                const isChecked = sel
+                  ? sel.oursLines.size === region.aLines.length
+                  : true;
                 return (
-                  <UnchangedBlock
+                  <ChangedBlock
                     key={ri}
                     lines={region.aLines}
                     tokens={oursTokens}
                     startTokenLine={lineStart}
                     startLineNo={region.aStartLine}
+                    side="ours"
+                    isChunkSelected={isChecked}
+                    selectedLines={
+                      sel?.oursLines ??
+                      new Set(region.aLines.map((_, i) => i))
+                    }
+                    onToggleChunk={() => toggleChunkOurs(ri)}
+                    onToggleLine={(li) => toggleLine(ri, "ours", li)}
                   />
                 );
-              }
-              const sel = selections.get(ri);
-              const isChecked = sel
-                ? sel.oursLines.size === region.aLines.length
-                : true;
-              return (
-                <ChangedBlock
-                  key={ri}
-                  lines={region.aLines}
-                  tokens={oursTokens}
-                  startTokenLine={lineStart}
-                  startLineNo={region.aStartLine}
-                  side="ours"
-                  isChunkSelected={isChecked}
-                  selectedLines={
-                    sel?.oursLines ??
-                    new Set(region.aLines.map((_, i) => i))
-                  }
-                  onToggleChunk={() => toggleChunkOurs(ri)}
-                  onToggleLine={(li) => toggleLine(ri, "ours", li)}
-                />
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Theirs pane */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="shrink-0 px-3 py-1.5 border-b border-border bg-purple-500/5 flex items-center gap-1.5">
-            <button
-              onClick={handleMasterTheirs}
-              className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
-                masterSide === "theirs"
-                  ? "bg-purple-500 text-white"
-                  : "border border-muted-foreground/30 hover:border-purple-400/50"
-              }`}
-              title="Accept all from theirs"
-            >
-              {masterSide === "theirs" && <Check className="w-2.5 h-2.5" />}
-            </button>
-            <TheirsIcon />
-            <div className="flex-1 min-w-0 flex items-center">
-              <span className="text-xs font-medium text-purple-400">
-                Theirs ({theirsLabel})
-              </span>
-              {theirsHash && (
-                <span className="text-[10px] text-muted-foreground/50 ml-1.5 font-mono">
-                  {theirsHash}
-                </span>
-              )}
+              })}
             </div>
-            <button
-              onClick={handleMasterTheirs}
-              className="shrink-0 flex items-center gap-1.5 rounded-md bg-purple-500/20 px-3 py-1 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/30"
-            >
-              Accept Theirs
-            </button>
           </div>
-          <div className="overflow-auto flex-1 text-xs font-mono leading-5">
-            {regions.map((region, ri) => {
-              const lineStart = regionLineInfo[ri].theirsStart;
-              if (region.type === "unchanged") {
+
+          {/* Vertical resize handle (between ours/theirs) */}
+          <div
+            onMouseDown={onHDragStart}
+            className="relative w-px shrink-0 cursor-col-resize bg-border hover:bg-accent transition-colors before:absolute before:inset-y-0 before:-left-1.5 before:w-3 before:cursor-col-resize"
+          />
+
+          {/* Theirs pane */}
+          <div className="flex flex-col overflow-hidden" style={{ flex: 100 - hSplit }}>
+            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-purple-500/5 flex items-center gap-1.5">
+              <button
+                onClick={handleMasterTheirs}
+                className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
+                  masterSide === "theirs"
+                    ? "bg-purple-500 text-white"
+                    : "border border-muted-foreground/30 hover:border-purple-400/50"
+                }`}
+                title="Accept all from theirs"
+              >
+                {masterSide === "theirs" && <Check className="w-2.5 h-2.5" />}
+              </button>
+              <TheirsIcon />
+              <div className="flex-1 min-w-0 flex items-center">
+                <span className="text-xs font-medium text-purple-400">
+                  Theirs ({theirsLabel})
+                </span>
+                {theirsHash && (
+                  <span className="text-[10px] text-muted-foreground/50 ml-1.5 font-mono">
+                    {theirsHash}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={handleAcceptTheirs}
+                disabled={saving}
+                className="shrink-0 flex items-center gap-1.5 rounded-md bg-purple-500/20 px-3 py-1 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/30 disabled:opacity-50"
+              >
+                <Save className="w-3 h-3" />
+                Accept Theirs
+              </button>
+            </div>
+            <div className="overflow-auto flex-1 text-xs font-mono leading-5">
+              {regions.map((region, ri) => {
+                const lineStart = regionLineInfo[ri].theirsStart;
+                if (region.type === "unchanged") {
+                  return (
+                    <UnchangedBlock
+                      key={ri}
+                      lines={region.bLines}
+                      tokens={theirsTokens}
+                      startTokenLine={lineStart}
+                      startLineNo={region.bStartLine}
+                    />
+                  );
+                }
+                const sel = selections.get(ri);
+                const isChecked = sel
+                  ? sel.theirsLines.size === region.bLines.length
+                  : false;
                 return (
-                  <UnchangedBlock
+                  <ChangedBlock
                     key={ri}
                     lines={region.bLines}
                     tokens={theirsTokens}
                     startTokenLine={lineStart}
                     startLineNo={region.bStartLine}
+                    side="theirs"
+                    isChunkSelected={isChecked}
+                    selectedLines={sel?.theirsLines ?? new Set<number>()}
+                    onToggleChunk={() => toggleChunkTheirs(ri)}
+                    onToggleLine={(li) => toggleLine(ri, "theirs", li)}
                   />
                 );
-              }
-              const sel = selections.get(ri);
-              const isChecked = sel
-                ? sel.theirsLines.size === region.bLines.length
-                : false;
-              return (
-                <ChangedBlock
-                  key={ri}
-                  lines={region.bLines}
-                  tokens={theirsTokens}
-                  startTokenLine={lineStart}
-                  startLineNo={region.bStartLine}
-                  side="theirs"
-                  isChunkSelected={isChecked}
-                  selectedLines={sel?.theirsLines ?? new Set<number>()}
-                  onToggleChunk={() => toggleChunkTheirs(ri)}
-                  onToggleLine={(li) => toggleLine(ri, "theirs", li)}
-                />
-              );
-            })}
+              })}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Output pane */}
-      <div
-        className="flex flex-col min-h-0 border-t border-border"
-        style={{ flex: 2 }}
-      >
-        <div className="shrink-0 px-3 py-1.5 text-xs font-medium text-green-400 bg-green-500/5 border-b border-border flex items-center gap-2">
-          <span>Output</span>
-          {manuallyEdited && (
-            <span className="text-muted-foreground font-normal">
-              (manually edited)
-            </span>
-          )}
-          <div className="flex items-center gap-3 ml-auto">
-            <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60 font-normal">
-              <OursIcon size={10} />
-              ours
-            </span>
-            <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60 font-normal">
-              <TheirsIcon size={10} />
-              theirs
-            </span>
+        {/* Horizontal resize handle (between reference/output) */}
+        <div
+          onMouseDown={onVDragStart}
+          className="relative h-px shrink-0 cursor-row-resize bg-border hover:bg-accent transition-colors before:absolute before:inset-x-0 before:-top-1.5 before:h-3 before:cursor-row-resize"
+        />
+
+        {/* Output pane */}
+        <div
+          className="flex flex-col min-h-0"
+          style={{ flex: 100 - vSplit }}
+        >
+          <div className="shrink-0 px-3 py-1.5 text-xs font-medium text-green-400 bg-green-500/5 border-b border-border flex items-center gap-2">
+            <span>Output</span>
+            {manuallyEdited && (
+              <span className="text-muted-foreground font-normal">
+                (manually edited)
+              </span>
+            )}
+            <div className="flex items-center gap-3 ml-auto">
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60 font-normal">
+                <OursIcon size={10} />
+                ours
+              </span>
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60 font-normal">
+                <TheirsIcon size={10} />
+                theirs
+              </span>
+            </div>
           </div>
+          <div ref={outputRef} className="flex-1 min-h-0 overflow-auto" />
         </div>
-        <div ref={outputRef} className="flex-1 min-h-0 overflow-auto" />
       </div>
     </div>
   );

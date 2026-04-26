@@ -81,10 +81,13 @@ export function DetailPanel() {
   const selectCommitFile = useRepoStore((s) => s.selectCommitFile);
   const selectStashFile = useRepoStore((s) => s.selectStashFile);
   const discardAll = useRepoStore((s) => s.discardAll);
+  const conflictState = useRepoStore((s) => s.conflictState);
   const fileViewMode = useRepoStore((s) => s.fileViewMode);
   const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
 
   const [showDiscardAll, setShowDiscardAll] = useState(false);
+
+  const operationInProgress = conflictState?.in_progress ?? false;
 
   // Mode: Stash selected
   if (selectedStashIndex !== null) {
@@ -117,7 +120,7 @@ export function DetailPanel() {
     }
   }
 
-  if (fileStatuses.length > 0) {
+  if (fileStatuses.length > 0 || operationInProgress) {
     return (
       <div className="relative flex h-full flex-col bg-sidebar-background">
         <div className="shrink-0">

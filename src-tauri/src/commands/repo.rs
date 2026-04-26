@@ -4,8 +4,8 @@ use crate::events;
 use crate::git::{
     repository,
     types::{
-        self, BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData, StashInfo,
-        TagInfo, UndoAction,
+        self, BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData,
+        RebaseProgress, StashInfo, TagInfo, UndoAction,
     },
 };
 use crate::watcher::RepoWatcher;
@@ -498,14 +498,23 @@ pub async fn rebase_onto(target: String, state: State<'_, AppState>) -> Result<S
 }
 
 #[tauri::command]
+pub async fn get_rebase_progress(state: State<'_, AppState>) -> Result<RebaseProgress, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_rebase_progress(&path)).await
+}
+
+#[tauri::command]
 pub async fn abort_operation(state: State<'_, AppState>) -> Result<String, AppError> {
     let path = repo_path(&state)?;
     offload(move || repository::abort_operation(&path)).await
 }
 
 #[tauri::command]
-pub async fn continue_operation(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn continue_operation(
+    message: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
-    offload(move || repository::continue_operation(&path, &env)).await
+    offload(move || repository::continue_operation(&path, message, &env)).await
 }

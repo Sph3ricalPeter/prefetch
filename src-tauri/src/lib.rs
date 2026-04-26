@@ -99,6 +99,7 @@ pub fn run() {
             commands::repo::cherry_pick,
             commands::repo::rebase_onto,
             commands::repo::get_conflict_state,
+            commands::repo::get_rebase_progress,
             commands::repo::abort_operation,
             commands::repo::continue_operation,
             commands::repo::get_git_identity,

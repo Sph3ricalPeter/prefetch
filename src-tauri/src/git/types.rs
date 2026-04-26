@@ -117,6 +117,19 @@ pub struct ConflictState {
     pub operation: String,
 }
 
+/// Progress info for an in-progress rebase.
+#[derive(Debug, Clone, Serialize)]
+pub struct RebaseProgress {
+    /// Current step (1-based).
+    pub step: u32,
+    /// Total number of steps.
+    pub total: u32,
+    /// The original commit message for the current step.
+    pub message: String,
+    /// Short commit hash for the current step.
+    pub commit_id: String,
+}
+
 /// The three versions of a conflicted file for merge resolution.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConflictContents {

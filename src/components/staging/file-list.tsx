@@ -595,16 +595,17 @@ function ConflictRow({
     ? file.path.slice(0, file.path.lastIndexOf("/"))
     : "";
 
+  // Only show a conflict label for non-obvious types (both_modified is the
+  // common case and redundant — if there's a conflict both sides changed).
   const conflictLabel = (() => {
     switch (file.conflict_type) {
-      case "both_modified": return "Both modified";
       case "both_added": return "Both added";
       case "both_deleted": return "Both deleted";
       case "added_by_us": return "We added";
       case "added_by_them": return "They added";
       case "deleted_by_us": return "We deleted";
       case "deleted_by_them": return "They deleted";
-      default: return "Conflicted";
+      default: return null;
     }
   })();
 
@@ -627,9 +628,11 @@ function ConflictRow({
           </span>
         )}
       </div>
-      <span className="shrink-0 text-xs text-red-400">
-        {conflictLabel}
-      </span>
+      {conflictLabel && (
+        <span className="shrink-0 text-xs text-red-400">
+          {conflictLabel}
+        </span>
+      )}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -647,24 +650,12 @@ function ConflictRow({
           <button
             onClick={(e) => { e.stopPropagation(); onResolveTheirs(); }}
             disabled={disabled}
-            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-green-400 hover:bg-green-500/20 transition-all disabled:opacity-40"
+            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
           >
             Theirs
           </button>
         </TooltipTrigger>
         <TooltipContent>Keep their version</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={(e) => { e.stopPropagation(); onSelect(); }}
-            disabled={disabled}
-            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
-          >
-            Edit
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>Open merge editor</TooltipContent>
       </Tooltip>
     </div>
   );

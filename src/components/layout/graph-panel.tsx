@@ -6,6 +6,7 @@ import {
   FolderGit2,
   X,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
@@ -57,8 +58,6 @@ export function GraphPanel() {
   const cherryPick = useRepoStore((s) => s.cherryPick);
   const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
   const resetTo = useRepoStore((s) => s.resetTo);
-  const abortOp = useRepoStore((s) => s.abortOperation);
-  const continueOp = useRepoStore((s) => s.continueOperation);
   const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const selectStash = useRepoStore((s) => s.selectStash);
@@ -211,7 +210,7 @@ export function GraphPanel() {
         </div>
       )}
 
-      {/* Conflict banner */}
+      {/* Conflict banner — status info only; Continue/Abort live in CommitBox */}
       {conflictState?.in_progress && (() => {
         const conflictedFiles = fileStatuses.filter((f) => f.is_conflicted);
         const unresolvedCount = conflictedFiles.length;
@@ -233,19 +232,6 @@ export function GraphPanel() {
                 {unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""} to resolve
               </button>
             )}
-            <button
-              onClick={continueOp}
-              disabled={unresolvedCount > 0}
-              className="rounded-md bg-secondary px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Continue
-            </button>
-            <button
-              onClick={abortOp}
-              className="rounded-md bg-red-500/20 px-3 py-1 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/30"
-            >
-              Abort
-            </button>
           </div>
         );
       })()}
@@ -296,8 +282,18 @@ export function GraphPanel() {
             isWipSelected={selectedCommitId === null && selectedStashIndex === null}
             onClickWip={() => { clearSelection(); loadStatus(); }}
             onSelectStash={(index) => selectStash(index)}
-            onCommitContextMenu={(commitId, x, y) => setCommitContextMenu({ commitId, x, y })}
+            onCommitContextMenu={(commitId, x, y) => {
+              if (isLoading) return;
+              setCommitContextMenu({ commitId, x, y });
+            }}
           />
+        )}
+
+        {/* Operation in progress overlay — blocks all graph interaction */}
+        {isLoading && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
         )}
       </div>
 

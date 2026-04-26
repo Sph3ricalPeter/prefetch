@@ -10,6 +10,7 @@ import type {
   GraphData,
   LfsInfo,
   PrInfo,
+  RebaseProgress,
   StashInfo,
   TagInfo,
   UndoAction,
@@ -217,12 +218,18 @@ export async function getConflictState(): Promise<ConflictState> {
   return tracedInvoke<ConflictState>("get_conflict_state");
 }
 
+export async function getRebaseProgress(): Promise<RebaseProgress> {
+  return tracedInvoke<RebaseProgress>("get_rebase_progress");
+}
+
 export async function abortOperation(): Promise<string> {
   return tracedInvoke<string>("abort_operation");
 }
 
-export async function continueOperation(): Promise<string> {
-  return tracedInvoke<string>("continue_operation");
+export async function continueOperation(
+  message?: string,
+): Promise<string> {
+  return tracedInvoke<string>("continue_operation", { message: message ?? null });
 }
 
 // ── Git identity ─────────────────────────────────────────────────────────────

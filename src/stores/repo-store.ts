@@ -14,6 +14,7 @@ import type {
   HunkLineSelection,
   LfsInfo,
   PrInfo,
+  RebaseProgress,
   StashInfo,
   TagInfo,
   UndoAction,
@@ -58,6 +59,7 @@ import {
   getConflictState,
   abortOperation as abortOperationCmd,
   continueOperation as continueOperationCmd,
+  getRebaseProgress as getRebaseProgressCmd,
   lfsCheckInitialized,
   lfsGetInfo,
   lfsInitialize,
@@ -150,6 +152,7 @@ interface RepoState {
   // Conflict state
   conflictState: ConflictState | null;
   conflictContents: ConflictContents | null;
+  rebaseProgress: RebaseProgress | null;
 
   // Remote checkout dialog
   remoteCheckoutPending: {
@@ -231,8 +234,9 @@ interface RepoState {
   cherryPick: (commitId: string) => Promise<void>;
   rebaseOnto: (targetBranch: string) => Promise<void>;
   abortOperation: () => Promise<void>;
-  continueOperation: () => Promise<void>;
+  continueOperation: (message?: string) => Promise<void>;
   loadConflictState: () => Promise<void>;
+  loadRebaseProgress: () => Promise<void>;
   loadUndoAction: () => Promise<void>;
   undo: () => Promise<void>;
 
@@ -304,6 +308,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   forcePushPending: false,
   conflictState: null,
   conflictContents: null,
+  rebaseProgress: null,
   remoteCheckoutPending: null,
   undoInfo: null,
   lastUndoTime: 0,
@@ -563,6 +568,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     });
     try {
       await pushRepo();
+      // Fetch after push to sync all remote tracking refs, then read local state.
+      toast.loading("Syncing…", { id: toastId });
+      await fetchRepo().catch(() => {});
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
       toast.success("Push complete", { id: toastId });
@@ -591,11 +599,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     });
     try {
       await forcePushRepo();
+      // Fetch after push to sync all remote tracking refs, then read local state.
+      toast.loading("Syncing…", { id: toastId });
+      await fetchRepo().catch(() => {});
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
       toast.success("Force push complete", { id: toastId });
     } catch (e) {
-      set({ isLoading: false });
+      // Refetch even on failure — the graph may be stale from a prior
+      // rebase or reset that never triggered a refresh.
+      const repoData = await fetchRepoData().catch(() => ({}));
+      set({ ...repoData, isLoading: false });
       toast.error(String(e), { id: toastId });
     } finally {
       unlisten();
@@ -1069,6 +1083,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
+        if (conflict.operation === "rebase") {
+          const progress = await getRebaseProgressCmd().catch(() => null);
+          set({ rebaseProgress: progress });
+        }
         toast.error("Rebase has conflicts — resolve them, then continue or abort");
       } else {
         toast.success(`Rebased onto ${targetBranch}`);
@@ -1079,6 +1097,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       if (conflict?.in_progress) {
         const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
         set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
+        if (conflict.operation === "rebase") {
+          const progress = await getRebaseProgressCmd().catch(() => null);
+          set({ rebaseProgress: progress });
+        }
         toast.error("Rebase has conflicts — resolve them, then continue or abort");
       } else {
         const { hookName, message } = parseError(e);
@@ -1092,28 +1114,56 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   abortOperation: async () => {
+    set({ isLoading: true });
     try {
       await abortOperationCmd();
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict, rebaseProgress: null });
       toast.success("Operation aborted");
     } catch (e) {
+      set({ isLoading: false });
       toast.error(String(e));
     }
   },
 
-  continueOperation: async () => {
+  continueOperation: async (message?: string) => {
+    set({ isLoading: true });
     try {
-      await continueOperationCmd();
+      await continueOperationCmd(message);
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
+        // Rebase advanced to next commit — load new progress
+        if (conflict.operation === "rebase") {
+          const progress = await getRebaseProgressCmd().catch(() => null);
+          set({ rebaseProgress: progress });
+        }
         toast.error("Still has conflicts — resolve remaining files");
       } else {
+        set({ rebaseProgress: null });
         toast.success("Operation completed");
       }
     } catch (e) {
       toast.error(String(e));
+      // Always refresh state after failure — the operation may have partially
+      // succeeded (e.g. commit created but editor failed) or the rebase may
+      // have completed despite the error.
+      try {
+        const [repoData, statuses, conflict] = await Promise.all([
+          fetchRepoData(),
+          getFileStatus().catch(() => []),
+          getConflictState(),
+        ]);
+        set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+        if (conflict.in_progress && conflict.operation === "rebase") {
+          const progress = await getRebaseProgressCmd().catch(() => null);
+          set({ rebaseProgress: progress });
+        } else {
+          set({ rebaseProgress: null });
+        }
+      } catch {
+        set({ isLoading: false }); /* state refresh is best-effort */
+      }
     }
   },
 
@@ -1122,8 +1172,25 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       const conflict = await getConflictState();
       set({ conflictState: conflict });
+      // Auto-load rebase progress when rebase is detected
+      if (conflict.in_progress && conflict.operation === "rebase") {
+        const progress = await getRebaseProgressCmd().catch(() => null);
+        set({ rebaseProgress: progress });
+      } else {
+        set({ rebaseProgress: null });
+      }
     } catch {
-      set({ conflictState: null });
+      set({ conflictState: null, rebaseProgress: null });
+    }
+  },
+
+  loadRebaseProgress: async () => {
+    if (!get().repoPath) return;
+    try {
+      const progress = await getRebaseProgressCmd();
+      set({ rebaseProgress: progress });
+    } catch {
+      set({ rebaseProgress: null });
     }
   },
 

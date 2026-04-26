@@ -4,13 +4,14 @@ use crate::git::graph::assign_lanes;
 use crate::git::profile::ActiveProfile;
 use crate::git::types::{
     self as types, BranchInfo, CoAuthor, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff,
-    FileStatus, GraphData, StashInfo, TagInfo, UndoAction,
+    FileStatus, GraphData, RebaseProgress, StashInfo, TagInfo, UndoAction,
 };
 use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use tracing::warn;
 
 /// Configure a Command to hide the console window on Windows.
 /// Without this, every `git` subprocess opens a visible terminal flash.
@@ -353,7 +354,14 @@ pub fn fetch_all<F: Fn(&str)>(
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
     if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
-        let args = authed.build_args(&["fetch", &authed.url, "--prune", "--progress"]);
+        let args = authed.build_args(&[
+            "fetch",
+            &authed.url,
+            "+refs/heads/*:refs/remotes/origin/*",
+            "+refs/tags/*:refs/tags/*",
+            "--prune",
+            "--progress",
+        ]);
         let env = authed.merge_env(extra_env);
         run_git_with_progress(path, &args, &on_progress, &env)
     } else {
@@ -367,15 +375,26 @@ pub fn fetch_all<F: Fn(&str)>(
 }
 
 /// Force push to remote (used after reset when local diverges from remote).
+///
+/// Includes a `-u` fallback for branches that have never been pushed,
+/// mirroring the regular `push()` behaviour.
 pub fn force_push<F: Fn(&str)>(
     path: &str,
     on_progress: F,
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
-    if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
-        let args = authed.build_args(&["push", &authed.url, "--force-with-lease", "--progress"]);
-        let env = authed.merge_env(extra_env);
+    let authed = forge::authenticated_remote_url(path, profile_id);
+
+    // Try normal force-push first
+    let result = if let Some(ref a) = authed {
+        // When pushing to a URL (not a named remote), bare --force-with-lease
+        // can't find the remote-tracking ref automatically, causing "stale info"
+        // errors. We resolve the expected SHA from the tracking ref and pass it
+        // explicitly so the lease check works regardless of the remote spec.
+        let lease_flag = explicit_lease_flag(path);
+        let args = a.build_args(&["push", &a.url, &lease_flag, "--progress"]);
+        let env = a.merge_env(extra_env);
         run_git_with_progress(path, &args, &on_progress, &env)
     } else {
         run_git_with_progress(
@@ -384,6 +403,80 @@ pub fn force_push<F: Fn(&str)>(
             &on_progress,
             extra_env,
         )
+    };
+
+    if let Ok(ref output) = result {
+        if authed.is_some() {
+            fixup_remote_tracking_for_head(path);
+        }
+        return Ok(output.clone());
+    }
+
+    // Fallback: try with -u for branches that have no upstream yet
+    let repo = Repository::open(path)?;
+    let head = repo.head()?;
+    let branch_name = head.shorthand().unwrap_or("HEAD");
+    if let Some(ref a) = authed {
+        let lease_flag = explicit_lease_flag(path);
+        let args = a.build_args(&[
+            "push",
+            "-u",
+            &a.url,
+            branch_name,
+            &lease_flag,
+            "--progress",
+        ]);
+        let env = a.merge_env(extra_env);
+        let r = run_git_with_progress(path, &args, &on_progress, &env);
+        if r.is_ok() {
+            fixup_remote_tracking_for_head(path);
+        }
+        r
+    } else {
+        run_git_with_progress(
+            path,
+            &[
+                "push",
+                "-u",
+                "origin",
+                branch_name,
+                "--force-with-lease",
+                "--progress",
+            ],
+            &on_progress,
+            extra_env,
+        )
+    }
+}
+
+/// Build an explicit `--force-with-lease=<branch>:<sha>` flag.
+///
+/// When pushing to a raw URL instead of a named remote, git cannot
+/// automatically look up the remote-tracking ref for the lease check.
+/// We resolve `refs/remotes/origin/<branch>` ourselves and embed the
+/// expected SHA so the server-side check works correctly.
+///
+/// Falls back to `--force` if no tracking ref exists (e.g. branch was
+/// never pushed before).
+fn explicit_lease_flag(path: &str) -> String {
+    let repo = match Repository::open(path) {
+        Ok(r) => r,
+        Err(_) => return "--force".to_string(),
+    };
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return "--force".to_string(),
+    };
+    let branch_name = match head.shorthand() {
+        Some(n) => n,
+        None => return "--force".to_string(),
+    };
+
+    let tracking_ref = format!("refs/remotes/origin/{branch_name}");
+    match run_git(path, &["rev-parse", &tracking_ref], &[]) {
+        Ok(sha) => format!("--force-with-lease={branch_name}:{}", sha.trim()),
+        // No tracking ref → branch was never pushed; plain --force is fine.
+        Err(_) => "--force".to_string(),
     }
 }
 
@@ -420,8 +513,14 @@ pub fn push<F: Fn(&str)>(
     } else {
         run_git_with_progress(path, &["push", "--progress"], &on_progress, extra_env)
     };
-    if result.is_ok() {
-        return result;
+
+    if let Ok(ref output) = result {
+        // Defensively fixup tracking after any successful URL-based push
+        // (handles edge cases like a previously deleted tracking ref).
+        if authed.is_some() {
+            fixup_remote_tracking_for_head(path);
+        }
+        return Ok(output.clone());
     }
 
     // If it failed, try with --set-upstream for new branches
@@ -431,7 +530,11 @@ pub fn push<F: Fn(&str)>(
     if let Some(ref a) = authed {
         let args = a.build_args(&["push", "-u", &a.url, branch_name, "--progress"]);
         let env = a.merge_env(extra_env);
-        run_git_with_progress(path, &args, &on_progress, &env)
+        let r = run_git_with_progress(path, &args, &on_progress, &env);
+        if r.is_ok() {
+            fixup_remote_tracking_for_head(path);
+        }
+        r
     } else {
         run_git_with_progress(
             path,
@@ -440,6 +543,109 @@ pub fn push<F: Fn(&str)>(
             extra_env,
         )
     }
+}
+
+// ── Post-push tracking fixup ─────────────────────────────────────────────────
+
+/// Convenience wrapper: resolve the current HEAD branch name and run
+/// [`fixup_remote_tracking`]. Silently swallows errors — the push itself
+/// already succeeded, so a fixup failure should not surface to the user.
+fn fixup_remote_tracking_for_head(path: &str) {
+    let Ok(repo) = Repository::open(path) else {
+        return;
+    };
+    let Ok(head) = repo.head() else { return };
+    let Some(branch_name) = head.shorthand() else {
+        return;
+    };
+    if let Err(e) = fixup_remote_tracking(path, branch_name) {
+        warn!("post-push tracking fixup failed: {e}");
+    }
+}
+
+/// After pushing via URL (not a named remote), git sets
+/// `branch.<name>.remote` to the full URL instead of `"origin"` and does NOT
+/// create the remote tracking ref (`refs/remotes/origin/<branch>`).
+///
+/// This function repairs both:
+/// 1. Overwrites `branch.<name>.remote` → `"origin"`
+///    (also removes the embedded PAT that would otherwise leak into `.git/config`)
+/// 2. Ensures `branch.<name>.merge` → `refs/heads/<branch>`
+/// 3. Creates/updates `refs/remotes/origin/<branch>` to match the local branch
+///    tip so that `git2` `BranchType::Remote` iteration and `for-each-ref` both
+///    see it.
+///
+/// This is a no-op when the upstream already points to `"origin"`.
+fn fixup_remote_tracking(path: &str, branch_name: &str) -> Result<(), AppError> {
+    // Step 1 — Check what branch.<name>.remote is currently set to.
+    let current_remote = run_git(
+        path,
+        &["config", "--local", &format!("branch.{branch_name}.remote")],
+        &[],
+    );
+
+    match current_remote {
+        Ok(remote) => {
+            let remote = remote.trim();
+            if remote == "origin" {
+                // Already correct — only need to ensure the tracking ref exists.
+                ensure_tracking_ref(path, branch_name)?;
+                return Ok(());
+            }
+            // remote is a URL (likely with embedded credentials) — fix it.
+        }
+        Err(_) => {
+            // No upstream configured — nothing to fix.
+            return Ok(());
+        }
+    }
+
+    // Step 2 — Overwrite branch.<branch>.remote to "origin".
+    run_git(
+        path,
+        &[
+            "config",
+            "--local",
+            &format!("branch.{branch_name}.remote"),
+            "origin",
+        ],
+        &[],
+    )?;
+
+    // Step 3 — Ensure branch.<branch>.merge is set correctly.
+    let merge_ref = format!("refs/heads/{branch_name}");
+    run_git(
+        path,
+        &[
+            "config",
+            "--local",
+            &format!("branch.{branch_name}.merge"),
+            &merge_ref,
+        ],
+        &[],
+    )?;
+
+    // Step 4 — Create/update the remote tracking ref.
+    ensure_tracking_ref(path, branch_name)?;
+
+    Ok(())
+}
+
+/// Point `refs/remotes/origin/<branch>` at the same commit as the local branch
+/// tip. This is a purely local `update-ref` — no network access.
+fn ensure_tracking_ref(path: &str, branch_name: &str) -> Result<(), AppError> {
+    let sha = run_git(path, &["rev-parse", "HEAD"], &[])?;
+    let sha = sha.trim();
+    run_git(
+        path,
+        &[
+            "update-ref",
+            &format!("refs/remotes/origin/{branch_name}"),
+            sha,
+        ],
+        &[],
+    )?;
+    Ok(())
 }
 
 // ── Hook failure detection ────────────────────────────────────────────────────
@@ -970,15 +1176,31 @@ fn parse_hunk_header(line: &str) -> (u32, u32, u32, u32) {
 /// Handles tracked modified/deleted files via `git checkout`, and
 /// untracked files via `git clean`.
 /// Resolve a conflict by accepting our version of the file.
+///
+/// During rebase, git's ours/theirs are inverted from the user's perspective,
+/// so we swap the checkout flag to match the UI's "ours" = user's branch.
 pub fn resolve_ours(path: &str, file_path: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", "--ours", "--", file_path], &[])?;
+    let flag = if is_rebase_in_progress(path) {
+        "--theirs" // git's theirs = user's ours during rebase
+    } else {
+        "--ours"
+    };
+    run_git(path, &["checkout", flag, "--", file_path], &[])?;
     run_git(path, &["add", file_path], &[])?;
     Ok(())
 }
 
 /// Resolve a conflict by accepting their version of the file.
+///
+/// During rebase, git's ours/theirs are inverted from the user's perspective,
+/// so we swap the checkout flag to match the UI's "theirs" = target branch.
 pub fn resolve_theirs(path: &str, file_path: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", "--theirs", "--", file_path], &[])?;
+    let flag = if is_rebase_in_progress(path) {
+        "--ours" // git's ours = user's theirs during rebase
+    } else {
+        "--theirs"
+    };
+    run_git(path, &["checkout", flag, "--", file_path], &[])?;
     run_git(path, &["add", file_path], &[])?;
     Ok(())
 }
@@ -1081,66 +1303,112 @@ fn apply_patch_impl(repo_path: &str, patch_text: &str, reverse: bool) -> Result<
 
 /// Get the base, ours, and theirs versions of a conflicted file,
 /// along with commit hashes and branch names for display.
+///
+/// During **rebase**, git's ours/theirs semantics are inverted from the user's
+/// perspective (git's "ours" = target branch, git's "theirs" = rebased branch).
+/// We swap them here so the frontend always sees:
+///   - "ours"   = the user's working branch
+///   - "theirs" = the incoming / target branch
 pub fn get_conflict_contents(
     repo_path: &str,
     file_path: &str,
 ) -> Result<types::ConflictContents, AppError> {
-    // :1: = base (common ancestor), :2: = ours, :3: = theirs
+    // :1: = base (common ancestor), :2: = git's ours, :3: = git's theirs
     let base = git_show_stage(repo_path, 1, file_path).ok();
-    let ours = git_show_stage(repo_path, 2, file_path)
-        .unwrap_or_default();
-    let theirs = git_show_stage(repo_path, 3, file_path)
-        .unwrap_or_default();
+    let git_ours = git_show_stage(repo_path, 2, file_path).unwrap_or_default();
+    let git_theirs = git_show_stage(repo_path, 3, file_path).unwrap_or_default();
 
-    // Ours commit info
-    let ours_commit_id = run_git(repo_path, &["rev-parse", "--short", "HEAD"], &[])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    let ours_branch = run_git(repo_path, &["symbolic-ref", "--short", "HEAD"], &[])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| ours_commit_id.clone());
+    if is_rebase_in_progress(repo_path) {
+        // During rebase of A onto B:
+        //   git stage 2 ("ours")   = HEAD   = target branch B
+        //   git stage 3 ("theirs") = REBASE_HEAD = user's branch A
+        // Swap so the UI shows A as "ours" and B as "theirs".
 
-    // Theirs commit info (try MERGE_HEAD first, then REBASE_HEAD)
-    let theirs_ref = if std::path::Path::new(repo_path).join(".git/MERGE_HEAD").exists() {
-        "MERGE_HEAD"
-    } else {
-        "REBASE_HEAD"
-    };
-    let theirs_commit_id = run_git(repo_path, &["rev-parse", "--short", theirs_ref], &[])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-
-    // Try to extract theirs branch name from MERGE_MSG (most reliable),
-    // then fallback to name-rev (validating output), then commit hash.
-    let theirs_branch = extract_branch_from_merge_msg(repo_path)
-        .or_else(|| {
+        // Ours = user's branch (the branch being rebased)
+        let ours_commit_id = run_git(repo_path, &["rev-parse", "--short", "REBASE_HEAD"], &[])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let ours_branch = read_rebase_head_name(repo_path).unwrap_or_else(|| {
+            // Fallback: try name-rev on REBASE_HEAD
             run_git(
                 repo_path,
-                &["name-rev", "--name-only", "--no-undefined", theirs_ref],
+                &["name-rev", "--name-only", "--no-undefined", "REBASE_HEAD"],
                 &[],
             )
             .ok()
             .map(|s| s.trim().to_string())
-            // name-rev can leak stderr warnings into stdout via run_git —
-            // filter out anything that doesn't look like a branch name.
             .filter(|s| !s.is_empty() && !s.contains(' ') && !s.contains("Could not"))
-            .map(|s| {
-                s.strip_prefix("remotes/origin/")
-                    .unwrap_or(&s)
-                    .to_string()
-            })
-        })
-        .unwrap_or_else(|| theirs_commit_id.clone());
+            .map(|s| s.strip_prefix("remotes/origin/").unwrap_or(&s).to_string())
+            .unwrap_or_else(|| ours_commit_id.clone())
+        });
 
-    Ok(types::ConflictContents {
-        base,
-        ours,
-        theirs,
-        ours_commit_id,
-        theirs_commit_id,
-        ours_branch,
-        theirs_branch,
-    })
+        // Theirs = target branch (the branch we're rebasing onto)
+        let theirs_commit_id = run_git(repo_path, &["rev-parse", "--short", "HEAD"], &[])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let theirs_branch =
+            read_rebase_onto_name(repo_path).unwrap_or_else(|| theirs_commit_id.clone());
+
+        Ok(types::ConflictContents {
+            base,
+            ours: git_theirs, // swap: user's branch content (git stage 3)
+            theirs: git_ours, // swap: target branch content (git stage 2)
+            ours_commit_id,
+            theirs_commit_id,
+            ours_branch,
+            theirs_branch,
+        })
+    } else {
+        // Merge and cherry-pick: git's ours/theirs matches user expectations.
+
+        // Ours = HEAD (current branch)
+        let ours_commit_id = run_git(repo_path, &["rev-parse", "--short", "HEAD"], &[])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let ours_branch = run_git(repo_path, &["symbolic-ref", "--short", "HEAD"], &[])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| ours_commit_id.clone());
+
+        // Theirs = MERGE_HEAD or CHERRY_PICK_HEAD
+        let theirs_ref = if Path::new(repo_path).join(".git/MERGE_HEAD").exists() {
+            "MERGE_HEAD"
+        } else if Path::new(repo_path).join(".git/CHERRY_PICK_HEAD").exists() {
+            "CHERRY_PICK_HEAD"
+        } else {
+            "HEAD" // shouldn't reach here given rebase check above
+        };
+        let theirs_commit_id = run_git(repo_path, &["rev-parse", "--short", theirs_ref], &[])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        // Try to extract theirs branch name from MERGE_MSG (most reliable),
+        // then fallback to name-rev (validating output), then commit hash.
+        let theirs_branch = extract_branch_from_merge_msg(repo_path)
+            .or_else(|| {
+                run_git(
+                    repo_path,
+                    &["name-rev", "--name-only", "--no-undefined", theirs_ref],
+                    &[],
+                )
+                .ok()
+                .map(|s| s.trim().to_string())
+                // name-rev can leak stderr warnings into stdout via run_git —
+                // filter out anything that doesn't look like a branch name.
+                .filter(|s| !s.is_empty() && !s.contains(' ') && !s.contains("Could not"))
+                .map(|s| s.strip_prefix("remotes/origin/").unwrap_or(&s).to_string())
+            })
+            .unwrap_or_else(|| theirs_commit_id.clone());
+
+        Ok(types::ConflictContents {
+            base,
+            ours: git_ours,
+            theirs: git_theirs,
+            ours_commit_id,
+            theirs_commit_id,
+            ours_branch,
+            theirs_branch,
+        })
+    }
 }
 
 /// Extract the theirs branch name from `.git/MERGE_MSG`.
@@ -1161,13 +1429,83 @@ fn extract_branch_from_merge_msg(repo_path: &str) -> Option<String> {
     // "Merge remote-tracking branch 'origin/branch-name'"
     if let Some(rest) = first_line.strip_prefix("Merge remote-tracking branch '") {
         let full = rest.split('\'').next()?;
-        return Some(
-            full.strip_prefix("origin/")
-                .unwrap_or(full)
-                .to_string(),
-        );
+        return Some(full.strip_prefix("origin/").unwrap_or(full).to_string());
     }
     None
+}
+
+/// Returns `true` if a rebase (interactive or apply-based) is currently in progress.
+fn is_rebase_in_progress(repo_path: &str) -> bool {
+    let git_dir = Path::new(repo_path).join(".git");
+    git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists()
+}
+
+/// Read the name of the branch being rebased from the rebase state directory.
+///
+/// During `git rebase B` (while on branch A), the file `head-name` contains
+/// `refs/heads/A` — the branch whose commits are being replayed.
+/// Returns `None` if no rebase is in progress or the file is missing.
+fn read_rebase_head_name(repo_path: &str) -> Option<String> {
+    let git_dir = Path::new(repo_path).join(".git");
+    let rebase_dir = if git_dir.join("rebase-merge").exists() {
+        git_dir.join("rebase-merge")
+    } else if git_dir.join("rebase-apply").exists() {
+        git_dir.join("rebase-apply")
+    } else {
+        return None;
+    };
+    std::fs::read_to_string(rebase_dir.join("head-name"))
+        .ok()
+        .map(|s| {
+            s.trim()
+                .strip_prefix("refs/heads/")
+                .unwrap_or(s.trim())
+                .to_string()
+        })
+}
+
+/// Read the "onto" target for the current rebase and resolve it to a branch name.
+///
+/// The `onto` file contains a full commit hash. We use `git name-rev` to
+/// resolve it to a branch name, stripping `~N`/`^N` decorations, or fall back
+/// to a short hash.
+fn read_rebase_onto_name(repo_path: &str) -> Option<String> {
+    let git_dir = Path::new(repo_path).join(".git");
+    let rebase_dir = if git_dir.join("rebase-merge").exists() {
+        git_dir.join("rebase-merge")
+    } else if git_dir.join("rebase-apply").exists() {
+        git_dir.join("rebase-apply")
+    } else {
+        return None;
+    };
+    let onto_hash = std::fs::read_to_string(rebase_dir.join("onto"))
+        .ok()?
+        .trim()
+        .to_string();
+    if onto_hash.is_empty() {
+        return None;
+    }
+    // Try to resolve the onto commit to a branch name
+    run_git(
+        repo_path,
+        &["name-rev", "--name-only", "--no-undefined", &onto_hash],
+        &[],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty() && !s.contains(' ') && !s.contains("Could not"))
+    .map(|s| {
+        // Strip decorations like "branch-name~2" that name-rev adds
+        let s = s.split('~').next().unwrap_or(&s);
+        let s = s.split('^').next().unwrap_or(s);
+        s.strip_prefix("remotes/origin/").unwrap_or(s).to_string()
+    })
+    .or_else(|| {
+        // Fall back to short hash
+        run_git(repo_path, &["rev-parse", "--short", &onto_hash], &[])
+            .ok()
+            .map(|s| s.trim().to_string())
+    })
 }
 
 fn git_show_stage(repo_path: &str, stage: u8, file_path: &str) -> Result<String, AppError> {
@@ -1342,11 +1680,7 @@ pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
         if parts.len() >= 4 {
             let commit_id = parts[0].to_string();
             // Parent field may contain multiple parents separated by spaces; take the first
-            let parent_commit_id = parts[1]
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let parent_commit_id = parts[1].split_whitespace().next().unwrap_or("").to_string();
             let message = parts[3].to_string();
             stashes.push(StashInfo {
                 index: idx,
@@ -1711,6 +2045,60 @@ pub fn rebase_onto(
     run_git(path, &["rebase", target], extra_env)
 }
 
+/// Get progress info for an in-progress rebase.
+///
+/// Reads step/total from `.git/rebase-merge/` (or `rebase-apply/`)
+/// and the current commit message from the `message` file.
+pub fn get_rebase_progress(path: &str) -> Result<RebaseProgress, AppError> {
+    let git_dir = Path::new(path).join(".git");
+    let rebase_dir = if git_dir.join("rebase-merge").exists() {
+        git_dir.join("rebase-merge")
+    } else if git_dir.join("rebase-apply").exists() {
+        git_dir.join("rebase-apply")
+    } else {
+        return Err(AppError::Other("No rebase in progress".to_string()));
+    };
+
+    let step = std::fs::read_to_string(rebase_dir.join("msgnum"))
+        .unwrap_or_default()
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0);
+    let total = std::fs::read_to_string(rebase_dir.join("end"))
+        .unwrap_or_default()
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0);
+    let message = std::fs::read_to_string(rebase_dir.join("message"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    // Try stopped-sha first (set when rebase pauses on conflict), then REBASE_HEAD
+    let commit_id = std::fs::read_to_string(rebase_dir.join("stopped-sha"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .and_then(|full| {
+            run_git(path, &["rev-parse", "--short", &full], &[])
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .or_else(|| {
+            run_git(path, &["rev-parse", "--short", "REBASE_HEAD"], &[])
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_default();
+
+    Ok(RebaseProgress {
+        step,
+        total,
+        message,
+        commit_id,
+    })
+}
+
 /// Detect if a merge, rebase, or cherry-pick is in progress.
 pub fn get_conflict_state(path: &str) -> Result<ConflictState, AppError> {
     let git_dir = Path::new(path).join(".git");
@@ -1754,12 +2142,50 @@ pub fn abort_operation(path: &str) -> Result<String, AppError> {
 }
 
 /// Continue the current in-progress operation after conflict resolution.
-pub fn continue_operation(path: &str, extra_env: &[(String, String)]) -> Result<String, AppError> {
+///
+/// When `message` is provided, writes it to the appropriate message file
+/// and suppresses git's editor so the user never gets bounced out to
+/// VS Code (or whatever their `core.editor` is).
+pub fn continue_operation(
+    path: &str,
+    message: Option<String>,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
     let state = get_conflict_state(path)?;
+
+    let mut env: Vec<(String, String)> = extra_env.to_vec();
+
+    if let Some(ref msg) = message {
+        // Write the commit message to the appropriate file so git uses it
+        let git_dir = Path::new(path).join(".git");
+        match state.operation.as_str() {
+            "rebase" => {
+                let rebase_dir = if git_dir.join("rebase-merge").exists() {
+                    git_dir.join("rebase-merge")
+                } else {
+                    git_dir.join("rebase-apply")
+                };
+                std::fs::write(rebase_dir.join("message"), msg)
+                    .map_err(|e| AppError::Other(format!("Failed to write rebase message: {e}")))?;
+            }
+            "cherry-pick" | "merge" => {
+                std::fs::write(git_dir.join("MERGE_MSG"), msg)
+                    .map_err(|e| AppError::Other(format!("Failed to write merge message: {e}")))?;
+            }
+            _ => {}
+        }
+    }
+
+    // Always suppress the editor when continuing from the UI.
+    // `cat` is available on all platforms (MSYS2 on Windows, coreutils on
+    // Unix). It reads the file to stdout and exits 0, leaving the commit
+    // message file untouched — exactly what we need.
+    env.push(("GIT_EDITOR".to_string(), "cat".to_string()));
+
     match state.operation.as_str() {
-        "rebase" => run_git(path, &["rebase", "--continue"], extra_env),
-        "cherry-pick" => run_git(path, &["cherry-pick", "--continue"], extra_env),
-        "merge" => run_git(path, &["merge", "--continue"], extra_env),
+        "rebase" => run_git(path, &["rebase", "--continue"], &env),
+        "cherry-pick" => run_git(path, &["cherry-pick", "--continue"], &env),
+        "merge" => run_git(path, &["merge", "--continue"], &env),
         _ => Err(AppError::Other("No operation in progress".to_string())),
     }
 }

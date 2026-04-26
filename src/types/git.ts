@@ -120,6 +120,17 @@ export interface ConflictState {
   operation: string;
 }
 
+export interface RebaseProgress {
+  /** Current step (1-based) */
+  step: number;
+  /** Total number of steps */
+  total: number;
+  /** Original commit message for the current step */
+  message: string;
+  /** Short commit hash for the current step */
+  commit_id: string;
+}
+
 export interface UndoAction {
   description: string;
   can_undo: boolean;

@@ -128,17 +128,11 @@ export const prefetchDarkTheme = EditorView.theme(
       content: '"−"',
       color: "hsl(0 70% 60%)",
     },
-    // When manually edited, keep arrows on hover (no remove action)
-    "&.cm-manually-edited .cm-source-gutter .cm-gutterElement.cm-gutter-ours:hover::after":
+    // When manually edited, only tracked lines show the − button.
+    // Non-tracked lines (unchanged/edited) keep their default appearance.
+    "&.cm-manually-edited .cm-source-gutter .cm-gutterElement.cm-gutter-unchanged:hover::after":
       {
-        content: '"›"',
-        color: "rgba(59, 130, 246, 0.8)",
-        cursor: "default",
-      },
-    "&.cm-manually-edited .cm-source-gutter .cm-gutterElement.cm-gutter-theirs:hover::after":
-      {
-        content: '"‹"',
-        color: "rgba(168, 85, 247, 0.8)",
+        content: '""',
         cursor: "default",
       },
     // Scrollbar styling matching the app
