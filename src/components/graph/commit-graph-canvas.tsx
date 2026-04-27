@@ -36,26 +36,116 @@ const BG_SELECTED    = "hsl(240 6% 10%)";  // --secondary
 const BG_HOVER       = "hsl(240 6% 8%)";   // between bg and secondary
 const BG_PAGE        = "hsl(240 6% 3.9%)"; // --background (for clearing behind separator labels)
 
-const LANE_COLORS = [
-  "#00e5ff", // cyan
-  "#76ff03", // lime
-  "#ff4081", // pink
-  "#ffea00", // yellow
-  "#e040fb", // purple
-  "#ff6e40", // deep orange
-  "#64ffda", // teal
-  "#448aff", // blue
-  "#b2ff59", // light green
-  "#ff5252", // red
+// ── Hierarchical branch color system ──────────────────────────────
+// Root branches (main/dev) get fixed base colors. Known prefixes
+// (feature/, fix/, etc.) derive from their parent's color with a
+// hue shift + desaturation so lineage is visible at a glance.
+// Unknown branches get their own base color from a palette.
+// Remote-only branches use a darker tone instead of flat gray.
+
+interface HSL { h: number; s: number; l: number }
+
+function hslToHex({ h, s, l }: HSL): string {
+  const sN = s / 100;
+  const lN = l / 100;
+  const a = sN * Math.min(lN, 1 - lN);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = lN - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * c).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+// Fixed base colors for well-known root branches
+const MAIN_HSL: HSL = { h: 215, s: 80, l: 65 };  // blue
+const DEV_HSL: HSL  = { h: 175, s: 85, l: 50 };  // cyan
+
+// Palette for unknown root branches — spread across the hue wheel
+const ROOT_PALETTE: HSL[] = [
+  { h: 340, s: 82, l: 63 },  // pink
+  { h: 50,  s: 88, l: 52 },  // gold
+  { h: 280, s: 72, l: 65 },  // purple
+  { h: 100, s: 78, l: 50 },  // green
+  { h: 15,  s: 85, l: 58 },  // orange
+  { h: 0,   s: 78, l: 60 },  // red
+  { h: 195, s: 75, l: 55 },  // teal
+  { h: 260, s: 68, l: 68 },  // lavender
 ];
+
+function strHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+/** Determine base HSL + depth for a branch from its name */
+function branchInfo(name: string): { base: HSL; depth: number; hash: number } {
+  const clean = name.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+  const h = strHash(clean);
+
+  // Root: main / master
+  if (clean === "main" || clean === "master")
+    return { base: MAIN_HSL, depth: 0, hash: h };
+  // Root: dev / develop
+  if (clean === "dev" || clean === "develop" || clean === "development")
+    return { base: DEV_HSL, depth: 0, hash: h };
+
+  // Depth 1 from dev — feature / fix / chore work
+  const devPrefixes = ["feature/", "feat/", "fix/", "hotfix/", "bugfix/", "chore/", "refactor/"];
+  for (const p of devPrefixes) {
+    if (clean.startsWith(p)) return { base: DEV_HSL, depth: 1, hash: h };
+  }
+  // Depth 1 from main — release branches
+  if (clean.startsWith("release/") || clean.startsWith("rel/"))
+    return { base: MAIN_HSL, depth: 1, hash: h };
+
+  // Unknown branch → own root color from palette
+  return { base: ROOT_PALETTE[h % ROOT_PALETTE.length], depth: 0, hash: h };
+}
+
+/** Derive color from a base at a given depth — shifts hue per sibling */
+function deriveHsl(base: HSL, depth: number, hash: number): HSL {
+  const d = Math.min(depth, 3);
+  // Siblings get a ±25° hue shift so feature/a and feature/b are distinct
+  const hueShift = d > 0 ? ((hash % 50) - 25) : 0;
+  return {
+    h: (base.h + hueShift + 360) % 360,
+    s: Math.max(35, base.s - d * 14),
+    l: Math.min(82, base.l + d * 6),
+  };
+}
+
+/** Darker/muted variant for remote-only branches */
+function darkenHsl(hsl: HSL): HSL {
+  return {
+    h: hsl.h,
+    s: Math.max(20, hsl.s - 30),
+    l: Math.max(28, hsl.l - 18),
+  };
+}
+
+/** Display color for a branch (hex) */
+function branchColor(name: string): string {
+  const { base, depth, hash } = branchInfo(name);
+  return hslToHex(deriveHsl(base, depth, hash));
+}
+
+/** Darker color for remote-only branches (hex) */
+function branchColorDim(name: string): string {
+  const { base, depth, hash } = branchInfo(name);
+  return hslToHex(darkenHsl(deriveHsl(base, depth, hash)));
+}
+
+/** Fallback color for orphan commits (no branch ownership) — golden angle spacing */
+function laneColor(lane: number): string {
+  const h = (lane * 137.5) % 360;
+  return hslToHex({ h, s: 70, l: 60 });
+}
 
 // Module-level avatar image cache — persists across renders and remounts.
 // null = load attempted but failed (permanent fallback to initials).
 const avatarCache = new Map<string, HTMLImageElement | null>();
-
-function laneColor(lane: number): string {
-  return LANE_COLORS[lane % LANE_COLORS.length];
-}
 
 /** Pick a readable text color (black or white) for a given hex background */
 function contrastText(hex: string): string {
@@ -63,15 +153,6 @@ function contrastText(hex: string): string {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return 0.299 * r + 0.587 * g + 0.114 * b > 140 ? "#000000" : "#ffffff";
-}
-
-/** Consistent color for a branch name — same name always gets same color */
-function nameColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  }
-  return LANE_COLORS[Math.abs(hash) % LANE_COLORS.length];
 }
 
 
@@ -321,16 +402,17 @@ function drawMergedBranchPill(
   y: number,
   group: MergedBranchGroup,
 ): number {
-  const bColor = nameColor(group.baseName);
+  const bColor = branchColor(group.baseName);
+  const dimColor = branchColorDim(group.baseName);
   const isRemoteOnly = !group.local && !!group.remote;
   const bgAlpha = group.isHead ? 0.3 : 0.15;
 
   const bg = isRemoteOnly
-    ? "rgba(255,255,255,0.08)"
+    ? `${dimColor}${Math.round(0.15 * 255).toString(16).padStart(2, "0")}`
     : `${bColor}${Math.round(bgAlpha * 255)
         .toString(16)
         .padStart(2, "0")}`;
-  const textCol = isRemoteOnly ? COLOR_DIM : bColor;
+  const textCol = isRemoteOnly ? dimColor : bColor;
 
   // Measure text
   ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
@@ -457,6 +539,7 @@ interface CommitGraphCanvasProps {
   onClickWip: () => void;
   onSelectStash?: (index: number) => void;
   onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
+  onStashContextMenu?: (index: number, x: number, y: number) => void;
 }
 
 export function CommitGraphCanvas({
@@ -476,6 +559,7 @@ export function CommitGraphCanvas({
   onClickWip,
   onSelectStash,
   onCommitContextMenu,
+  onStashContextMenu,
 }: CommitGraphCanvasProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -567,7 +651,7 @@ export function CommitGraphCanvas({
       .sort((a, b) => (b.is_head ? 1 : 0) - (a.is_head ? 1 : 0));
 
     for (const branch of sorted) {
-      const brColor = nameColor(branch.name);
+      const brColor = branchColor(branch.name);
       // Find the commit this branch points to
       const headCommit = commits.find((c) => c.id.startsWith(branch.commit_id));
       if (!headCommit) continue;
@@ -1208,13 +1292,33 @@ export function CommitGraphCanvas({
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
-      if (!onCommitContextMenu) return;
       const scroll = scrollRef.current;
       if (!scroll) return;
 
       const rect = scroll.getBoundingClientRect();
-      const y = e.clientY - rect.top + scroll.scrollTop;
-      const visRow = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top + scroll.scrollTop;
+
+      // Check if right-click landed on a stash badge
+      if (onStashContextMenu) {
+        for (const badge of badgeHitAreasRef.current) {
+          if (
+            badge.stashIndex != null &&
+            clickX >= badge.x &&
+            clickX <= badge.x + badge.width &&
+            clickY >= badge.y &&
+            clickY <= badge.y + badge.height
+          ) {
+            e.preventDefault();
+            onStashContextMenu(badge.stashIndex, e.clientX, e.clientY);
+            return;
+          }
+        }
+      }
+
+      // Fall back to commit context menu
+      if (!onCommitContextMenu) return;
+      const visRow = Math.floor((clickY - GRAPH_PADDING_TOP) / ROW_HEIGHT);
       const commitIdx = visRow - rowOffset;
 
       if (commitIdx >= 0 && commitIdx < commits.length) {
@@ -1222,7 +1326,7 @@ export function CommitGraphCanvas({
         onCommitContextMenu(commits[commitIdx].id, e.clientX, e.clientY);
       }
     },
-    [commits, rowOffset, onCommitContextMenu],
+    [commits, rowOffset, onCommitContextMenu, onStashContextMenu],
   );
 
   useEffect(() => {

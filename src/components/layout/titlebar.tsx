@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { platform } from "@tauri-apps/plugin-os";
 import {
@@ -48,6 +49,11 @@ function getAppWindow(): TauriWindow | null {
 
 export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
   const [isMaximized, setIsMaximized] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const win = getAppWindow();
@@ -85,24 +91,30 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
           Prefetch
         </span>
         <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-caption font-medium uppercase tracking-wider text-brand">
-          Alpha
+          Alpha{appVersion ? ` v${appVersion}` : ""}
         </span>
       </div>
 
-      {/* Center: Repo context — hidden in settings */}
-      <div className="flex flex-1 items-center min-w-0" data-tauri-drag-region>
+      {/* Repo switcher — left-aligned after brand, hidden in settings */}
+      <div className="flex items-center min-w-0" data-tauri-drag-region>
         {!settingsOpen && <TitlebarRepoSwitcher />}
       </div>
 
-      {/* Right: Actions + Window controls */}
-      <div className={`flex items-center gap-0.5 ${IS_MAC ? "pr-2.5" : "pr-0"}`}>
-        {/* Action buttons — hidden in settings */}
-        {!settingsOpen && <TitlebarActionsGroup />}
+      {/* Left spacer — pushes actions to center */}
+      <div className="flex-1 min-w-2" data-tauri-drag-region />
 
+      {/* Center: Action buttons — hidden in settings */}
+      {!settingsOpen && <TitlebarActionsGroup />}
+
+      {/* Right spacer — balances centering */}
+      <div className="flex-1 min-w-2" data-tauri-drag-region />
+
+      {/* Right: Window controls */}
+      <div className={`flex items-center gap-0.5 ${IS_MAC ? "pr-2.5" : "pr-0"}`}>
         {/* Window controls — Windows/Linux only (macOS uses native traffic lights) */}
         {!IS_MAC && (
           <>
-            {!settingsOpen && <div className="mx-1.5 h-4 w-px bg-border" />}
+            <div className="mx-1.5 h-4 w-px bg-border" />
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -320,11 +332,104 @@ function TitlebarActionsGroup() {
     );
   }
 
+  const isLoading = useRepoStore((s) => s.isLoading);
+  const undoInfo = useRepoStore((s) => s.undoInfo);
+  const undoAction = useRepoStore((s) => s.undo);
+  const pushStash = useRepoStore((s) => s.pushStash);
+  const popStash = useRepoStore((s) => s.popStash);
+  const stashes = useRepoStore((s) => s.stashes);
+  const fileStatuses = useRepoStore((s) => s.fileStatuses);
+  const createBranch = useRepoStore((s) => s.createBranch);
+  const fetchAction = useRepoStore((s) => s.fetch);
+  const pullAction = useRepoStore((s) => s.pull);
+  const pushAction = useRepoStore((s) => s.push);
+
+  const [showBranchInput, setShowBranchInput] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
+
   return (
     <div ref={containerRef} className="flex items-center gap-0.5">
-      <TitlebarGraphActions />
+      {/* Undo */}
+      {undoInfo?.can_undo && (
+        <>
+          <TitlebarActionButton
+            icon={<Undo2 className="h-3.5 w-3.5" />}
+            label="Undo"
+            tooltip={undoInfo.description}
+            onClick={undoAction}
+            disabled={isLoading}
+          />
+          <div className="mx-1.5 h-4 w-px bg-border" />
+        </>
+      )}
+
+      {/* Stash / Pop */}
+      <TitlebarActionButton
+        icon={<Archive className="h-3.5 w-3.5" />}
+        label="Stash"
+        onClick={() => pushStash()}
+        disabled={isLoading || fileStatuses.length === 0}
+      />
+      <TitlebarActionButton
+        icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+        label="Pop"
+        onClick={() => popStash(0)}
+        disabled={isLoading || stashes.length === 0}
+      />
+
       <div className="mx-1.5 h-4 w-px bg-border" />
-      <TitlebarSyncActions />
+
+      {/* Fetch / Pull / Push */}
+      <TitlebarActionButton
+        icon={<RefreshCw className="h-3.5 w-3.5" />}
+        label="Fetch"
+        onClick={fetchAction}
+        disabled={isLoading}
+      />
+      <TitlebarActionButton
+        icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+        label="Pull"
+        onClick={pullAction}
+        disabled={isLoading}
+      />
+      <TitlebarActionButton
+        icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
+        label="Push"
+        onClick={pushAction}
+        disabled={isLoading}
+      />
+
+      <div className="mx-1.5 h-4 w-px bg-border" />
+
+      {/* Branch */}
+      {showBranchInput ? (
+        <input
+          type="text"
+          placeholder="branch name..."
+          value={newBranchName}
+          onChange={(e) => setNewBranchName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newBranchName.trim()) {
+              createBranch(newBranchName.trim());
+              setNewBranchName("");
+              setShowBranchInput(false);
+            } else if (e.key === "Escape") {
+              setShowBranchInput(false);
+              setNewBranchName("");
+            }
+          }}
+          onBlur={() => { setShowBranchInput(false); setNewBranchName(""); }}
+          autoFocus
+          className="w-32 rounded-md bg-background border border-border px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+        />
+      ) : (
+        <TitlebarActionButton
+          icon={<GitBranchPlus className="h-3.5 w-3.5" />}
+          label="Branch"
+          onClick={() => setShowBranchInput(true)}
+          disabled={isLoading}
+        />
+      )}
     </div>
   );
 }
@@ -377,12 +482,9 @@ function CollapsedActionsDropdown() {
 
       {isOpen && (
         <div className="absolute right-0 top-full mt-1 z-50 min-w-44 rounded-md border border-border bg-popover shadow-lg py-1">
-          {/* History */}
+          {/* Undo */}
           {undoInfo?.can_undo && (
             <>
-              <p className="px-3 pt-1.5 pb-1 text-caption text-faint uppercase tracking-wider font-medium">
-                History
-              </p>
               <DropdownActionItem
                 icon={<Undo2 className="h-3.5 w-3.5" />}
                 label="Undo"
@@ -394,10 +496,7 @@ function CollapsedActionsDropdown() {
             </>
           )}
 
-          {/* Stash */}
-          <p className="px-3 pt-1.5 pb-1 text-caption text-faint uppercase tracking-wider font-medium">
-            Stash
-          </p>
+          {/* Stash / Pop */}
           <DropdownActionItem
             icon={<Archive className="h-3.5 w-3.5" />}
             label="Stash"
@@ -412,10 +511,28 @@ function CollapsedActionsDropdown() {
           />
           <div className="mx-2 my-1 border-t border-border" />
 
+          {/* Fetch / Pull / Push */}
+          <DropdownActionItem
+            icon={<RefreshCw className="h-3.5 w-3.5" />}
+            label="Fetch"
+            disabled={isLoading}
+            onClick={() => { fetchAction(); setIsOpen(false); }}
+          />
+          <DropdownActionItem
+            icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+            label="Pull"
+            disabled={isLoading}
+            onClick={() => { pullAction(); setIsOpen(false); }}
+          />
+          <DropdownActionItem
+            icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
+            label="Push"
+            disabled={isLoading}
+            onClick={() => { pushAction(); setIsOpen(false); }}
+          />
+          <div className="mx-2 my-1 border-t border-border" />
+
           {/* Branch */}
-          <p className="px-3 pt-1.5 pb-1 text-caption text-faint uppercase tracking-wider font-medium">
-            Branch
-          </p>
           {showBranchInput ? (
             <div className="px-3 py-1">
               <input
@@ -447,30 +564,6 @@ function CollapsedActionsDropdown() {
               onClick={() => setShowBranchInput(true)}
             />
           )}
-          <div className="mx-2 my-1 border-t border-border" />
-
-          {/* Sync */}
-          <p className="px-3 pt-1.5 pb-1 text-caption text-faint uppercase tracking-wider font-medium">
-            Sync
-          </p>
-          <DropdownActionItem
-            icon={<RefreshCw className="h-3.5 w-3.5" />}
-            label="Fetch"
-            disabled={isLoading}
-            onClick={() => { fetchAction(); setIsOpen(false); }}
-          />
-          <DropdownActionItem
-            icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-            label="Pull"
-            disabled={isLoading}
-            onClick={() => { pullAction(); setIsOpen(false); }}
-          />
-          <DropdownActionItem
-            icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-            label="Push"
-            disabled={isLoading}
-            onClick={() => { pushAction(); setIsOpen(false); }}
-          />
         </div>
       )}
     </div>
@@ -506,107 +599,7 @@ function DropdownActionItem({
   );
 }
 
-/** Change 5: Graph action buttons (Undo, Stash, Pop, Branch) in the titlebar */
-function TitlebarGraphActions() {
-  const isLoading = useRepoStore((s) => s.isLoading);
-  const undoInfo = useRepoStore((s) => s.undoInfo);
-  const undoAction = useRepoStore((s) => s.undo);
-  const pushStash = useRepoStore((s) => s.pushStash);
-  const popStash = useRepoStore((s) => s.popStash);
-  const stashes = useRepoStore((s) => s.stashes);
-  const fileStatuses = useRepoStore((s) => s.fileStatuses);
-  const createBranch = useRepoStore((s) => s.createBranch);
-
-  const [showBranchInput, setShowBranchInput] = useState(false);
-  const [newBranchName, setNewBranchName] = useState("");
-
-  return (
-    <div className="flex items-center gap-0.5">
-      {undoInfo?.can_undo && (
-        <TitlebarActionButton
-          icon={<Undo2 className="h-3.5 w-3.5" />}
-          label="Undo"
-          tooltip={undoInfo.description}
-          onClick={undoAction}
-          disabled={isLoading}
-        />
-      )}
-      <TitlebarActionButton
-        icon={<Archive className="h-3.5 w-3.5" />}
-        label="Stash"
-        onClick={() => pushStash()}
-        disabled={isLoading || fileStatuses.length === 0}
-      />
-      <TitlebarActionButton
-        icon={<ArchiveRestore className="h-3.5 w-3.5" />}
-        label="Pop"
-        onClick={() => popStash(0)}
-        disabled={isLoading || stashes.length === 0}
-      />
-      {showBranchInput ? (
-        <input
-          type="text"
-          placeholder="branch name..."
-          value={newBranchName}
-          onChange={(e) => setNewBranchName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && newBranchName.trim()) {
-              createBranch(newBranchName.trim());
-              setNewBranchName("");
-              setShowBranchInput(false);
-            } else if (e.key === "Escape") {
-              setShowBranchInput(false);
-              setNewBranchName("");
-            }
-          }}
-          onBlur={() => { setShowBranchInput(false); setNewBranchName(""); }}
-          autoFocus
-          className="w-32 rounded-md bg-background border border-border px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
-        />
-      ) : (
-        <TitlebarActionButton
-          icon={<GitBranchPlus className="h-3.5 w-3.5" />}
-          label="Branch"
-          onClick={() => setShowBranchInput(true)}
-          disabled={isLoading}
-        />
-      )}
-    </div>
-  );
-}
-
-/** Quick-action buttons in the titlebar: Fetch, Pull, Push */
-function TitlebarSyncActions() {
-  const isLoading = useRepoStore((s) => s.isLoading);
-  const fetchAction = useRepoStore((s) => s.fetch);
-  const pullAction = useRepoStore((s) => s.pull);
-  const pushAction = useRepoStore((s) => s.push);
-
-  return (
-    <div className="flex items-center gap-0.5">
-      <TitlebarActionButton
-        icon={<RefreshCw className="h-3.5 w-3.5" />}
-        label="Fetch"
-        onClick={fetchAction}
-        disabled={isLoading}
-      />
-      <TitlebarActionButton
-        icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-        label="Pull"
-        onClick={pullAction}
-        disabled={isLoading}
-      />
-      <TitlebarActionButton
-        icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-        label="Push"
-        onClick={pushAction}
-        disabled={isLoading}
-      />
-    </div>
-  );
-}
-
-/** Change 7: Titlebar button with shadcn Tooltip instead of native title */
+/** Titlebar button with shadcn Tooltip instead of native title */
 function TitlebarActionButton({
   icon,
   label,

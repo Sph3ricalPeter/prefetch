@@ -435,6 +435,12 @@ pub async fn stash_drop(index: usize, state: State<'_, AppState>) -> Result<Stri
 }
 
 #[tauri::command]
+pub async fn stash_apply(index: usize, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::stash_apply(&path, index)).await
+}
+
+#[tauri::command]
 pub async fn create_tag(
     name: String,
     commit: Option<String>,
@@ -495,6 +501,25 @@ pub async fn rebase_onto(target: String, state: State<'_, AppState>) -> Result<S
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
     offload(move || repository::rebase_onto(&path, &target, &env)).await
+}
+
+#[tauri::command]
+pub async fn merge_branch(target: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::merge_branch(&path, &target, &env)).await
+}
+
+#[tauri::command]
+pub async fn get_merge_message(state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_merge_message(&path)).await
+}
+
+#[tauri::command]
+pub async fn delete_branch(name: String, force: bool, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::delete_branch(&path, &name, force)).await
 }
 
 #[tauri::command]

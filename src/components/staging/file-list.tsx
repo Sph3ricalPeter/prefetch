@@ -7,8 +7,9 @@ import {
   Trash2,
   Folder,
   FolderOpen,
+  Loader2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -46,6 +47,19 @@ export function FileList() {
   const isLfsFile = (filePath: string) =>
     lfsInfo?.initialized &&
     lfsInfo.tracked_patterns.some((p) => matchesLfsPattern(filePath, p.pattern));
+  // Track in-flight stage/unstage ops for spinner + disable feedback
+  const [busyOp, setBusyOp] = useState<"stage" | "unstage" | null>(null);
+
+  const wrappedStage = useCallback(async (paths: string[]) => {
+    setBusyOp("stage");
+    try { await stage(paths); } finally { setBusyOp(null); }
+  }, [stage]);
+
+  const wrappedUnstage = useCallback(async (paths: string[]) => {
+    setBusyOp("unstage");
+    try { await unstage(paths); } finally { setBusyOp(null); }
+  }, [unstage]);
+
   const [confirmDiscard, setConfirmDiscard] = useState<string[] | null>(null);
   const [conflictsOpen, setConflictsOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(true);
@@ -100,10 +114,11 @@ export function FileList() {
         actionLabel="Stage All"
         onAction={
           unstaged.length > 0
-            ? () => stage(unstaged.map((f) => f.path))
+            ? () => wrappedStage(unstaged.map((f) => f.path))
             : undefined
         }
-        actionDisabled={isLoading}
+        actionDisabled={isLoading || busyOp !== null}
+        isBusy={busyOp === "stage"}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -111,13 +126,13 @@ export function FileList() {
             selectedFilePath={selectedFilePath}
             isLfsFile={isLfsFile}
             onSelect={(path) => selectFile(path, false)}
-            onToggle={(path) => stage([path])}
+            onToggle={(path) => wrappedStage([path])}
             toggleIcon={<Plus className="h-3 w-3" />}
             toggleTitle="Stage"
             onDiscard={(path) => setConfirmDiscard([path])}
-            onToggleBatch={(paths) => stage(paths)}
+            onToggleBatch={(paths) => wrappedStage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
-            disabled={isLoading}
+            disabled={isLoading || busyOp !== null}
           />
         ) : (
           unstaged.map((file) => (
@@ -127,15 +142,18 @@ export function FileList() {
               isSelected={selectedFilePath === file.path}
               isLfs={!!isLfsFile(file.path)}
               onSelect={() => selectFile(file.path, false)}
-              onToggle={() => stage([file.path])}
+              onToggle={() => wrappedStage([file.path])}
               toggleIcon={<Plus className="h-3 w-3" />}
               toggleTitle="Stage"
               onDiscard={() => setConfirmDiscard([file.path])}
-              disabled={isLoading}
+              disabled={isLoading || busyOp !== null}
             />
           ))
         )}
       </FileSection>
+
+      {/* Divider between unstaged and staged */}
+      <div className="mx-3 my-[4px] border-t border-border" />
 
       {/* Staged section */}
       <FileSection
@@ -146,10 +164,11 @@ export function FileList() {
         actionLabel="Unstage All"
         onAction={
           staged.length > 0
-            ? () => unstage(staged.map((f) => f.path))
+            ? () => wrappedUnstage(staged.map((f) => f.path))
             : undefined
         }
-        actionDisabled={isLoading}
+        actionDisabled={isLoading || busyOp !== null}
+        isBusy={busyOp === "unstage"}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -157,13 +176,13 @@ export function FileList() {
             selectedFilePath={selectedFilePath}
             isLfsFile={isLfsFile}
             onSelect={(path) => selectFile(path, true)}
-            onToggle={(path) => unstage([path])}
+            onToggle={(path) => wrappedUnstage([path])}
             toggleIcon={<Minus className="h-3 w-3" />}
             toggleTitle="Unstage"
             onDiscard={(path) => setConfirmDiscard([path])}
-            onToggleBatch={(paths) => unstage(paths)}
+            onToggleBatch={(paths) => wrappedUnstage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
-            disabled={isLoading}
+            disabled={isLoading || busyOp !== null}
           />
         ) : (
           staged.map((file) => (
@@ -173,11 +192,11 @@ export function FileList() {
               isSelected={selectedFilePath === file.path}
               isLfs={!!isLfsFile(file.path)}
               onSelect={() => selectFile(file.path, true)}
-              onToggle={() => unstage([file.path])}
+              onToggle={() => wrappedUnstage([file.path])}
               toggleIcon={<Minus className="h-3 w-3" />}
               toggleTitle="Unstage"
               onDiscard={() => setConfirmDiscard([file.path])}
-              disabled={isLoading}
+              disabled={isLoading || busyOp !== null}
             />
           ))
         )}
@@ -206,6 +225,7 @@ function FileSection({
   actionLabel,
   onAction,
   actionDisabled,
+  isBusy,
   labelClassName,
   children,
 }: {
@@ -216,11 +236,12 @@ function FileSection({
   actionLabel: string;
   onAction?: () => void;
   actionDisabled: boolean;
+  isBusy?: boolean;
   labelClassName?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div>
+    <div className="pb-[10px]">
       <div className="flex items-center px-3 py-1.5">
         <button
           onClick={onToggle}
@@ -241,8 +262,9 @@ function FileSection({
             <button
               onClick={onAction}
               disabled={actionDisabled}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
             >
+              {isBusy && <Loader2 className="h-3 w-3 animate-spin" />}
               {actionLabel}
             </button>
           )}

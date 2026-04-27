@@ -12,15 +12,22 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
+import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 
 export function StashList({ filter = "" }: { filter?: string }) {
   const stashes = useRepoStore((s) => s.stashes);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
   const selectStash = useRepoStore((s) => s.selectStash);
+  const applyStash = useRepoStore((s) => s.applyStash);
   const popStash = useRepoStore((s) => s.popStash);
   const dropStash = useRepoStore((s) => s.dropStash);
   const isLoading = useRepoStore((s) => s.isLoading);
   const [isOpen, setIsOpen] = useState(true);
+  const [stashContextMenu, setStashContextMenu] = useState<{
+    index: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const filtered = filter
     ? stashes.filter((s) =>
@@ -57,6 +64,10 @@ export function StashList({ filter = "" }: { filter?: string }) {
             <div
               key={stash.index}
               onClick={() => selectStash(stash.index)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setStashContextMenu({ index: stash.index, x: e.clientX, y: e.clientY });
+              }}
               className={`group flex items-center gap-1.5 px-3 py-1 text-xs cursor-pointer transition-colors ${
                 selectedStashIndex === stash.index
                   ? "bg-accent text-accent-foreground"
@@ -103,6 +114,44 @@ export function StashList({ filter = "" }: { filter?: string }) {
           ))}
         </div>
       )}
+
+      {/* Stash context menu */}
+      {stashContextMenu && (
+        <ContextMenu
+          x={stashContextMenu.x}
+          y={stashContextMenu.y}
+          items={buildStashContextMenuItems(
+            stashContextMenu.index,
+            applyStash,
+            popStash,
+            dropStash,
+          )}
+          onClose={() => setStashContextMenu(null)}
+        />
+      )}
     </div>
   );
+}
+
+function buildStashContextMenuItems(
+  index: number,
+  applyStash: (index: number) => void,
+  popStash: (index: number) => void,
+  dropStash: (index: number) => void,
+): ContextMenuItem[] {
+  return [
+    {
+      label: "Apply (keep in stash list)",
+      onClick: () => applyStash(index),
+    },
+    {
+      label: "Pop (apply & remove)",
+      onClick: () => popStash(index),
+    },
+    {
+      label: "Drop (discard)",
+      onClick: () => dropStash(index),
+      destructive: true,
+    },
+  ];
 }

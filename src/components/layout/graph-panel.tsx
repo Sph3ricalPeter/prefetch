@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  RefreshCw,
   ArrowLeft,
   FolderGit2,
   X,
@@ -57,13 +56,22 @@ export function GraphPanel() {
   const conflictState = useRepoStore((s) => s.conflictState);
   const cherryPick = useRepoStore((s) => s.cherryPick);
   const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
+  const mergeInto = useRepoStore((s) => s.mergeInto);
   const resetTo = useRepoStore((s) => s.resetTo);
   const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const selectStash = useRepoStore((s) => s.selectStash);
+  const applyStash = useRepoStore((s) => s.applyStash);
+  const popStash = useRepoStore((s) => s.popStash);
+  const dropStash = useRepoStore((s) => s.dropStash);
 
   const [commitContextMenu, setCommitContextMenu] = useState<{
     commitId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [stashContextMenu, setStashContextMenu] = useState<{
+    index: number;
     x: number;
     y: number;
   } | null>(null);
@@ -202,9 +210,6 @@ export function GraphPanel() {
             <span className="truncate text-xs font-medium text-foreground">
               {selectedFilePath}
             </span>
-            <RefreshCw
-              className={`ml-2 h-3 w-3 shrink-0 text-muted-foreground animate-spin transition-opacity duration-100 ${diffLoading ? "opacity-100" : "opacity-0"}`}
-            />
           </div>
           <div className="mx-3 border-t border-border" />
         </div>
@@ -286,12 +291,16 @@ export function GraphPanel() {
               if (isLoading) return;
               setCommitContextMenu({ commitId, x, y });
             }}
+            onStashContextMenu={(index, x, y) => {
+              if (isLoading) return;
+              setStashContextMenu({ index, x, y });
+            }}
           />
         )}
 
-        {/* Operation in progress overlay — blocks all graph interaction */}
-        {isLoading && (
-          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50">
+        {/* Loading overlay — blocks interaction during git ops or diff loading */}
+        {(isLoading || diffLoading) && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50 animate-fade-in">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         )}
@@ -314,8 +323,33 @@ export function GraphPanel() {
               }
             },
             rebaseOnto,
+            mergeInto,
           )}
           onClose={() => setCommitContextMenu(null)}
+        />
+      )}
+
+      {/* Stash context menu */}
+      {stashContextMenu && (
+        <ContextMenu
+          x={stashContextMenu.x}
+          y={stashContextMenu.y}
+          items={[
+            {
+              label: "Apply (keep in stash list)",
+              onClick: () => applyStash(stashContextMenu.index),
+            },
+            {
+              label: "Pop (apply & remove)",
+              onClick: () => popStash(stashContextMenu.index),
+            },
+            {
+              label: "Drop (discard)",
+              onClick: () => dropStash(stashContextMenu.index),
+              destructive: true,
+            },
+          ]}
+          onClose={() => setStashContextMenu(null)}
         />
       )}
 
@@ -420,6 +454,7 @@ function buildCommitContextMenuItems(
   cherryPick: (id: string) => void,
   resetTo: (id: string, mode: "soft" | "hard") => void,
   rebaseOnto: (target: string) => void,
+  mergeInto: (target: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
@@ -429,6 +464,10 @@ function buildCommitContextMenuItems(
   });
 
   if (currentBranch) {
+    items.push({
+      label: `Merge into ${currentBranch}`,
+      onClick: () => mergeInto(commitId),
+    });
     items.push({
       label: `Rebase ${currentBranch} onto here`,
       onClick: () => rebaseOnto(commitId),

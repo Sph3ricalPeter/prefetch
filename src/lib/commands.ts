@@ -148,6 +148,10 @@ export async function stashDrop(index: number): Promise<string> {
   return tracedInvoke<string>("stash_drop", { index });
 }
 
+export async function stashApply(index: number): Promise<string> {
+  return tracedInvoke<string>("stash_apply", { index });
+}
+
 export async function getStashFiles(index: number): Promise<FileStatus[]> {
   return tracedInvoke<FileStatus[]>("get_stash_files", { index });
 }
@@ -212,6 +216,18 @@ export async function cherryPickCommit(commitId: string): Promise<string> {
 
 export async function rebaseOnto(target: string): Promise<string> {
   return tracedInvoke<string>("rebase_onto", { target });
+}
+
+export async function mergeBranch(target: string): Promise<string> {
+  return tracedInvoke<string>("merge_branch", { target });
+}
+
+export async function getMergeMessage(): Promise<string> {
+  return tracedInvoke<string>("get_merge_message");
+}
+
+export async function deleteBranch(name: string, force: boolean): Promise<string> {
+  return tracedInvoke<string>("delete_branch", { name, force });
 }
 
 export async function getConflictState(): Promise<ConflictState> {

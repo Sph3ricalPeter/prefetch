@@ -1714,6 +1714,12 @@ pub fn stash_pop(path: &str, index: usize) -> Result<String, AppError> {
     run_git(path, &["stash", "pop", &stash_ref], &[])
 }
 
+/// Apply a stash entry without removing it from the stash list.
+pub fn stash_apply(path: &str, index: usize) -> Result<String, AppError> {
+    let stash_ref = format!("stash@{{{index}}}");
+    run_git(path, &["stash", "apply", &stash_ref], &[])
+}
+
 /// Drop a stash entry without applying.
 pub fn stash_drop(path: &str, index: usize) -> Result<String, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
@@ -2043,6 +2049,34 @@ pub fn rebase_onto(
     extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
     run_git(path, &["rebase", target], extra_env)
+}
+
+/// Merge a target branch (or commit) into the current branch.
+pub fn merge_branch(
+    path: &str,
+    target: &str,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    run_git(path, &["merge", target], extra_env)
+}
+
+/// Read the default merge message from `.git/MERGE_MSG`.
+///
+/// Git writes this file when a merge stops for conflicts (or for a
+/// non-fast-forward merge that needs a commit message).
+pub fn get_merge_message(path: &str) -> Result<String, AppError> {
+    let msg_path = Path::new(path).join(".git").join("MERGE_MSG");
+    std::fs::read_to_string(&msg_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| AppError::Other(format!("Failed to read MERGE_MSG: {e}")))
+}
+
+/// Delete a local branch.
+///
+/// `force` uses `-D` (delete even if unmerged), otherwise `-d`.
+pub fn delete_branch(path: &str, name: &str, force: bool) -> Result<String, AppError> {
+    let flag = if force { "-D" } else { "-d" };
+    run_git(path, &["branch", flag, name], &[])
 }
 
 /// Get progress info for an in-progress rebase.

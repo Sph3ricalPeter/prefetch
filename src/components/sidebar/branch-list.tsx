@@ -14,6 +14,8 @@ export function BranchList({ filter = "" }: { filter?: string }) {
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const checkout = useRepoStore((s) => s.checkout);
   const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
+  const mergeInto = useRepoStore((s) => s.mergeInto);
+  const deleteBranch = useRepoStore((s) => s.deleteBranch);
   const isLoading = useRepoStore((s) => s.isLoading);
   const prCache = useRepoStore((s) => s.prCache);
   const loadPrForBranch = useRepoStore((s) => s.loadPrForBranch);
@@ -113,6 +115,8 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             branchContextMenu.branch,
             currentBranch,
             rebaseOnto,
+            mergeInto,
+            deleteBranch,
             checkout,
           )}
           onClose={() => setBranchContextMenu(null)}
@@ -126,6 +130,8 @@ function buildBranchContextMenuItems(
   branch: BranchInfo,
   currentBranch: string | null,
   rebaseOnto: (target: string) => void,
+  mergeInto: (target: string) => void,
+  deleteBranch: (name: string) => void,
   checkout: (name: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -138,11 +144,24 @@ function buildBranchContextMenuItems(
     });
   }
 
-  // Rebase option (only for local branches that aren't current)
+  // Merge & rebase options (only for local branches that aren't current)
   if (!branch.is_remote && branch.name !== currentBranch && currentBranch) {
+    items.push({
+      label: `Merge ${branch.name} into ${currentBranch}`,
+      onClick: () => mergeInto(branch.name),
+    });
     items.push({
       label: `Rebase ${currentBranch} onto ${branch.name}`,
       onClick: () => rebaseOnto(branch.name),
+    });
+  }
+
+  // Delete option (local, non-current branches only)
+  if (!branch.is_remote && branch.name !== currentBranch) {
+    items.push({
+      label: `Delete ${branch.name}`,
+      onClick: () => deleteBranch(branch.name),
+      destructive: true,
     });
   }
 

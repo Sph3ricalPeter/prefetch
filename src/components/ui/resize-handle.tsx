@@ -79,7 +79,12 @@ export function ResizeHandle({
       onMouseDown={onMouseDown}
       className={cn(
         "relative w-px shrink-0 cursor-col-resize transition-colors",
-        "before:absolute before:inset-y-0 before:-left-1.5 before:w-3 before:cursor-col-resize",
+        // Hit zone positioning: left handle extends equally both ways,
+        // right handle shifts into the detail panel to avoid overlapping
+        // center-panel content (conflict editor resize handles, etc.)
+        side === "left"
+          ? "before:absolute before:inset-y-0 before:-left-1.5 before:w-3 before:cursor-col-resize"
+          : "before:absolute before:inset-y-0 before:-left-px before:w-3 before:cursor-col-resize",
         isDragging ? "bg-accent" : "bg-border hover:bg-accent",
       )}
     />

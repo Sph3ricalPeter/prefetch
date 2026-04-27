@@ -43,6 +43,7 @@ import {
   stashPush as stashPushCmd,
   stashPop as stashPopCmd,
   stashDrop as stashDropCmd,
+  stashApply as stashApplyCmd,
   getStashFiles,
   getStashFileDiff,
   getTags,
@@ -56,6 +57,9 @@ import {
   resetToCommit as resetToCommitCmd,
   cherryPickCommit,
   rebaseOnto as rebaseOntoCmd,
+  mergeBranch as mergeBranchCmd,
+  getMergeMessage as getMergeMessageCmd,
+  deleteBranch as deleteBranchCmd,
   getConflictState,
   abortOperation as abortOperationCmd,
   continueOperation as continueOperationCmd,
@@ -221,6 +225,7 @@ interface RepoState {
   selectStash: (index: number) => Promise<void>;
   selectStashFile: (index: number, filePath: string) => Promise<void>;
   pushStash: (message?: string) => Promise<void>;
+  applyStash: (index: number) => Promise<void>;
   popStash: (index: number) => Promise<void>;
   dropStash: (index: number) => Promise<void>;
   loadTags: () => Promise<void>;
@@ -233,6 +238,8 @@ interface RepoState {
   resetTo: (commitId: string, mode: "soft" | "hard") => Promise<void>;
   cherryPick: (commitId: string) => Promise<void>;
   rebaseOnto: (targetBranch: string) => Promise<void>;
+  mergeInto: (target: string) => Promise<void>;
+  deleteBranch: (name: string, force?: boolean) => Promise<void>;
   abortOperation: () => Promise<void>;
   continueOperation: (message?: string) => Promise<void>;
   loadConflictState: () => Promise<void>;
@@ -968,6 +975,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  applyStash: async (index) => {
+    try {
+      await stashApplyCmd(index);
+      const statuses = await getFileStatus();
+      set({ fileStatuses: statuses });
+      toast.success("Stash applied (kept in stash list)");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
   popStash: async (index) => {
     try {
       await stashPopCmd(index);
@@ -1109,6 +1127,68 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         } else {
           toast.error(message);
         }
+      }
+    }
+  },
+
+  mergeInto: async (target) => {
+    set({ isLoading: true });
+    try {
+      await mergeBranchCmd(target);
+      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      if (conflict.in_progress) {
+        // Pre-fill commit message from MERGE_MSG
+        const mergeMsg = await getMergeMessageCmd().catch(() => null);
+        if (mergeMsg) set({ commitMessage: mergeMsg });
+        toast.error("Merge has conflicts — resolve them, then continue or abort");
+      } else {
+        toast.success(`Merged ${target}`);
+      }
+    } catch (e) {
+      set({ isLoading: false });
+      // Check if the error is a conflict (git merge exits non-zero on conflict)
+      const conflict = await getConflictState().catch(() => null);
+      if (conflict?.in_progress) {
+        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
+        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
+        // Pre-fill commit message from MERGE_MSG
+        const mergeMsg = await getMergeMessageCmd().catch(() => null);
+        if (mergeMsg) set({ commitMessage: mergeMsg });
+        toast.error("Merge has conflicts — resolve them, then continue or abort");
+      } else {
+        const { hookName, message } = parseError(e);
+        if (hookName) {
+          toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
+        } else {
+          toast.error(message);
+        }
+      }
+    }
+  },
+
+  deleteBranch: async (name, force = false) => {
+    set({ isLoading: true });
+    try {
+      await deleteBranchCmd(name, force);
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses });
+      toast.success(`Deleted branch ${name}`);
+    } catch (e) {
+      set({ isLoading: false });
+      const message = String(e);
+      // If the branch has unmerged commits, git suggests -D
+      if (!force && message.includes("not fully merged")) {
+        toast.error(`Branch '${name}' has unmerged commits`, {
+          description: "Use force delete to remove it anyway.",
+          action: {
+            label: "Force delete",
+            onClick: () => get().deleteBranch(name, true),
+          },
+          duration: 10000,
+        });
+      } else {
+        toast.error(message);
       }
     }
   },

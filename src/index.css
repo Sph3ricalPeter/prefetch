@@ -154,6 +154,9 @@ body::before {
   --color-brand-glow: rgba(167, 139, 250, 0.08);
   --color-success: #34d399;
 
+  /* Animations */
+  --animate-fade-in: fade-in 0.25s ease-out;
+
   /* Font families */
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
@@ -162,4 +165,9 @@ body::before {
   --text-caption--line-height: 14px;
   --text-label: 11px;
   --text-label--line-height: 16px;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
