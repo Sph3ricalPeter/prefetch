@@ -476,14 +476,7 @@ pub fn force_push<F: Fn(&str)>(
     let branch_name = head.shorthand().unwrap_or("HEAD");
     if let Some(ref a) = authed {
         let lease_flag = explicit_lease_flag(path);
-        let args = a.build_args(&[
-            "push",
-            "-u",
-            &a.url,
-            branch_name,
-            &lease_flag,
-            "--progress",
-        ]);
+        let args = a.build_args(&["push", "-u", &a.url, branch_name, &lease_flag, "--progress"]);
         let env = a.merge_env(extra_env);
         let r = run_git_with_progress(path, &args, &on_progress, &env);
         if r.is_ok() {

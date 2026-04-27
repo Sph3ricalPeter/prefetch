@@ -517,7 +517,11 @@ pub async fn get_merge_message(state: State<'_, AppState>) -> Result<String, App
 }
 
 #[tauri::command]
-pub async fn delete_branch(name: String, force: bool, state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn delete_branch(
+    name: String,
+    force: bool,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
     let path = repo_path(&state)?;
     offload(move || repository::delete_branch(&path, &name, force)).await
 }
