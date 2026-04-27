@@ -45,6 +45,10 @@ pub fn run() {
                     .get_webview_window("main")
                     .expect("main window not found");
                 window.set_decorations(false)?;
+                // Re-enforce minimum size after disabling decorations — the
+                // config value alone is not always honoured on Windows without
+                // native chrome.
+                window.set_min_size(Some(tauri::LogicalSize::new(960.0, 600.0)))?;
             }
             // Suppress unused variable warning on macOS
             let _ = app;

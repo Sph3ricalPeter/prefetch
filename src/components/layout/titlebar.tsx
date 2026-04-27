@@ -302,9 +302,24 @@ function TitlebarRepoSwitcher() {
 
 /** Change 5: Responsive wrapper — shows inline buttons or collapsed dropdown */
 function TitlebarActionsGroup() {
+  // All hooks MUST be called before any early returns (React Rules of Hooks)
   const repoPath = useRepoStore((s) => s.repoPath);
+  const isLoading = useRepoStore((s) => s.isLoading);
+  const undoInfo = useRepoStore((s) => s.undoInfo);
+  const undoAction = useRepoStore((s) => s.undo);
+  const pushStash = useRepoStore((s) => s.pushStash);
+  const popStash = useRepoStore((s) => s.popStash);
+  const stashes = useRepoStore((s) => s.stashes);
+  const fileStatuses = useRepoStore((s) => s.fileStatuses);
+  const createBranch = useRepoStore((s) => s.createBranch);
+  const fetchAction = useRepoStore((s) => s.fetch);
+  const pullAction = useRepoStore((s) => s.pull);
+  const pushAction = useRepoStore((s) => s.push);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [showBranchInput, setShowBranchInput] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
 
   useEffect(() => {
     const container = containerRef.current;
@@ -331,21 +346,6 @@ function TitlebarActionsGroup() {
       </div>
     );
   }
-
-  const isLoading = useRepoStore((s) => s.isLoading);
-  const undoInfo = useRepoStore((s) => s.undoInfo);
-  const undoAction = useRepoStore((s) => s.undo);
-  const pushStash = useRepoStore((s) => s.pushStash);
-  const popStash = useRepoStore((s) => s.popStash);
-  const stashes = useRepoStore((s) => s.stashes);
-  const fileStatuses = useRepoStore((s) => s.fileStatuses);
-  const createBranch = useRepoStore((s) => s.createBranch);
-  const fetchAction = useRepoStore((s) => s.fetch);
-  const pullAction = useRepoStore((s) => s.pull);
-  const pushAction = useRepoStore((s) => s.push);
-
-  const [showBranchInput, setShowBranchInput] = useState(false);
-  const [newBranchName, setNewBranchName] = useState("");
 
   return (
     <div ref={containerRef} className="flex items-center gap-0.5">

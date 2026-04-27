@@ -720,6 +720,8 @@ export function CommitGraphCanvas({
     const dpr = window.devicePixelRatio || 1;
     const width = scroll.clientWidth;
     const height = scroll.clientHeight;
+    // Guard: skip render when panel has been flex-shrunk to 0 (prevents blank screen)
+    if (width <= 0 || height <= 0) return;
     const scrollTop = scroll.scrollTop - GRAPH_PADDING_TOP; // offset so first row starts below top padding
 
     if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
