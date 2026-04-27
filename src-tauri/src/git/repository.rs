@@ -13,6 +13,64 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use tracing::warn;
 
+/// Unquote a git-quoted path.
+///
+/// Git wraps filenames in double quotes and uses C-style escaping when they
+/// contain special characters (spaces, `&`, non-ASCII, etc.).
+/// For example: `"Assets/Fonts & Materials/file.asset"`
+///
+/// This function strips the surrounding quotes and resolves escape sequences
+/// (`\\`, `\"`, `\n`, `\t`, `\NNN` octal bytes, etc.).  If the path is not
+/// quoted it is returned unchanged.
+fn unquote_git_path(raw: &str) -> String {
+    // Git-quoted paths always start AND end with "
+    if !(raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2) {
+        return raw.to_string();
+    }
+    let inner = &raw[1..raw.len() - 1];
+    let mut result = Vec::with_capacity(inner.len());
+    let bytes = inner.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 1;
+            match bytes[i] {
+                b'\\' => result.push(b'\\'),
+                b'"' => result.push(b'"'),
+                b'n' => result.push(b'\n'),
+                b't' => result.push(b'\t'),
+                b'r' => result.push(b'\r'),
+                b'a' => result.push(0x07),
+                b'b' => result.push(0x08),
+                b'f' => result.push(0x0C),
+                b'v' => result.push(0x0B),
+                // Octal: \NNN (1-3 digits)
+                b'0'..=b'7' => {
+                    let mut val: u8 = bytes[i] - b'0';
+                    for _ in 0..2 {
+                        if i + 1 < bytes.len() && bytes[i + 1] >= b'0' && bytes[i + 1] <= b'7' {
+                            i += 1;
+                            val = val * 8 + (bytes[i] - b'0');
+                        } else {
+                            break;
+                        }
+                    }
+                    result.push(val);
+                }
+                other => {
+                    // Unknown escape – keep as-is
+                    result.push(b'\\');
+                    result.push(other);
+                }
+            }
+        } else {
+            result.push(bytes[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).to_string()
+}
+
 /// Configure a Command to hide the console window on Windows.
 /// Without this, every `git` subprocess opens a visible terminal flash.
 #[cfg(target_os = "windows")]
@@ -888,7 +946,7 @@ fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
                 let add = parts[0].parse::<u32>().ok();
                 let del = parts[1].parse::<u32>().ok();
                 if let (Some(a), Some(d)) = (add, del) {
-                    stats.insert(parts[2].to_string(), (a, d));
+                    stats.insert(unquote_git_path(parts[2]), (a, d));
                 }
             }
         }
@@ -929,7 +987,7 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         }
         let index_status = line.as_bytes()[0] as char;
         let wt_status = line.as_bytes()[1] as char;
-        let file_path = line[3..].to_string();
+        let file_path = unquote_git_path(&line[3..]);
 
         // Check for merge conflicts (both columns have U, or specific conflict combos)
         let is_conflict = matches!(
@@ -1579,7 +1637,7 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(2, '\t').collect();
         if parts.len() == 2 {
-            let file_path = parts[1].to_string();
+            let file_path = unquote_git_path(parts[1]);
             let status_type = match parts[0] {
                 "A" => "added",
                 "M" => "modified",
@@ -1744,7 +1802,7 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(2, '\t').collect();
         if parts.len() == 2 {
-            let file_path = parts[1].to_string();
+            let file_path = unquote_git_path(parts[1]);
             let status_type = match parts[0] {
                 "A" => "added",
                 "M" => "modified",
