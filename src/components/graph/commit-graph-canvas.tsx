@@ -541,7 +541,6 @@ interface CommitGraphCanvasProps {
   onSelectStash?: (index: number) => void;
   onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
-  onBranchContextMenu?: (branchName: string, commitId: string, x: number, y: number) => void;
 }
 
 export function CommitGraphCanvas({
@@ -562,7 +561,6 @@ export function CommitGraphCanvas({
   onSelectStash,
   onCommitContextMenu,
   onStashContextMenu,
-  onBranchContextMenu,
 }: CommitGraphCanvasProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1320,16 +1318,7 @@ export function CommitGraphCanvas({
             onStashContextMenu(badge.stashIndex, e.clientX, e.clientY);
             return;
           }
-          if (badge.badgeType === "branch" && onBranchContextMenu) {
-            // Resolve the commit this badge sits on
-            const badgeCommitIdx = badge.row - rowOffset;
-            if (badgeCommitIdx >= 0 && badgeCommitIdx < commits.length) {
-              e.preventDefault();
-              onBranchContextMenu(badge.branchName, commits[badgeCommitIdx].id, e.clientX, e.clientY);
-              return;
-            }
-          }
-          // Tag badges fall through to commit context menu
+          // Branch and tag badges fall through to commit context menu
           break;
         }
       }
@@ -1344,7 +1333,7 @@ export function CommitGraphCanvas({
         onCommitContextMenu(commits[commitIdx].id, e.clientX, e.clientY);
       }
     },
-    [commits, rowOffset, onCommitContextMenu, onStashContextMenu, onBranchContextMenu],
+    [commits, rowOffset, onCommitContextMenu, onStashContextMenu],
   );
 
   useEffect(() => {

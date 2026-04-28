@@ -87,12 +87,6 @@ export function GraphPanel() {
     y: number;
   } | null>(null);
   const [confirmResetHard, setConfirmResetHard] = useState<string | null>(null);
-  const [branchContextMenu, setBranchContextMenu] = useState<{
-    branchName: string;
-    commitId: string;
-    x: number;
-    y: number;
-  } | null>(null);
   const [createBranchDialog, setCreateBranchDialog] = useState<{ commitId: string } | null>(null);
   const [createTagDialog, setCreateTagDialog] = useState<{ commitId: string } | null>(null);
   const [renameDialog, setRenameDialog] = useState<{ branch: string } | null>(null);
@@ -317,10 +311,6 @@ export function GraphPanel() {
               if (isLoading) return;
               setStashContextMenu({ index, x, y });
             }}
-            onBranchContextMenu={(branchName, commitId, x, y) => {
-              if (isLoading) return;
-              setBranchContextMenu({ branchName, commitId, x, y });
-            }}
           />
         )}
 
@@ -332,7 +322,7 @@ export function GraphPanel() {
         )}
       </div>
 
-      {/* Commit context menu */}
+      {/* Commit context menu (includes branch ops when branches are on the commit) */}
       {commitContextMenu && (
         <ContextMenu
           x={commitContextMenu.x}
@@ -340,6 +330,7 @@ export function GraphPanel() {
           items={buildCommitContextMenuItems(
             commitContextMenu.commitId,
             currentBranch,
+            branches,
             cherryPick,
             (id, mode) => {
               if (mode === "hard") {
@@ -354,6 +345,13 @@ export function GraphPanel() {
             checkoutDetached,
             (commitId) => { setDialogInput(""); setCreateBranchDialog({ commitId }); },
             (commitId) => { setDialogInput(""); setCreateTagDialog({ commitId }); },
+            checkout,
+            pull,
+            push,
+            deleteBranch,
+            deleteRemoteBranch,
+            (name) => { setDialogInput(name); setRenameDialog({ branch: name }); },
+            (name) => { setDialogInput(""); setUpstreamDialog({ branch: name }); },
           )}
           onClose={() => setCommitContextMenu(null)}
         />
@@ -380,30 +378,6 @@ export function GraphPanel() {
             },
           ]}
           onClose={() => setStashContextMenu(null)}
-        />
-      )}
-
-      {/* Branch badge context menu */}
-      {branchContextMenu && (
-        <ContextMenu
-          x={branchContextMenu.x}
-          y={branchContextMenu.y}
-          items={buildBranchBadgeContextMenuItems(
-            branchContextMenu.branchName,
-            branchContextMenu.commitId,
-            currentBranch,
-            branches,
-            checkout,
-            mergeInto,
-            rebaseOnto,
-            pull,
-            push,
-            deleteBranch,
-            deleteRemoteBranch,
-            (name) => { setDialogInput(name); setRenameDialog({ branch: name }); },
-            (name) => { setDialogInput(""); setUpstreamDialog({ branch: name }); },
-          )}
-          onClose={() => setBranchContextMenu(null)}
         />
       )}
 
@@ -693,6 +667,7 @@ export function GraphPanel() {
 function buildCommitContextMenuItems(
   commitId: string,
   currentBranch: string | null,
+  branches: BranchInfo[],
   cherryPick: (id: string) => void,
   resetTo: (id: string, mode: "soft" | "hard") => void,
   rebaseOnto: (target: string) => void,
@@ -701,10 +676,92 @@ function buildCommitContextMenuItems(
   checkoutDetached: (id: string) => void,
   createBranchHere: (commitId: string) => void,
   createTagHere: (commitId: string) => void,
+  checkoutBranch: (name: string) => void,
+  pull: () => void,
+  push: () => void,
+  deleteBranch: (name: string) => void,
+  deleteRemoteBranch: (remote: string, branch: string) => void,
+  renameBranch: (name: string) => void,
+  setUpstream: (name: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
-  // Branch ops
+  // ── Branch ops (when branches point to this commit) ──
+  const branchesOnCommit = branches.filter((b) => b.commit_id === commitId);
+
+  for (const branch of branchesOnCommit) {
+    const isCurrent = branch.name === currentBranch;
+    const isRemote = branch.is_remote;
+
+    if (isRemote) {
+      items.push({
+        label: `Checkout ${branch.name}`,
+        onClick: () => checkoutBranch(branch.name),
+      });
+      items.push({
+        label: `Copy branch name: ${branch.name}`,
+        onClick: () => navigator.clipboard.writeText(branch.name),
+      });
+      const slashIdx = branch.name.indexOf("/");
+      if (slashIdx > 0) {
+        const remote = branch.name.slice(0, slashIdx);
+        const remoteBranch = branch.name.slice(slashIdx + 1);
+        items.push({
+          label: `Delete ${branch.name} from ${remote}`,
+          onClick: () => deleteRemoteBranch(remote, remoteBranch),
+          destructive: true,
+        });
+      }
+      items.push({ separator: true });
+    } else {
+      // Local branch
+      if (!isCurrent) {
+        items.push({
+          label: `Checkout ${branch.name}`,
+          onClick: () => checkoutBranch(branch.name),
+        });
+      }
+
+      if (!isCurrent && currentBranch) {
+        items.push({
+          label: `Merge ${branch.name} into ${currentBranch}`,
+          onClick: () => mergeInto(branch.name),
+        });
+        items.push({
+          label: `Rebase ${currentBranch} onto ${branch.name}`,
+          onClick: () => rebaseOnto(branch.name),
+        });
+      }
+
+      items.push({ label: "Pull", onClick: () => pull() });
+      items.push({ label: "Push", onClick: () => push() });
+      items.push({ label: "Set upstream…", onClick: () => setUpstream(branch.name) });
+      items.push({ label: "Rename branch…", onClick: () => renameBranch(branch.name) });
+      items.push({
+        label: `Copy branch name: ${branch.name}`,
+        onClick: () => navigator.clipboard.writeText(branch.name),
+      });
+
+      if (!isCurrent) {
+        items.push({
+          label: `Delete ${branch.name}`,
+          onClick: () => deleteBranch(branch.name),
+          destructive: true,
+        });
+        if (branch.ahead != null || branch.behind != null) {
+          items.push({
+            label: `Delete ${branch.name} from origin`,
+            onClick: () => deleteRemoteBranch("origin", branch.name),
+            destructive: true,
+          });
+        }
+      }
+
+      items.push({ separator: true });
+    }
+  }
+
+  // ── Commit ops ──
   items.push({
     label: `Cherry-pick onto ${currentBranch ?? "HEAD"}`,
     onClick: () => cherryPick(commitId),
@@ -761,114 +818,6 @@ function buildCommitContextMenuItems(
     label: `Copy SHA: ${commitId.slice(0, 7)}`,
     onClick: () => navigator.clipboard.writeText(commitId),
   });
-
-  return items;
-}
-
-function buildBranchBadgeContextMenuItems(
-  branchName: string,
-  _commitId: string,
-  currentBranch: string | null,
-  branches: BranchInfo[],
-  checkout: (name: string) => void,
-  mergeInto: (target: string) => void,
-  rebaseOnto: (target: string) => void,
-  pull: () => void,
-  push: () => void,
-  deleteBranch: (name: string) => void,
-  deleteRemoteBranch: (remote: string, branch: string) => void,
-  renameBranch: (name: string) => void,
-  setUpstream: (name: string) => void,
-): ContextMenuItem[] {
-  const items: ContextMenuItem[] = [];
-  const isCurrent = branchName === currentBranch;
-  const branchInfo = branches.find((b) => b.name === branchName);
-  const isRemote = branchInfo?.is_remote ?? branchName.includes("/");
-
-  if (isRemote) {
-    // ── Remote branch badge ──
-    items.push({
-      label: `Checkout ${branchName}`,
-      onClick: () => checkout(branchName),
-    });
-
-    items.push({ separator: true });
-
-    items.push({
-      label: "Copy branch name",
-      onClick: () => navigator.clipboard.writeText(branchName),
-    });
-
-    items.push({ separator: true });
-
-    const slashIdx = branchName.indexOf("/");
-    if (slashIdx > 0) {
-      const remote = branchName.slice(0, slashIdx);
-      const remoteBranch = branchName.slice(slashIdx + 1);
-      items.push({
-        label: `Delete from ${remote}`,
-        onClick: () => deleteRemoteBranch(remote, remoteBranch),
-        destructive: true,
-      });
-    }
-
-    return items;
-  }
-
-  // ── Local branch badge ──
-
-  if (!isCurrent) {
-    items.push({
-      label: `Checkout ${branchName}`,
-      onClick: () => checkout(branchName),
-    });
-    items.push({ separator: true });
-  }
-
-  if (!isCurrent && currentBranch) {
-    items.push({
-      label: `Merge ${branchName} into ${currentBranch}`,
-      onClick: () => mergeInto(branchName),
-    });
-    items.push({
-      label: `Rebase ${currentBranch} onto ${branchName}`,
-      onClick: () => rebaseOnto(branchName),
-    });
-    items.push({ separator: true });
-  }
-
-  // Remote ops
-  items.push({ label: "Pull", onClick: () => pull() });
-  items.push({ label: "Push", onClick: () => push() });
-  items.push({ label: "Set upstream…", onClick: () => setUpstream(branchName) });
-
-  items.push({ separator: true });
-
-  // Manage
-  items.push({ label: "Rename branch…", onClick: () => renameBranch(branchName) });
-  items.push({
-    label: "Copy branch name",
-    onClick: () => navigator.clipboard.writeText(branchName),
-  });
-
-  if (!isCurrent) {
-    items.push({ separator: true });
-
-    items.push({
-      label: `Delete ${branchName}`,
-      onClick: () => deleteBranch(branchName),
-      destructive: true,
-    });
-
-    // Also offer remote delete if it tracks a remote
-    if (branchInfo && (branchInfo.ahead != null || branchInfo.behind != null)) {
-      items.push({
-        label: "Delete from origin",
-        onClick: () => deleteRemoteBranch("origin", branchName),
-        destructive: true,
-      });
-    }
-  }
 
   return items;
 }
