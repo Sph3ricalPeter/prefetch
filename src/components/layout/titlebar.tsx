@@ -74,7 +74,7 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
 
   return (
     <div
-      className="flex h-10 shrink-0 items-center border-b border-border bg-background select-none"
+      className="relative flex h-10 shrink-0 items-center border-b border-border bg-background select-none"
       data-tauri-drag-region
     >
       {/* Left: Brand — extra left padding on macOS for native traffic lights */}
@@ -100,14 +100,18 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
         {!settingsOpen && <TitlebarRepoSwitcher />}
       </div>
 
-      {/* Left spacer — pushes actions to center */}
+      {/* Spacer — pushes window controls to the right */}
       <div className="flex-1 min-w-2" data-tauri-drag-region />
 
-      {/* Center: Action buttons — hidden in settings */}
-      {!settingsOpen && <TitlebarActionsGroup />}
-
-      {/* Right spacer — balances centering */}
-      <div className="flex-1 min-w-2" data-tauri-drag-region />
+      {/* Center: Action buttons — absolutely centered in the titlebar so they
+         stay at the true midpoint regardless of left/right content widths */}
+      {!settingsOpen && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="pointer-events-auto">
+            <TitlebarActionsGroup />
+          </div>
+        </div>
+      )}
 
       {/* Right: Window controls */}
       <div className={`flex items-center gap-0.5 ${IS_MAC ? "pr-2.5" : "pr-0"}`}>

@@ -40,12 +40,14 @@ DMG_PATH="$TMPDIR/$FILENAME"
 echo "  Downloading $FILENAME..."
 curl -fSL "$URL" -o "$DMG_PATH"
 
-# Mount, copy, unmount
+# Mount DMG
 echo "  Installing to /Applications..."
-MOUNT_POINT=$(hdiutil attach "$DMG_PATH" -nobrowse -quiet | grep -o '/Volumes/.*')
+HDIUTIL_OUTPUT=$(hdiutil attach "$DMG_PATH" -nobrowse 2>/dev/null) || true
+MOUNT_POINT=$(echo "$HDIUTIL_OUTPUT" | grep -o '/Volumes/.*' | sed 's/[[:space:]]*$//') || true
 
 if [ -z "$MOUNT_POINT" ]; then
   echo "  Error: failed to mount DMG" >&2
+  echo "  hdiutil output: $HDIUTIL_OUTPUT" >&2
   exit 1
 fi
 
@@ -57,21 +59,32 @@ if [ -z "$APP_NAME" ]; then
   exit 1
 fi
 
+# Kill running instance if any
+killall "$( echo "$APP_NAME" | sed 's/\.app$//' )" 2>/dev/null || true
+sleep 1
+
 # Remove old version if present
 if [ -d "/Applications/$APP_NAME" ]; then
   echo "  Removing previous installation..."
-  sudo rm -rf "/Applications/$APP_NAME"
+  rm -rf "/Applications/$APP_NAME" 2>/dev/null || sudo rm -rf "/Applications/$APP_NAME"
 fi
 
-echo "  Copying $APP_NAME to /Applications (may require password)..."
-sudo cp -R "$MOUNT_POINT/$APP_NAME" /Applications/
-hdiutil detach "$MOUNT_POINT" -quiet
+echo "  Copying $APP_NAME to /Applications..."
+# Use ditto (preserves macOS metadata, resource forks, and code signatures)
+sudo ditto "$MOUNT_POINT/$APP_NAME" "/Applications/$APP_NAME"
+hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || hdiutil detach "$MOUNT_POINT" 2>/dev/null
 
 # Cleanup
 rm -rf "$TMPDIR"
 
 # Remove quarantine attribute so it opens without Gatekeeper warning
-sudo xattr -cr "/Applications/$APP_NAME" 2>/dev/null || true
+sudo xattr -rd com.apple.quarantine "/Applications/$APP_NAME" 2>/dev/null || true
+
+# Re-register with Launch Services so macOS picks up the new version
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$LSREGISTER" ]; then
+  "$LSREGISTER" -f "/Applications/$APP_NAME" 2>/dev/null || true
+fi
 
 # Verify installation
 if [ -d "/Applications/$APP_NAME" ]; then
