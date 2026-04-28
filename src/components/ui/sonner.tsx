@@ -4,7 +4,7 @@ export function Toaster() {
   return (
     <SonnerToaster
       theme="dark"
-      position="bottom-right"
+      position="bottom-left"
       richColors
       toastOptions={{
         style: {

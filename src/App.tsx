@@ -6,7 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { initDatabase } from "@/lib/database";
-import { UpdateChecker } from "@/components/updater";
+import { UpdateChecker } from "@/components/update-checker";
+import { UpdateIndicator } from "@/components/update-indicator";
 
 /**
  * Initializes SQLite database on startup, loads recent repos,
@@ -118,6 +119,7 @@ function App() {
       <RepoEventListener />
       <WorkingTreePoller />
       <UpdateChecker />
+      <UpdateIndicator />
       <Toaster />
     </TooltipProvider>
   );

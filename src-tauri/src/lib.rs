@@ -34,6 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Config has decorations:true + titleBarStyle:Overlay for macOS
             // traffic lights. On Windows/Linux we disable decorations so the

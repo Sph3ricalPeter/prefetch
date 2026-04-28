@@ -3249,7 +3249,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "prefetch"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "git2",
@@ -3264,6 +3264,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-os",
+ "tauri-plugin-process",
  "tauri-plugin-sql",
  "tauri-plugin-updater",
  "thiserror 2.0.18",
@@ -5084,6 +5085,16 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "tauri-plugin-process"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d55511a7bf6cd70c8767b02c97bf8134fa434daf3926cfc1be0a0f94132d165a"
+dependencies = [
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]
