@@ -827,18 +827,23 @@ function buildCommitContextMenuItems(
   }
 
   // ── Commit ops ──
+  const shortSha = commitId.slice(0, 7);
+  const hasLocalBranches = branchesOnCommit.some((b) => !b.is_remote);
+
   items.push({
     label: `Cherry-pick onto ${currentBranch ?? "HEAD"}`,
     onClick: () => cherryPick(commitId),
   });
 
-  if (currentBranch) {
+  // Only show commit-level merge/rebase when no local branch already
+  // covers them — otherwise they duplicate the branch ops above.
+  if (currentBranch && !hasLocalBranches) {
     items.push({
-      label: `Merge into ${currentBranch}`,
+      label: `Merge ${shortSha} into ${currentBranch}`,
       onClick: () => mergeInto(commitId),
     });
     items.push({
-      label: `Rebase ${currentBranch} onto here`,
+      label: `Rebase ${currentBranch} onto ${shortSha}`,
       onClick: () => rebaseOnto(commitId),
     });
   }
@@ -847,15 +852,15 @@ function buildCommitContextMenuItems(
 
   // Navigation
   items.push({
-    label: "Checkout commit (detached HEAD)",
+    label: `Checkout ${shortSha} (detached HEAD)`,
     onClick: () => checkoutDetached(commitId),
   });
   items.push({
-    label: "Create branch here…",
+    label: `Create branch at ${shortSha}…`,
     onClick: () => createBranchHere(commitId),
   });
   items.push({
-    label: "Create tag here…",
+    label: `Create tag at ${shortSha}…`,
     onClick: () => createTagHere(commitId),
   });
 
@@ -863,15 +868,15 @@ function buildCommitContextMenuItems(
 
   // Modify
   items.push({
-    label: "Revert this commit",
+    label: `Revert ${shortSha}`,
     onClick: () => revertCommit(commitId),
   });
   items.push({
-    label: "Reset soft to here (keep changes)",
+    label: `Reset soft to ${shortSha} (keep changes)`,
     onClick: () => resetTo(commitId, "soft"),
   });
   items.push({
-    label: "Reset hard to here",
+    label: `Reset hard to ${shortSha}`,
     onClick: () => resetTo(commitId, "hard"),
     destructive: true,
   });
