@@ -36,6 +36,12 @@ export function BranchList({ filter = "" }: { filter?: string }) {
   const [renameInput, setRenameInput] = useState("");
   const [upstreamDialog, setUpstreamDialog] = useState<{ branch: string } | null>(null);
   const [upstreamInput, setUpstreamInput] = useState("");
+  const [confirmDeleteBranch, setConfirmDeleteBranch] = useState<{
+    branchName: string;
+    deleteLocal: boolean;
+    deleteRemote: boolean;
+    remoteName: string;
+  } | null>(null);
 
   const filtered = filter
     ? branches.filter((b) =>
@@ -125,12 +131,13 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             currentBranch,
             rebaseOnto,
             mergeInto,
-            deleteBranch,
+            (name, deleteLocal, deleteRemote, remoteName) => {
+              setConfirmDeleteBranch({ branchName: name, deleteLocal, deleteRemote, remoteName });
+            },
             checkout,
             pull,
             push,
             (name) => { setRenameInput(name); setRenameDialog({ branch: name }); },
-            deleteRemoteBranch,
             (name) => { setUpstreamInput(""); setUpstreamDialog({ branch: name }); },
           )}
           onClose={() => setBranchContextMenu(null)}
@@ -230,6 +237,41 @@ export function BranchList({ filter = "" }: { filter?: string }) {
           </div>
         </div>
       )}
+
+      {/* Delete branch confirmation */}
+      {confirmDeleteBranch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Delete branch?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              {confirmDeleteBranch.deleteLocal && confirmDeleteBranch.deleteRemote
+                ? `This will delete "${confirmDeleteBranch.branchName}" locally and from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+                : confirmDeleteBranch.deleteRemote
+                  ? `This will delete "${confirmDeleteBranch.branchName}" from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+                  : `This will delete "${confirmDeleteBranch.branchName}" locally. This cannot be undone.`}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteBranch(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const { branchName, deleteLocal, deleteRemote: delRemote, remoteName } = confirmDeleteBranch;
+                  if (deleteLocal) deleteBranch(branchName);
+                  if (delRemote) deleteRemoteBranch(remoteName, branchName);
+                  setConfirmDeleteBranch(null);
+                }}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -239,12 +281,11 @@ function buildBranchContextMenuItems(
   currentBranch: string | null,
   rebaseOnto: (target: string) => void,
   mergeInto: (target: string) => void,
-  deleteBranch: (name: string) => void,
+  confirmDeleteBranch: (name: string, deleteLocal: boolean, deleteRemote: boolean, remoteName: string) => void,
   checkout: (name: string) => void,
   pull: () => void,
   push: () => void,
   renameBranch: (name: string) => void,
-  deleteRemoteBranch: (remote: string, branch: string) => void,
   setUpstream: (name: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -272,8 +313,8 @@ function buildBranchContextMenuItems(
       const remote = branch.name.slice(0, slashIdx);
       const remoteBranch = branch.name.slice(slashIdx + 1);
       items.push({
-        label: `Delete from ${remote}`,
-        onClick: () => deleteRemoteBranch(remote, remoteBranch),
+        label: `Delete from ${remote}…`,
+        onClick: () => confirmDeleteBranch(remoteBranch, false, true, remote),
         destructive: true,
       });
     }
@@ -335,20 +376,12 @@ function buildBranchContextMenuItems(
   if (!isCurrent) {
     items.push({ separator: true });
 
+    const hasRemote = branch.ahead != null || branch.behind != null;
     items.push({
-      label: `Delete ${branch.name}`,
-      onClick: () => deleteBranch(branch.name),
+      label: hasRemote ? `Delete ${branch.name} (local + remote)…` : `Delete ${branch.name}…`,
+      onClick: () => confirmDeleteBranch(branch.name, true, hasRemote, "origin"),
       destructive: true,
     });
-
-    // Also offer remote delete if it tracks a remote (ahead/behind present)
-    if (branch.ahead != null || branch.behind != null) {
-      items.push({
-        label: "Delete from origin",
-        onClick: () => deleteRemoteBranch("origin", branch.name),
-        destructive: true,
-      });
-    }
   }
 
   return items;

@@ -28,6 +28,7 @@ export function StashList({ filter = "" }: { filter?: string }) {
     x: number;
     y: number;
   } | null>(null);
+  const [confirmDropStash, setConfirmDropStash] = useState<number | null>(null);
 
   const filtered = filter
     ? stashes.filter((s) =>
@@ -100,7 +101,7 @@ export function StashList({ filter = "" }: { filter?: string }) {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      dropStash(stash.index);
+                      setConfirmDropStash(stash.index);
                     }}
                     disabled={isLoading}
                     className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive-foreground transition-all disabled:opacity-40"
@@ -124,10 +125,39 @@ export function StashList({ filter = "" }: { filter?: string }) {
             stashContextMenu.index,
             applyStash,
             popStash,
-            dropStash,
+            (idx) => setConfirmDropStash(idx),
           )}
           onClose={() => setStashContextMenu(null)}
         />
+      )}
+
+      {/* Drop stash confirmation */}
+      {confirmDropStash != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Drop stash?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              This will permanently discard stash@&#123;{confirmDropStash}&#125;. This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDropStash(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  dropStash(confirmDropStash);
+                  setConfirmDropStash(null);
+                }}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Drop
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

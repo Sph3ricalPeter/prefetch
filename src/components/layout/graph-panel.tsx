@@ -87,6 +87,13 @@ export function GraphPanel() {
     y: number;
   } | null>(null);
   const [confirmResetHard, setConfirmResetHard] = useState<string | null>(null);
+  const [confirmDeleteBranch, setConfirmDeleteBranch] = useState<{
+    branchName: string;
+    deleteLocal: boolean;
+    deleteRemote: boolean;
+    remoteName: string;
+  } | null>(null);
+  const [confirmDropStash, setConfirmDropStash] = useState<number | null>(null);
   const [createBranchDialog, setCreateBranchDialog] = useState<{ commitId: string } | null>(null);
   const [createTagDialog, setCreateTagDialog] = useState<{ commitId: string } | null>(null);
   const [renameDialog, setRenameDialog] = useState<{ branch: string } | null>(null);
@@ -348,8 +355,9 @@ export function GraphPanel() {
             checkout,
             pull,
             push,
-            deleteBranch,
-            deleteRemoteBranch,
+            (name, deleteLocal, deleteRemote, remoteName) => {
+              setConfirmDeleteBranch({ branchName: name, deleteLocal, deleteRemote, remoteName });
+            },
             (name) => { setDialogInput(name); setRenameDialog({ branch: name }); },
             (name) => { setDialogInput(""); setUpstreamDialog({ branch: name }); },
           )}
@@ -373,7 +381,7 @@ export function GraphPanel() {
             },
             {
               label: "Drop (discard)",
-              onClick: () => dropStash(stashContextMenu.index),
+              onClick: () => setConfirmDropStash(stashContextMenu.index),
               destructive: true,
             },
           ]}
@@ -441,6 +449,70 @@ export function GraphPanel() {
                 className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
               >
                 Reset Hard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete branch confirmation */}
+      {confirmDeleteBranch && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Delete branch?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              {confirmDeleteBranch.deleteLocal && confirmDeleteBranch.deleteRemote
+                ? `This will delete "${confirmDeleteBranch.branchName}" locally and from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+                : confirmDeleteBranch.deleteRemote
+                  ? `This will delete "${confirmDeleteBranch.branchName}" from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+                  : `This will delete "${confirmDeleteBranch.branchName}" locally. This cannot be undone.`}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteBranch(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const { branchName, deleteLocal, deleteRemote, remoteName } = confirmDeleteBranch;
+                  if (deleteLocal) deleteBranch(branchName);
+                  if (deleteRemote) deleteRemoteBranch(remoteName, branchName);
+                  setConfirmDeleteBranch(null);
+                }}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drop stash confirmation */}
+      {confirmDropStash != null && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Drop stash?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              This will permanently discard stash@&#123;{confirmDropStash}&#125;. This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDropStash(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  dropStash(confirmDropStash);
+                  setConfirmDropStash(null);
+                }}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Drop
               </button>
             </div>
           </div>
@@ -679,8 +751,7 @@ function buildCommitContextMenuItems(
   checkoutBranch: (name: string) => void,
   pull: () => void,
   push: () => void,
-  deleteBranch: (name: string) => void,
-  deleteRemoteBranch: (remote: string, branch: string) => void,
+  confirmDeleteBranch: (name: string, deleteLocal: boolean, deleteRemote: boolean, remoteName: string) => void,
   renameBranch: (name: string) => void,
   setUpstream: (name: string) => void,
 ): ContextMenuItem[] {
@@ -707,8 +778,8 @@ function buildCommitContextMenuItems(
         const remote = branch.name.slice(0, slashIdx);
         const remoteBranch = branch.name.slice(slashIdx + 1);
         items.push({
-          label: `Delete ${branch.name} from ${remote}`,
-          onClick: () => deleteRemoteBranch(remote, remoteBranch),
+          label: `Delete ${branch.name} from ${remote}…`,
+          onClick: () => confirmDeleteBranch(remoteBranch, false, true, remote),
           destructive: true,
         });
       }
@@ -743,18 +814,12 @@ function buildCommitContextMenuItems(
       });
 
       if (!isCurrent) {
+        const hasRemote = branch.ahead != null || branch.behind != null;
         items.push({
-          label: `Delete ${branch.name}`,
-          onClick: () => deleteBranch(branch.name),
+          label: hasRemote ? `Delete ${branch.name} (local + remote)…` : `Delete ${branch.name}…`,
+          onClick: () => confirmDeleteBranch(branch.name, true, hasRemote, "origin"),
           destructive: true,
         });
-        if (branch.ahead != null || branch.behind != null) {
-          items.push({
-            label: `Delete ${branch.name} from origin`,
-            onClick: () => deleteRemoteBranch("origin", branch.name),
-            destructive: true,
-          });
-        }
       }
 
       items.push({ separator: true });
