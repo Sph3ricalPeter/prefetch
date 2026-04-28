@@ -81,6 +81,16 @@ import {
   unstagePatch as unstagePatchCmd,
   getConflictContents as getConflictContentsCmd,
   resolveConflictManual as resolveConflictManualCmd,
+  revertCommit as revertCommitCmd,
+  checkoutDetached as checkoutDetachedCmd,
+  createBranchAt as createBranchAtCmd,
+  renameBranchCmd,
+  deleteRemoteBranch as deleteRemoteBranchCmd,
+  setUpstream as setUpstreamCmd,
+  stashPushFiles as stashPushFilesCmd,
+  showInFolder as showInFolderCmd,
+  openInDefaultEditor as openInEditorCmd,
+  deleteFileCmd,
 } from "@/lib/commands";
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
 import {
@@ -240,6 +250,16 @@ interface RepoState {
   rebaseOnto: (targetBranch: string) => Promise<void>;
   mergeInto: (target: string) => Promise<void>;
   deleteBranch: (name: string, force?: boolean) => Promise<void>;
+  revertCommit: (commitId: string) => Promise<void>;
+  checkoutDetached: (commitId: string) => Promise<void>;
+  createBranchAt: (name: string, commitId: string) => Promise<void>;
+  renameBranch: (oldName: string, newName: string) => Promise<void>;
+  deleteRemoteBranch: (remote: string, branch: string) => Promise<void>;
+  setUpstream: (remoteBranch: string) => Promise<void>;
+  stashFiles: (paths: string[], message?: string) => Promise<void>;
+  showInFolder: (filePath: string) => Promise<void>;
+  openInEditor: (filePath: string) => Promise<void>;
+  deleteFile: (filePath: string) => Promise<void>;
   abortOperation: () => Promise<void>;
   continueOperation: (message?: string) => Promise<void>;
   loadConflictState: () => Promise<void>;
@@ -1190,6 +1210,135 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       } else {
         toast.error(message);
       }
+    }
+  },
+
+  revertCommit: async (commitId) => {
+    set({ isLoading: true });
+    try {
+      await revertCommitCmd(commitId);
+      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      if (conflict.in_progress) {
+        toast.error("Revert has conflicts — resolve them, then continue or abort");
+      } else {
+        toast.success(`Reverted ${commitId.slice(0, 7)}`);
+      }
+    } catch (e) {
+      set({ isLoading: false });
+      const conflict = await getConflictState().catch(() => null);
+      if (conflict?.in_progress) {
+        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
+        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
+        toast.error("Revert has conflicts — resolve them, then continue or abort");
+      } else {
+        toast.error(String(e));
+      }
+    }
+  },
+
+  checkoutDetached: async (commitId) => {
+    set({ isLoading: true });
+    try {
+      await checkoutDetachedCmd(commitId);
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses });
+      toast.success(`Checked out ${commitId.slice(0, 7)} (detached HEAD)`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  createBranchAt: async (name, commitId) => {
+    set({ isLoading: true });
+    try {
+      await createBranchAtCmd(name, commitId);
+      const repoData = await fetchRepoData();
+      set({ ...repoData, isLoading: false });
+      toast.success(`Created branch '${name}' at ${commitId.slice(0, 7)}`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  renameBranch: async (oldName, newName) => {
+    set({ isLoading: true });
+    try {
+      await renameBranchCmd(oldName, newName);
+      const repoData = await fetchRepoData();
+      set({ ...repoData, isLoading: false });
+      toast.success(`Renamed '${oldName}' to '${newName}'`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  deleteRemoteBranch: async (remote, branch) => {
+    set({ isLoading: true });
+    try {
+      await deleteRemoteBranchCmd(remote, branch);
+      const repoData = await fetchRepoData();
+      set({ ...repoData, isLoading: false });
+      toast.success(`Deleted ${remote}/${branch} from remote`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  setUpstream: async (remoteBranch) => {
+    set({ isLoading: true });
+    try {
+      await setUpstreamCmd(remoteBranch);
+      const repoData = await fetchRepoData();
+      set({ ...repoData, isLoading: false });
+      toast.success(`Upstream set to ${remoteBranch}`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  stashFiles: async (paths, message) => {
+    set({ isLoading: true });
+    try {
+      await stashPushFilesCmd(paths, message);
+      const [statuses, stashList] = await Promise.all([getFileStatus(), getStashes()]);
+      set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
+      toast.success(paths.length === 1 ? "Stashed 1 file" : `Stashed ${paths.length} files`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(String(e));
+    }
+  },
+
+  showInFolder: async (filePath) => {
+    try {
+      await showInFolderCmd(filePath);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  openInEditor: async (filePath) => {
+    try {
+      await openInEditorCmd(filePath);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  },
+
+  deleteFile: async (filePath) => {
+    try {
+      await deleteFileCmd(filePath);
+      const statuses = await getFileStatus();
+      set({ fileStatuses: statuses });
+      toast.success(`Deleted ${filePath.split("/").pop()}`);
+    } catch (e) {
+      toast.error(String(e));
     }
   },
 

@@ -13,6 +13,7 @@ import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
+import type { BranchInfo } from "@/types/git";
 import {
   Tooltip,
   TooltipTrigger,
@@ -58,6 +59,16 @@ export function GraphPanel() {
   const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
   const mergeInto = useRepoStore((s) => s.mergeInto);
   const resetTo = useRepoStore((s) => s.resetTo);
+  const revertCommit = useRepoStore((s) => s.revertCommit);
+  const checkoutDetached = useRepoStore((s) => s.checkoutDetached);
+  const createBranchAtAction = useRepoStore((s) => s.createBranchAt);
+  const createNewTag = useRepoStore((s) => s.createNewTag);
+  const deleteBranch = useRepoStore((s) => s.deleteBranch);
+  const deleteRemoteBranch = useRepoStore((s) => s.deleteRemoteBranch);
+  const renameBranch = useRepoStore((s) => s.renameBranch);
+  const pull = useRepoStore((s) => s.pull);
+  const push = useRepoStore((s) => s.push);
+  const setUpstream = useRepoStore((s) => s.setUpstream);
   const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const selectStash = useRepoStore((s) => s.selectStash);
@@ -76,6 +87,17 @@ export function GraphPanel() {
     y: number;
   } | null>(null);
   const [confirmResetHard, setConfirmResetHard] = useState<string | null>(null);
+  const [branchContextMenu, setBranchContextMenu] = useState<{
+    branchName: string;
+    commitId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [createBranchDialog, setCreateBranchDialog] = useState<{ commitId: string } | null>(null);
+  const [createTagDialog, setCreateTagDialog] = useState<{ commitId: string } | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{ branch: string } | null>(null);
+  const [upstreamDialog, setUpstreamDialog] = useState<{ branch: string } | null>(null);
+  const [dialogInput, setDialogInput] = useState("");
 
   // Ctrl+Z undo shortcut (global)
   useEffect(() => {
@@ -295,6 +317,10 @@ export function GraphPanel() {
               if (isLoading) return;
               setStashContextMenu({ index, x, y });
             }}
+            onBranchContextMenu={(branchName, commitId, x, y) => {
+              if (isLoading) return;
+              setBranchContextMenu({ branchName, commitId, x, y });
+            }}
           />
         )}
 
@@ -324,6 +350,10 @@ export function GraphPanel() {
             },
             rebaseOnto,
             mergeInto,
+            revertCommit,
+            checkoutDetached,
+            (commitId) => { setDialogInput(""); setCreateBranchDialog({ commitId }); },
+            (commitId) => { setDialogInput(""); setCreateTagDialog({ commitId }); },
           )}
           onClose={() => setCommitContextMenu(null)}
         />
@@ -350,6 +380,30 @@ export function GraphPanel() {
             },
           ]}
           onClose={() => setStashContextMenu(null)}
+        />
+      )}
+
+      {/* Branch badge context menu */}
+      {branchContextMenu && (
+        <ContextMenu
+          x={branchContextMenu.x}
+          y={branchContextMenu.y}
+          items={buildBranchBadgeContextMenuItems(
+            branchContextMenu.branchName,
+            branchContextMenu.commitId,
+            currentBranch,
+            branches,
+            checkout,
+            mergeInto,
+            rebaseOnto,
+            pull,
+            push,
+            deleteBranch,
+            deleteRemoteBranch,
+            (name) => { setDialogInput(name); setRenameDialog({ branch: name }); },
+            (name) => { setDialogInput(""); setUpstreamDialog({ branch: name }); },
+          )}
+          onClose={() => setBranchContextMenu(null)}
         />
       )}
 
@@ -444,6 +498,194 @@ export function GraphPanel() {
           </div>
         </div>
       )}
+
+      {/* Create branch at commit dialog */}
+      {createBranchDialog && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Create branch</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              New branch at {createBranchDialog.commitId.slice(0, 7)}
+            </p>
+            <input
+              autoFocus
+              value={dialogInput}
+              onChange={(e) => setDialogInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dialogInput.trim()) {
+                  createBranchAtAction(dialogInput.trim(), createBranchDialog.commitId);
+                  setCreateBranchDialog(null);
+                } else if (e.key === "Escape") {
+                  setCreateBranchDialog(null);
+                }
+              }}
+              placeholder="Branch name"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setCreateBranchDialog(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (dialogInput.trim()) {
+                    createBranchAtAction(dialogInput.trim(), createBranchDialog.commitId);
+                    setCreateBranchDialog(null);
+                  }
+                }}
+                disabled={!dialogInput.trim()}
+                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename branch dialog (from graph badge) */}
+      {renameDialog && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Rename branch</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Renaming &apos;{renameDialog.branch}&apos;
+            </p>
+            <input
+              autoFocus
+              value={dialogInput}
+              onChange={(e) => setDialogInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dialogInput.trim() && dialogInput.trim() !== renameDialog.branch) {
+                  renameBranch(renameDialog.branch, dialogInput.trim());
+                  setRenameDialog(null);
+                } else if (e.key === "Escape") {
+                  setRenameDialog(null);
+                }
+              }}
+              placeholder="New name"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setRenameDialog(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (dialogInput.trim() && dialogInput.trim() !== renameDialog.branch) {
+                    renameBranch(renameDialog.branch, dialogInput.trim());
+                    setRenameDialog(null);
+                  }
+                }}
+                disabled={!dialogInput.trim() || dialogInput.trim() === renameDialog.branch}
+                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Set upstream dialog (from graph badge) */}
+      {upstreamDialog && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Set upstream</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Set tracking branch for &apos;{upstreamDialog.branch}&apos;
+            </p>
+            <input
+              autoFocus
+              value={dialogInput}
+              onChange={(e) => setDialogInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dialogInput.trim()) {
+                  setUpstream(dialogInput.trim());
+                  setUpstreamDialog(null);
+                } else if (e.key === "Escape") {
+                  setUpstreamDialog(null);
+                }
+              }}
+              placeholder="e.g. origin/main"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setUpstreamDialog(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (dialogInput.trim()) {
+                    setUpstream(dialogInput.trim());
+                    setUpstreamDialog(null);
+                  }
+                }}
+                disabled={!dialogInput.trim()}
+                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                Set
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create tag at commit dialog */}
+      {createTagDialog && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Create tag</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              New tag at {createTagDialog.commitId.slice(0, 7)}
+            </p>
+            <input
+              autoFocus
+              value={dialogInput}
+              onChange={(e) => setDialogInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dialogInput.trim()) {
+                  createNewTag(dialogInput.trim(), createTagDialog.commitId);
+                  setCreateTagDialog(null);
+                } else if (e.key === "Escape") {
+                  setCreateTagDialog(null);
+                }
+              }}
+              placeholder="Tag name"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setCreateTagDialog(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (dialogInput.trim()) {
+                    createNewTag(dialogInput.trim(), createTagDialog.commitId);
+                    setCreateTagDialog(null);
+                  }
+                }}
+                disabled={!dialogInput.trim()}
+                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -455,9 +697,14 @@ function buildCommitContextMenuItems(
   resetTo: (id: string, mode: "soft" | "hard") => void,
   rebaseOnto: (target: string) => void,
   mergeInto: (target: string) => void,
+  revertCommit: (id: string) => void,
+  checkoutDetached: (id: string) => void,
+  createBranchHere: (commitId: string) => void,
+  createTagHere: (commitId: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
+  // Branch ops
   items.push({
     label: `Cherry-pick onto ${currentBranch ?? "HEAD"}`,
     onClick: () => cherryPick(commitId),
@@ -474,21 +721,154 @@ function buildCommitContextMenuItems(
     });
   }
 
+  items.push({ separator: true });
+
+  // Navigation
+  items.push({
+    label: "Checkout commit (detached HEAD)",
+    onClick: () => checkoutDetached(commitId),
+  });
+  items.push({
+    label: "Create branch here…",
+    onClick: () => createBranchHere(commitId),
+  });
+  items.push({
+    label: "Create tag here…",
+    onClick: () => createTagHere(commitId),
+  });
+
+  items.push({ separator: true });
+
+  // Modify
+  items.push({
+    label: "Revert this commit",
+    onClick: () => revertCommit(commitId),
+  });
   items.push({
     label: "Reset soft to here (keep changes)",
     onClick: () => resetTo(commitId, "soft"),
   });
-
   items.push({
     label: "Reset hard to here",
     onClick: () => resetTo(commitId, "hard"),
     destructive: true,
   });
 
+  items.push({ separator: true });
+
+  // Clipboard
   items.push({
     label: `Copy SHA: ${commitId.slice(0, 7)}`,
     onClick: () => navigator.clipboard.writeText(commitId),
   });
+
+  return items;
+}
+
+function buildBranchBadgeContextMenuItems(
+  branchName: string,
+  _commitId: string,
+  currentBranch: string | null,
+  branches: BranchInfo[],
+  checkout: (name: string) => void,
+  mergeInto: (target: string) => void,
+  rebaseOnto: (target: string) => void,
+  pull: () => void,
+  push: () => void,
+  deleteBranch: (name: string) => void,
+  deleteRemoteBranch: (remote: string, branch: string) => void,
+  renameBranch: (name: string) => void,
+  setUpstream: (name: string) => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+  const isCurrent = branchName === currentBranch;
+  const branchInfo = branches.find((b) => b.name === branchName);
+  const isRemote = branchInfo?.is_remote ?? branchName.includes("/");
+
+  if (isRemote) {
+    // ── Remote branch badge ──
+    items.push({
+      label: `Checkout ${branchName}`,
+      onClick: () => checkout(branchName),
+    });
+
+    items.push({ separator: true });
+
+    items.push({
+      label: "Copy branch name",
+      onClick: () => navigator.clipboard.writeText(branchName),
+    });
+
+    items.push({ separator: true });
+
+    const slashIdx = branchName.indexOf("/");
+    if (slashIdx > 0) {
+      const remote = branchName.slice(0, slashIdx);
+      const remoteBranch = branchName.slice(slashIdx + 1);
+      items.push({
+        label: `Delete from ${remote}`,
+        onClick: () => deleteRemoteBranch(remote, remoteBranch),
+        destructive: true,
+      });
+    }
+
+    return items;
+  }
+
+  // ── Local branch badge ──
+
+  if (!isCurrent) {
+    items.push({
+      label: `Checkout ${branchName}`,
+      onClick: () => checkout(branchName),
+    });
+    items.push({ separator: true });
+  }
+
+  if (!isCurrent && currentBranch) {
+    items.push({
+      label: `Merge ${branchName} into ${currentBranch}`,
+      onClick: () => mergeInto(branchName),
+    });
+    items.push({
+      label: `Rebase ${currentBranch} onto ${branchName}`,
+      onClick: () => rebaseOnto(branchName),
+    });
+    items.push({ separator: true });
+  }
+
+  // Remote ops
+  items.push({ label: "Pull", onClick: () => pull() });
+  items.push({ label: "Push", onClick: () => push() });
+  items.push({ label: "Set upstream…", onClick: () => setUpstream(branchName) });
+
+  items.push({ separator: true });
+
+  // Manage
+  items.push({ label: "Rename branch…", onClick: () => renameBranch(branchName) });
+  items.push({
+    label: "Copy branch name",
+    onClick: () => navigator.clipboard.writeText(branchName),
+  });
+
+  if (!isCurrent) {
+    items.push({ separator: true });
+
+    items.push({
+      label: `Delete ${branchName}`,
+      onClick: () => deleteBranch(branchName),
+      destructive: true,
+    });
+
+    // Also offer remote delete if it tracks a remote
+    if (branchInfo && (branchInfo.ahead != null || branchInfo.behind != null)) {
+      items.push({
+        label: "Delete from origin",
+        onClick: () => deleteRemoteBranch("origin", branchName),
+        destructive: true,
+      });
+    }
+  }
 
   return items;
 }

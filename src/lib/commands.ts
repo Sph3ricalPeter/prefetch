@@ -248,6 +248,48 @@ export async function continueOperation(
   return tracedInvoke<string>("continue_operation", { message: message ?? null });
 }
 
+// ── Context menu actions (v0.6) ──────────────────────────────────────────────
+
+export async function revertCommit(commitId: string): Promise<string> {
+  return tracedInvoke<string>("revert_commit", { commitId });
+}
+
+export async function checkoutDetached(commitId: string): Promise<string> {
+  return tracedInvoke<string>("checkout_detached", { commitId });
+}
+
+export async function createBranchAt(name: string, commitId: string): Promise<void> {
+  return tracedInvoke<void>("create_branch_at", { name, commitId });
+}
+
+export async function renameBranchCmd(oldName: string, newName: string): Promise<string> {
+  return tracedInvoke<string>("rename_branch", { oldName, newName });
+}
+
+export async function deleteRemoteBranch(remote: string, branch: string): Promise<string> {
+  return tracedInvoke<string>("delete_remote_branch", { remote, branch });
+}
+
+export async function setUpstream(remoteBranch: string): Promise<string> {
+  return tracedInvoke<string>("set_upstream", { remoteBranch });
+}
+
+export async function stashPushFiles(paths: string[], message?: string): Promise<string> {
+  return tracedInvoke<string>("stash_push_files", { paths, message: message ?? null });
+}
+
+export async function showInFolder(filePath: string): Promise<void> {
+  return tracedInvoke<void>("show_in_folder", { filePath });
+}
+
+export async function openInDefaultEditor(filePath: string): Promise<void> {
+  return tracedInvoke<void>("open_in_default_editor", { filePath });
+}
+
+export async function deleteFileCmd(filePath: string): Promise<void> {
+  return tracedInvoke<void>("delete_file", { filePath });
+}
+
 // ── Git identity ─────────────────────────────────────────────────────────────
 
 export async function getGitIdentity(): Promise<GitIdentity> {

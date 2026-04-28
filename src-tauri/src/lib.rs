@@ -111,6 +111,17 @@ pub fn run() {
             commands::repo::get_rebase_progress,
             commands::repo::abort_operation,
             commands::repo::continue_operation,
+            // Context menu actions (v0.6)
+            commands::repo::revert_commit,
+            commands::repo::checkout_detached,
+            commands::repo::create_branch_at,
+            commands::repo::rename_branch,
+            commands::repo::delete_remote_branch,
+            commands::repo::set_upstream,
+            commands::repo::stash_push_files,
+            commands::repo::show_in_folder,
+            commands::repo::open_in_default_editor,
+            commands::repo::delete_file,
             commands::repo::get_git_identity,
             // Forge (GitHub / GitLab)
             commands::forge::get_forge_status,

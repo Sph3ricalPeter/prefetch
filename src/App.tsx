@@ -7,7 +7,6 @@ import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { initDatabase } from "@/lib/database";
 import { UpdateChecker } from "@/components/update-checker";
-import { UpdateIndicator } from "@/components/update-indicator";
 
 /**
  * Initializes SQLite database on startup, loads recent repos,
@@ -111,6 +110,50 @@ function WorkingTreePoller() {
   return null;
 }
 
+/**
+ * Blocks the default browser right-click context menu everywhere except
+ * text inputs (where the user needs cut/copy/paste).
+ */
+function ContextMenuBlocker() {
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      // Allow contenteditable elements (e.g. CodeMirror)
+      if (target.isContentEditable) return;
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", handler);
+    return () => document.removeEventListener("contextmenu", handler);
+  }, []);
+
+  return null;
+}
+
+/**
+ * Blocks devtools keyboard shortcuts (F12, Ctrl+Shift+I/J, Ctrl+U)
+ * in production builds only.
+ */
+function DevToolsBlocker() {
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.key === "F12" ||
+        (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "J")) ||
+        (e.ctrlKey && e.key === "u")
+      ) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  return null;
+}
+
 function App() {
   return (
     <TooltipProvider delayDuration={300}>
@@ -119,7 +162,8 @@ function App() {
       <RepoEventListener />
       <WorkingTreePoller />
       <UpdateChecker />
-      <UpdateIndicator />
+      <ContextMenuBlocker />
+      <DevToolsBlocker />
       <Toaster />
     </TooltipProvider>
   );

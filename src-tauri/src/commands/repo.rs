@@ -547,3 +547,102 @@ pub async fn continue_operation(
     let env = get_profile_env(&state);
     offload(move || repository::continue_operation(&path, message, &env)).await
 }
+
+// ── Context menu actions (v0.6) ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn revert_commit(
+    commit_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::revert_commit(&path, &commit_id, &env)).await
+}
+
+#[tauri::command]
+pub async fn checkout_detached(
+    commit_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::checkout_detached(&path, &commit_id)).await
+}
+
+#[tauri::command]
+pub async fn create_branch_at(
+    name: String,
+    commit_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::create_branch_at(&path, &name, &commit_id)).await
+}
+
+#[tauri::command]
+pub async fn rename_branch(
+    old_name: String,
+    new_name: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::rename_branch(&path, &old_name, &new_name)).await
+}
+
+#[tauri::command]
+pub async fn delete_remote_branch(
+    remote: String,
+    branch: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::delete_remote_branch(&path, &remote, &branch, &env)).await
+}
+
+#[tauri::command]
+pub async fn set_upstream(
+    remote_branch: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::set_upstream(&path, &remote_branch)).await
+}
+
+#[tauri::command]
+pub async fn stash_push_files(
+    paths: Vec<String>,
+    message: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::stash_push_files(&path, &paths, message.as_deref(), &env)).await
+}
+
+#[tauri::command]
+pub async fn show_in_folder(file_path: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    let abs_path = std::path::Path::new(&repo).join(&file_path);
+    let abs_str = abs_path.to_string_lossy().to_string();
+    offload(move || repository::show_in_folder(&abs_str)).await
+}
+
+#[tauri::command]
+pub async fn open_in_default_editor(
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    let abs_path = std::path::Path::new(&repo).join(&file_path);
+    let abs_str = abs_path.to_string_lossy().to_string();
+    offload(move || repository::open_in_default_editor(&abs_str)).await
+}
+
+#[tauri::command]
+pub async fn delete_file(file_path: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let repo = repo_path(&state)?;
+    let abs_path = std::path::Path::new(&repo).join(&file_path);
+    let abs_str = abs_path.to_string_lossy().to_string();
+    offload(move || repository::delete_file(&abs_str)).await
+}

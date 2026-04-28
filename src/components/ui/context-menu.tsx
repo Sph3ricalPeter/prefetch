@@ -1,11 +1,8 @@
 import { useEffect, useRef } from "react";
 
-export interface ContextMenuItem {
-  label: string;
-  onClick: () => void;
-  destructive?: boolean;
-  disabled?: boolean;
-}
+export type ContextMenuItem =
+  | { label: string; onClick: () => void; destructive?: boolean; disabled?: boolean }
+  | { separator: true };
 
 interface ContextMenuProps {
   x: number;
@@ -46,23 +43,27 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       className="fixed z-50 min-w-44 rounded-md border border-border bg-card py-1 shadow-lg"
       style={style}
     >
-      {items.map((item, i) => (
-        <button
-          key={i}
-          onClick={() => {
-            item.onClick();
-            onClose();
-          }}
-          disabled={item.disabled}
-          className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors disabled:opacity-40 ${
-            item.destructive
-              ? "text-red-400 hover:bg-destructive/20"
-              : "text-foreground hover:bg-secondary"
-          }`}
-        >
-          {item.label}
-        </button>
-      ))}
+      {items.map((item, i) =>
+        "separator" in item ? (
+          <div key={i} className="mx-2 my-1 border-t border-border" />
+        ) : (
+          <button
+            key={i}
+            onClick={() => {
+              item.onClick();
+              onClose();
+            }}
+            disabled={item.disabled}
+            className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors disabled:opacity-40 ${
+              item.destructive
+                ? "text-red-400 hover:bg-destructive/20"
+                : "text-foreground hover:bg-secondary"
+            }`}
+          >
+            {item.label}
+          </button>
+        ),
+      )}
     </div>
   );
 }

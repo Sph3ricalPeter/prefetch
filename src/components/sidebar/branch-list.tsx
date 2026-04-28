@@ -20,6 +20,11 @@ export function BranchList({ filter = "" }: { filter?: string }) {
   const prCache = useRepoStore((s) => s.prCache);
   const loadPrForBranch = useRepoStore((s) => s.loadPrForBranch);
   const openPr = useRepoStore((s) => s.openPr);
+  const pull = useRepoStore((s) => s.pull);
+  const push = useRepoStore((s) => s.push);
+  const renameBranch = useRepoStore((s) => s.renameBranch);
+  const deleteRemoteBranch = useRepoStore((s) => s.deleteRemoteBranch);
+  const setUpstream = useRepoStore((s) => s.setUpstream);
   const [localOpen, setLocalOpen] = useState(true);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [branchContextMenu, setBranchContextMenu] = useState<{
@@ -27,6 +32,10 @@ export function BranchList({ filter = "" }: { filter?: string }) {
     x: number;
     y: number;
   } | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{ branch: string } | null>(null);
+  const [renameInput, setRenameInput] = useState("");
+  const [upstreamDialog, setUpstreamDialog] = useState<{ branch: string } | null>(null);
+  const [upstreamInput, setUpstreamInput] = useState("");
 
   const filtered = filter
     ? branches.filter((b) =>
@@ -118,9 +127,108 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             mergeInto,
             deleteBranch,
             checkout,
+            pull,
+            push,
+            (name) => { setRenameInput(name); setRenameDialog({ branch: name }); },
+            deleteRemoteBranch,
+            (name) => { setUpstreamInput(""); setUpstreamDialog({ branch: name }); },
           )}
           onClose={() => setBranchContextMenu(null)}
         />
+      )}
+
+      {/* Rename branch dialog */}
+      {renameDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Rename branch</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Renaming &apos;{renameDialog.branch}&apos;
+            </p>
+            <input
+              autoFocus
+              value={renameInput}
+              onChange={(e) => setRenameInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
+                  renameBranch(renameDialog.branch, renameInput.trim());
+                  setRenameDialog(null);
+                } else if (e.key === "Escape") {
+                  setRenameDialog(null);
+                }
+              }}
+              placeholder="New name"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setRenameDialog(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
+                    renameBranch(renameDialog.branch, renameInput.trim());
+                    setRenameDialog(null);
+                  }
+                }}
+                disabled={!renameInput.trim() || renameInput.trim() === renameDialog.branch}
+                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Set upstream dialog */}
+      {upstreamDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Set upstream</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Set tracking branch for &apos;{upstreamDialog.branch}&apos;
+            </p>
+            <input
+              autoFocus
+              value={upstreamInput}
+              onChange={(e) => setUpstreamInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && upstreamInput.trim()) {
+                  setUpstream(upstreamInput.trim());
+                  setUpstreamDialog(null);
+                } else if (e.key === "Escape") {
+                  setUpstreamDialog(null);
+                }
+              }}
+              placeholder="e.g. origin/main"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setUpstreamDialog(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (upstreamInput.trim()) {
+                    setUpstream(upstreamInput.trim());
+                    setUpstreamDialog(null);
+                  }
+                }}
+                disabled={!upstreamInput.trim()}
+                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                Set
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -133,19 +241,59 @@ function buildBranchContextMenuItems(
   mergeInto: (target: string) => void,
   deleteBranch: (name: string) => void,
   checkout: (name: string) => void,
+  pull: () => void,
+  push: () => void,
+  renameBranch: (name: string) => void,
+  deleteRemoteBranch: (remote: string, branch: string) => void,
+  setUpstream: (name: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
+  const isCurrent = branch.name === currentBranch;
 
-  // Checkout option (if not already current)
-  if (branch.name !== currentBranch) {
+  if (branch.is_remote) {
+    // ── Remote branch menu ──
     items.push({
       label: `Checkout ${branch.name}`,
       onClick: () => checkout(branch.name),
     });
+
+    items.push({ separator: true });
+
+    items.push({
+      label: "Copy branch name",
+      onClick: () => navigator.clipboard.writeText(branch.name),
+    });
+
+    items.push({ separator: true });
+
+    // Parse remote/branch from e.g. "origin/feature"
+    const slashIdx = branch.name.indexOf("/");
+    if (slashIdx > 0) {
+      const remote = branch.name.slice(0, slashIdx);
+      const remoteBranch = branch.name.slice(slashIdx + 1);
+      items.push({
+        label: `Delete from ${remote}`,
+        onClick: () => deleteRemoteBranch(remote, remoteBranch),
+        destructive: true,
+      });
+    }
+
+    return items;
   }
 
-  // Merge & rebase options (only for local branches that aren't current)
-  if (!branch.is_remote && branch.name !== currentBranch && currentBranch) {
+  // ── Local branch menu ──
+
+  // Navigation (not for current branch)
+  if (!isCurrent) {
+    items.push({
+      label: `Checkout ${branch.name}`,
+      onClick: () => checkout(branch.name),
+    });
+    items.push({ separator: true });
+  }
+
+  // Merge & rebase (only for non-current local branches)
+  if (!isCurrent && currentBranch) {
     items.push({
       label: `Merge ${branch.name} into ${currentBranch}`,
       onClick: () => mergeInto(branch.name),
@@ -154,15 +302,53 @@ function buildBranchContextMenuItems(
       label: `Rebase ${currentBranch} onto ${branch.name}`,
       onClick: () => rebaseOnto(branch.name),
     });
+    items.push({ separator: true });
   }
 
-  // Delete option (local, non-current branches only)
-  if (!branch.is_remote && branch.name !== currentBranch) {
+  // Remote ops
+  items.push({
+    label: "Pull",
+    onClick: () => pull(),
+  });
+  items.push({
+    label: "Push",
+    onClick: () => push(),
+  });
+  items.push({
+    label: "Set upstream…",
+    onClick: () => setUpstream(branch.name),
+  });
+
+  items.push({ separator: true });
+
+  // Manage
+  items.push({
+    label: "Rename branch…",
+    onClick: () => renameBranch(branch.name),
+  });
+  items.push({
+    label: "Copy branch name",
+    onClick: () => navigator.clipboard.writeText(branch.name),
+  });
+
+  // Delete (not for current branch)
+  if (!isCurrent) {
+    items.push({ separator: true });
+
     items.push({
       label: `Delete ${branch.name}`,
       onClick: () => deleteBranch(branch.name),
       destructive: true,
     });
+
+    // Also offer remote delete if it tracks a remote (ahead/behind present)
+    if (branch.ahead != null || branch.behind != null) {
+      items.push({
+        label: "Delete from origin",
+        onClick: () => deleteRemoteBranch("origin", branch.name),
+        destructive: true,
+      });
+    }
   }
 
   return items;

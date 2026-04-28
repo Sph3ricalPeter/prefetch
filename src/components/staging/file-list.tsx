@@ -13,6 +13,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
+import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import {
   Tooltip,
   TooltipTrigger,
@@ -41,6 +42,9 @@ export function FileList() {
   const resolveTheirs = useRepoStore((s) => s.resolveTheirs);
   const selectFile = useRepoStore((s) => s.selectFile);
   const isLoading = useRepoStore((s) => s.isLoading);
+  const stashFiles = useRepoStore((s) => s.stashFiles);
+  const showInFolder = useRepoStore((s) => s.showInFolder);
+  const openInEditor = useRepoStore((s) => s.openInEditor);
 
   const fileViewMode = useRepoStore((s) => s.fileViewMode);
 
@@ -64,6 +68,19 @@ export function FileList() {
   const [conflictsOpen, setConflictsOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(true);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
+  const [fileContextMenu, setFileContextMenu] = useState<{
+    file: FileStatus;
+    isStaged: boolean;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [folderContextMenu, setFolderContextMenu] = useState<{
+    paths: string[];
+    folderPath: string;
+    isStaged: boolean;
+    x: number;
+    y: number;
+  } | null>(null);
   const viewMode = fileViewMode;
 
   const conflicted = fileStatuses.filter((f) => f.is_conflicted);
@@ -133,6 +150,8 @@ export function FileList() {
             onToggleBatch={(paths) => wrappedStage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading || busyOp !== null}
+            onFileContextMenu={(file, x, y) => setFileContextMenu({ file, isStaged: false, x, y })}
+            onFolderContextMenu={(paths, folderPath, x, y) => setFolderContextMenu({ paths, folderPath, isStaged: false, x, y })}
           />
         ) : (
           unstaged.map((file) => (
@@ -147,6 +166,10 @@ export function FileList() {
               toggleTitle="Stage"
               onDiscard={() => setConfirmDiscard([file.path])}
               disabled={isLoading || busyOp !== null}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setFileContextMenu({ file, isStaged: false, x: e.clientX, y: e.clientY });
+              }}
             />
           ))
         )}
@@ -183,6 +206,8 @@ export function FileList() {
             onToggleBatch={(paths) => wrappedUnstage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading || busyOp !== null}
+            onFileContextMenu={(file, x, y) => setFileContextMenu({ file, isStaged: true, x, y })}
+            onFolderContextMenu={(paths, folderPath, x, y) => setFolderContextMenu({ paths, folderPath, isStaged: true, x, y })}
           />
         ) : (
           staged.map((file) => (
@@ -197,6 +222,10 @@ export function FileList() {
               toggleTitle="Unstage"
               onDiscard={() => setConfirmDiscard([file.path])}
               disabled={isLoading || busyOp !== null}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setFileContextMenu({ file, isStaged: true, x: e.clientX, y: e.clientY });
+              }}
             />
           ))
         )}
@@ -211,6 +240,44 @@ export function FileList() {
             setConfirmDiscard(null);
           }}
           onCancel={() => setConfirmDiscard(null)}
+        />
+      )}
+
+      {/* File context menu */}
+      {fileContextMenu && (
+        <ContextMenu
+          x={fileContextMenu.x}
+          y={fileContextMenu.y}
+          items={buildFileContextMenuItems(
+            fileContextMenu.file,
+            fileContextMenu.isStaged,
+            wrappedStage,
+            wrappedUnstage,
+            (path) => setConfirmDiscard([path]),
+            stashFiles,
+            openInEditor,
+            showInFolder,
+          )}
+          onClose={() => setFileContextMenu(null)}
+        />
+      )}
+
+      {/* Folder context menu */}
+      {folderContextMenu && (
+        <ContextMenu
+          x={folderContextMenu.x}
+          y={folderContextMenu.y}
+          items={buildFolderContextMenuItems(
+            folderContextMenu.paths,
+            folderContextMenu.folderPath,
+            folderContextMenu.isStaged,
+            wrappedStage,
+            wrappedUnstage,
+            (paths) => setConfirmDiscard(paths),
+            stashFiles,
+            showInFolder,
+          )}
+          onClose={() => setFolderContextMenu(null)}
         />
       )}
     </div>
@@ -289,6 +356,8 @@ function FileTreeView({
   onToggleBatch,
   onDiscardBatch,
   disabled,
+  onFileContextMenu,
+  onFolderContextMenu,
 }: {
   files: FileStatus[];
   selectedFilePath: string | null;
@@ -301,6 +370,8 @@ function FileTreeView({
   onToggleBatch: (paths: string[]) => void;
   onDiscardBatch: (paths: string[]) => void;
   disabled: boolean;
+  onFileContextMenu?: (file: FileStatus, x: number, y: number) => void;
+  onFolderContextMenu?: (paths: string[], folderPath: string, x: number, y: number) => void;
 }) {
   const tree = useMemo(() => buildFileTree(files), [files]);
 
@@ -321,6 +392,8 @@ function FileTreeView({
           onToggleBatch={onToggleBatch}
           onDiscardBatch={onDiscardBatch}
           disabled={disabled}
+          onFileContextMenu={onFileContextMenu}
+          onFolderContextMenu={onFolderContextMenu}
         />
       ))}
     </div>
@@ -340,6 +413,8 @@ function TreeNodeView({
   onToggleBatch,
   onDiscardBatch,
   disabled,
+  onFileContextMenu,
+  onFolderContextMenu,
 }: {
   node: FileTreeNode;
   depth: number;
@@ -353,6 +428,8 @@ function TreeNodeView({
   onToggleBatch: (paths: string[]) => void;
   onDiscardBatch: (paths: string[]) => void;
   disabled: boolean;
+  onFileContextMenu?: (file: FileStatus, x: number, y: number) => void;
+  onFolderContextMenu?: (paths: string[], folderPath: string, x: number, y: number) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const indent = depth * 16;
@@ -365,6 +442,11 @@ function TreeNodeView({
           className="group flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
           style={{ paddingLeft: `${12 + indent}px` }}
           onClick={() => setExpanded(!expanded)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onFolderContextMenu?.(collectFilePaths(node), node.path, e.clientX, e.clientY);
+          }}
         >
           {expanded ? (
             <ChevronDown className="h-3 w-3 shrink-0" />
@@ -426,6 +508,8 @@ function TreeNodeView({
             onToggleBatch={onToggleBatch}
             onDiscardBatch={onDiscardBatch}
             disabled={disabled}
+            onFileContextMenu={onFileContextMenu}
+            onFolderContextMenu={onFolderContextMenu}
           />
         ))}
       </div>
@@ -448,6 +532,11 @@ function TreeNodeView({
       }`}
       style={{ paddingLeft: `${12 + indent + 16}px` }}
       onClick={() => onSelect(file.path)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onFileContextMenu?.(file, e.clientX, e.clientY);
+      }}
     >
       <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
@@ -511,6 +600,7 @@ function FileRow({
   toggleTitle,
   onDiscard,
   disabled,
+  onContextMenu,
 }: {
   file: FileStatus;
   isSelected: boolean;
@@ -521,6 +611,7 @@ function FileRow({
   toggleTitle: string;
   onDiscard: () => void;
   disabled: boolean;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const statusColor = statusTypeColor(file.status_type);
   const statusLabel = statusTypeLabel(file.status_type);
@@ -537,6 +628,7 @@ function FileRow({
           : "hover:bg-secondary"
       }`}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
     >
       <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
@@ -714,6 +806,100 @@ function statusTypeLabel(type: string): string {
     default:
       return "?";
   }
+}
+
+function buildFileContextMenuItems(
+  file: FileStatus,
+  isStaged: boolean,
+  stage: (paths: string[]) => void,
+  unstage: (paths: string[]) => void,
+  discard: (path: string) => void,
+  stashFiles: (paths: string[]) => void,
+  openInEditor: (path: string) => void,
+  showInFolder: (path: string) => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+
+  // Stage / unstage
+  if (isStaged) {
+    items.push({ label: "Unstage file", onClick: () => unstage([file.path]) });
+  } else {
+    items.push({ label: "Stage file", onClick: () => stage([file.path]) });
+  }
+
+  // Stash (only for unstaged files)
+  if (!isStaged) {
+    items.push({ separator: true });
+    items.push({ label: "Stash this file", onClick: () => stashFiles([file.path]) });
+  }
+
+  items.push({ separator: true });
+
+  // External
+  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path) });
+  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path) });
+
+  items.push({ separator: true });
+
+  // Clipboard
+  items.push({
+    label: "Copy file path",
+    onClick: () => navigator.clipboard.writeText(file.path),
+  });
+
+  items.push({ separator: true });
+
+  // Destructive
+  items.push({
+    label: "Discard changes",
+    onClick: () => discard(file.path),
+    destructive: true,
+  });
+
+  return items;
+}
+
+function buildFolderContextMenuItems(
+  paths: string[],
+  folderPath: string,
+  isStaged: boolean,
+  stage: (paths: string[]) => void,
+  unstage: (paths: string[]) => void,
+  discard: (paths: string[]) => void,
+  stashFiles: (paths: string[]) => void,
+  showInFolder: (path: string) => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+  const count = paths.length;
+
+  // Stage / unstage
+  if (isStaged) {
+    items.push({ label: `Unstage folder (${count} files)`, onClick: () => unstage(paths) });
+  } else {
+    items.push({ label: `Stage folder (${count} files)`, onClick: () => stage(paths) });
+  }
+
+  // Stash (only for unstaged)
+  if (!isStaged) {
+    items.push({ separator: true });
+    items.push({ label: "Stash folder", onClick: () => stashFiles(paths) });
+  }
+
+  items.push({ separator: true });
+
+  // External
+  items.push({ label: "Open folder", onClick: () => showInFolder(folderPath) });
+
+  items.push({ separator: true });
+
+  // Destructive
+  items.push({
+    label: "Discard folder changes",
+    onClick: () => discard(paths),
+    destructive: true,
+  });
+
+  return items;
 }
 
 function DiscardDialog({

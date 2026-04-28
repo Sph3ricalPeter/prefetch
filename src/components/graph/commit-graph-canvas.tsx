@@ -493,6 +493,7 @@ interface BadgeHitArea {
   branchName: string;
   row: number;
   stashIndex?: number;
+  badgeType: "branch" | "tag" | "stash";
 }
 
 /** Stored body-text position for hover tooltip (Change 6) */
@@ -540,6 +541,7 @@ interface CommitGraphCanvasProps {
   onSelectStash?: (index: number) => void;
   onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
+  onBranchContextMenu?: (branchName: string, commitId: string, x: number, y: number) => void;
 }
 
 export function CommitGraphCanvas({
@@ -560,6 +562,7 @@ export function CommitGraphCanvas({
   onSelectStash,
   onCommitContextMenu,
   onStashContextMenu,
+  onBranchContextMenu,
 }: CommitGraphCanvasProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1002,6 +1005,7 @@ export function CommitGraphCanvas({
             height: LABEL_HEIGHT,
             branchName: group.local?.name ?? group.remote!.name,
             row: visRow,
+            badgeType: "branch",
           });
           usedWidth += w + LABEL_GAP;
           labelCount++;
@@ -1025,6 +1029,7 @@ export function CommitGraphCanvas({
             height: LABEL_HEIGHT,
             branchName: tag.name, // reuse branchName field -- checkout works for tags too
             row: visRow,
+            badgeType: "tag",
           });
           usedWidth += w + LABEL_GAP;
           labelCount++;
@@ -1052,6 +1057,7 @@ export function CommitGraphCanvas({
             branchName: `stash@{${stash.index}}`,
             row: visRow,
             stashIndex: stash.index,
+            badgeType: "stash",
           });
           usedWidth += w + LABEL_GAP;
           labelCount++;
@@ -1301,20 +1307,30 @@ export function CommitGraphCanvas({
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top + scroll.scrollTop;
 
-      // Check if right-click landed on a stash badge
-      if (onStashContextMenu) {
-        for (const badge of badgeHitAreasRef.current) {
-          if (
-            badge.stashIndex != null &&
-            clickX >= badge.x &&
-            clickX <= badge.x + badge.width &&
-            clickY >= badge.y &&
-            clickY <= badge.y + badge.height
-          ) {
+      // Check if right-click landed on a badge (stash or branch)
+      for (const badge of badgeHitAreasRef.current) {
+        if (
+          clickX >= badge.x &&
+          clickX <= badge.x + badge.width &&
+          clickY >= badge.y &&
+          clickY <= badge.y + badge.height
+        ) {
+          if (badge.badgeType === "stash" && badge.stashIndex != null && onStashContextMenu) {
             e.preventDefault();
             onStashContextMenu(badge.stashIndex, e.clientX, e.clientY);
             return;
           }
+          if (badge.badgeType === "branch" && onBranchContextMenu) {
+            // Resolve the commit this badge sits on
+            const badgeCommitIdx = badge.row - rowOffset;
+            if (badgeCommitIdx >= 0 && badgeCommitIdx < commits.length) {
+              e.preventDefault();
+              onBranchContextMenu(badge.branchName, commits[badgeCommitIdx].id, e.clientX, e.clientY);
+              return;
+            }
+          }
+          // Tag badges fall through to commit context menu
+          break;
         }
       }
 
@@ -1328,7 +1344,7 @@ export function CommitGraphCanvas({
         onCommitContextMenu(commits[commitIdx].id, e.clientX, e.clientY);
       }
     },
-    [commits, rowOffset, onCommitContextMenu, onStashContextMenu],
+    [commits, rowOffset, onCommitContextMenu, onStashContextMenu, onBranchContextMenu],
   );
 
   useEffect(() => {

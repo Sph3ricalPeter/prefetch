@@ -33,6 +33,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { UpdateIndicator } from "@/components/update-indicator";
 
 /** Lazily resolve the Tauri window handle — safe to import outside Tauri context */
 let _appWindow: TauriWindow | null = null;
@@ -113,8 +114,9 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
         </div>
       )}
 
-      {/* Right: Window controls */}
+      {/* Right: Update indicator + Window controls */}
       <div className={`flex items-center gap-0.5 ${IS_MAC ? "pr-2.5" : "pr-0"}`}>
+        <UpdateIndicator />
         {/* Window controls — Windows/Linux only (macOS uses native traffic lights) */}
         {!IS_MAC && (
           <>

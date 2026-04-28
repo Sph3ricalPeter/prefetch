@@ -2122,6 +2122,89 @@ pub fn get_merge_message(path: &str) -> Result<String, AppError> {
         .map_err(|e| AppError::Other(format!("Failed to read MERGE_MSG: {e}")))
 }
 
+/// Revert a commit (creates a new commit that undoes the given commit).
+pub fn revert_commit(
+    path: &str,
+    commit_id: &str,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    run_git(path, &["revert", commit_id], extra_env)
+}
+
+/// Checkout a specific commit in detached HEAD state.
+pub fn checkout_detached(path: &str, commit_id: &str) -> Result<String, AppError> {
+    run_git(path, &["checkout", "--detach", commit_id], &[])
+}
+
+/// Create a new branch at a specific commit (without checking it out).
+pub fn create_branch_at(path: &str, name: &str, commit_id: &str) -> Result<(), AppError> {
+    run_git(path, &["branch", name, commit_id], &[])?;
+    Ok(())
+}
+
+/// Rename a local branch.
+pub fn rename_branch(path: &str, old_name: &str, new_name: &str) -> Result<String, AppError> {
+    run_git(path, &["branch", "-m", old_name, new_name], &[])
+}
+
+/// Delete a branch from a remote.
+pub fn delete_remote_branch(
+    path: &str,
+    remote: &str,
+    branch: &str,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    run_git(path, &["push", remote, "--delete", branch], extra_env)
+}
+
+/// Set the upstream tracking branch for the current branch.
+pub fn set_upstream(path: &str, remote_branch: &str) -> Result<String, AppError> {
+    run_git(path, &["branch", "--set-upstream-to", remote_branch], &[])
+}
+
+/// Stash specific files (instead of the entire working tree).
+pub fn stash_push_files(
+    path: &str,
+    files: &[String],
+    message: Option<&str>,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    let mut args = vec!["stash", "push"];
+    if let Some(msg) = message {
+        args.push("-m");
+        args.push(msg);
+    }
+    args.push("--");
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    args.extend(file_refs);
+    run_git(path, &args, extra_env)
+}
+
+/// Open a file or folder in the OS file manager / explorer.
+pub fn show_in_folder(file_path: &str) -> Result<(), AppError> {
+    let path = std::path::Path::new(file_path);
+    let folder = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    open::that(folder).map_err(|e| AppError::Other(format!("Failed to open folder: {e}")))?;
+    Ok(())
+}
+
+/// Open a file in the system default editor / application.
+pub fn open_in_default_editor(file_path: &str) -> Result<(), AppError> {
+    open::that(file_path).map_err(|e| AppError::Other(format!("Failed to open file: {e}")))?;
+    Ok(())
+}
+
+/// Delete a file from the filesystem.
+pub fn delete_file(file_path: &str) -> Result<(), AppError> {
+    std::fs::remove_file(file_path)
+        .map_err(|e| AppError::Other(format!("Failed to delete file: {e}")))?;
+    Ok(())
+}
+
 /// Delete a local branch.
 ///
 /// `force` uses `-D` (delete even if unmerged), otherwise `-d`.
