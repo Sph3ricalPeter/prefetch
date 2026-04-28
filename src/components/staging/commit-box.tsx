@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { gravatarUrl } from "@/lib/gravatar";
 import {
@@ -59,6 +59,9 @@ export function CommitBox() {
   const rebaseProgress = useRepoStore((s) => s.rebaseProgress);
   const continueOperation = useRepoStore((s) => s.continueOperation);
   const abortOperation = useRepoStore((s) => s.abortOperation);
+  const amendMode = useRepoStore((s) => s.amendMode);
+  const setAmendMode = useRepoStore((s) => s.setAmendMode);
+  const headCommitId = useRepoStore((s) => s.headCommitId);
 
   const [showDescription, setShowDescription] = useState(false);
 
@@ -85,12 +88,14 @@ export function CommitBox() {
   const unresolvedCount = fileStatuses.filter((f) => f.is_conflicted).length;
 
   const stagedCount = fileStatuses.filter((f) => f.is_staged).length;
-  const canCommit = stagedCount > 0 && commitMessage.trim().length > 0 && !isLoading;
+  // Amend allows committing with 0 staged files (re-wording the message)
+  const canCommit =
+    (stagedCount > 0 || amendMode) && commitMessage.trim().length > 0 && !isLoading;
   const canContinue = unresolvedCount === 0 && !isLoading;
 
   const handleCommit = () => {
     if (canCommit) {
-      commit(commitMessage);
+      commit(commitMessage, amendMode);
     }
   };
 
@@ -228,6 +233,34 @@ export function CommitBox() {
               className="w-full resize-y rounded-md bg-background border border-border px-3 py-2 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors"
             />
           )}
+
+          {/* Amend last commit toggle */}
+          {headCommitId && (
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={amendMode}
+                onChange={(e) => setAmendMode(e.target.checked)}
+                className="h-3 w-3 rounded border-border bg-background accent-primary cursor-pointer"
+              />
+              <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
+                Amend last commit
+              </span>
+              {amendMode && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <AlertTriangle className="h-3 w-3 text-yellow-500 shrink-0" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p className="text-xs">
+                      Amending rewrites history — you'll need to force push if
+                      already pushed
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </label>
+          )}
         </>
       )}
 
@@ -257,13 +290,21 @@ export function CommitBox() {
         <button
           onClick={handleCommit}
           disabled={!canCommit}
-          className="w-full rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+          className={`w-full rounded-md px-3 py-1.5 text-xs font-semibold transition-all hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 ${
+            amendMode
+              ? "bg-yellow-600 text-white hover:bg-yellow-600/90"
+              : "bg-primary text-primary-foreground hover:bg-primary/90"
+          }`}
         >
           {isLoading
-            ? "Committing..."
-            : stagedCount > 0
-              ? `Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
-              : "Nothing staged"}
+            ? amendMode ? "Amending..." : "Committing..."
+            : amendMode
+              ? stagedCount > 0
+                ? `Amend Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
+                : "Amend Commit"
+              : stagedCount > 0
+                ? `Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
+                : "Nothing staged"}
         </button>
       )}
       <p className="text-center text-xs text-faint">

@@ -1,5 +1,6 @@
 //! Tauri commands for GitHub / GitLab forge integration.
 
+use crate::commands::helpers::{get_profile_id, offload, repo_path};
 use crate::error::AppError;
 use crate::git::{
     forge,
@@ -9,27 +10,6 @@ use crate::AppState;
 use serde::Serialize;
 use tauri::State;
 use tracing::instrument;
-
-/// Helper to get the open repository path from state.
-fn repo_path(state: &State<'_, AppState>) -> Result<String, AppError> {
-    let lock = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    lock.clone()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))
-}
-
-/// Run a blocking closure on the tokio thread pool.
-async fn offload<F, T>(f: F) -> Result<T, AppError>
-where
-    F: FnOnce() -> Result<T, AppError> + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
-}
 
 // ── Forge status ──────────────────────────────────────────────────────────────
 
@@ -49,11 +29,7 @@ pub struct ForgeStatus {
 #[tauri::command]
 pub async fn get_forge_status(state: State<'_, AppState>) -> Result<ForgeStatus, AppError> {
     let path = repo_path(&state)?;
-    let profile_id = state
-        .active_profile
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
+    let profile_id = get_profile_id(&state);
 
     offload(move || {
         let config = forge::detect_forge(&path)?;
@@ -94,13 +70,7 @@ pub async fn save_forge_token(
     profile_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let pid = profile_id.or_else(|| {
-        state
-            .active_profile
-            .lock()
-            .ok()
-            .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()))
-    });
+    let pid = profile_id.or_else(|| get_profile_id(&state));
     offload(move || forge::save_token_for_profile(pid.as_deref(), &host, &token)).await
 }
 
@@ -114,13 +84,7 @@ pub async fn delete_forge_token(
     profile_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let pid = profile_id.or_else(|| {
-        state
-            .active_profile
-            .lock()
-            .ok()
-            .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()))
-    });
+    let pid = profile_id.or_else(|| get_profile_id(&state));
     offload(move || forge::delete_token_for_profile(pid.as_deref(), &host)).await
 }
 
@@ -158,11 +122,7 @@ pub async fn get_pr_for_branch(
         }
     }
 
-    let profile_id = state
-        .active_profile
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()));
+    let profile_id = get_profile_id(&state);
 
     let branch_clone = branch.clone();
     let pr = offload(move || {

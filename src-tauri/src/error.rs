@@ -1,6 +1,5 @@
 use serde::Serialize;
 
-#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Git error: {0}")]
@@ -8,9 +7,6 @@ pub enum AppError {
 
     #[error("[hook:{hook_name}] {output}")]
     HookFailed { hook_name: String, output: String },
-
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
 
     #[error("{0}")]
     Other(String),

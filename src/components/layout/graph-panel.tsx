@@ -13,7 +13,7 @@ import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
-import type { BranchInfo } from "@/types/git";
+import type { BranchInfo, ForgeStatus } from "@/types/git";
 import {
   Tooltip,
   TooltipTrigger,
@@ -71,6 +71,8 @@ export function GraphPanel() {
   const setUpstream = useRepoStore((s) => s.setUpstream);
   const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
+  const forgeStatus = useRepoStore((s) => s.forgeStatus);
+  const setAmendMode = useRepoStore((s) => s.setAmendMode);
   const selectStash = useRepoStore((s) => s.selectStash);
   const applyStash = useRepoStore((s) => s.applyStash);
   const popStash = useRepoStore((s) => s.popStash);
@@ -360,6 +362,9 @@ export function GraphPanel() {
             },
             (name) => { setDialogInput(name); setRenameDialog({ branch: name }); },
             (name) => { setDialogInput(""); setUpstreamDialog({ branch: name }); },
+            headCommitId,
+            setAmendMode,
+            forgeStatus,
           )}
           onClose={() => setCommitContextMenu(null)}
         />
@@ -754,6 +759,9 @@ function buildCommitContextMenuItems(
   confirmDeleteBranch: (name: string, deleteLocal: boolean, deleteRemote: boolean, remoteName: string) => void,
   renameBranch: (name: string) => void,
   setUpstream: (name: string) => void,
+  headCommitId: string | null,
+  setAmendMode: (on: boolean) => void,
+  forgeStatus: ForgeStatus | null,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
@@ -867,6 +875,12 @@ function buildCommitContextMenuItems(
   items.push({ separator: true });
 
   // Modify
+  if (commitId === headCommitId) {
+    items.push({
+      label: "Edit commit message",
+      onClick: () => setAmendMode(true),
+    });
+  }
   items.push({
     label: `Revert ${shortSha}`,
     onClick: () => revertCommit(commitId),
@@ -888,6 +902,30 @@ function buildCommitContextMenuItems(
     label: `Copy SHA: ${commitId.slice(0, 7)}`,
     onClick: () => navigator.clipboard.writeText(commitId),
   });
+
+  // Copy link to commit (when forge is detected)
+  if (forgeStatus?.kind && forgeStatus.host && forgeStatus.owner && forgeStatus.repo) {
+    const { kind, host, owner, repo } = forgeStatus;
+    const commitPath = kind === "gitlab" ? `-/commit/${commitId}` : `commit/${commitId}`;
+    const commitUrl = `https://${host}/${owner}/${repo}/${commitPath}`;
+    items.push({
+      label: "Copy link to commit",
+      onClick: () => navigator.clipboard.writeText(commitUrl),
+    });
+
+    // Copy link to branch (for branches on this commit)
+    for (const branch of branchesOnCommit) {
+      if (branch.is_remote) continue;
+      const branchPath = kind === "gitlab"
+        ? `-/tree/${encodeURIComponent(branch.name)}`
+        : `tree/${encodeURIComponent(branch.name)}`;
+      const branchUrl = `https://${host}/${owner}/${repo}/${branchPath}`;
+      items.push({
+        label: `Copy link to ${branch.name}`,
+        onClick: () => navigator.clipboard.writeText(branchUrl),
+      });
+    }
+  }
 
   return items;
 }

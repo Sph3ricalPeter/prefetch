@@ -105,14 +105,53 @@ import {
 /** Files with more than this many changed lines show a "Load anyway" guard */
 const LARGE_DIFF_THRESHOLD = 10_000;
 
+/** Safely extract an error message string from an unknown catch value. */
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /** Parse a Tauri error to detect hook failures.
  *  Hook errors are serialized as `[hook:<name>] <output>` by the Rust backend. */
 function parseError(e: unknown): { hookName: string | null; message: string } {
-  const msg = String(e);
+  const msg = errorMessage(e);
   const match = msg.match(/^\[hook:([\w-]+)\]\s*(.*)/s);
   return match
     ? { hookName: match[1], message: match[2] || "Hook failed" }
     : { hookName: null, message: msg };
+}
+
+/** Check if a file exceeds the large diff threshold. */
+function isLargeDiff(files: FileStatus[], path: string): number | false {
+  const file = files.find((f) => f.path === path);
+  const total = (file?.additions ?? 0) + (file?.deletions ?? 0);
+  return total > LARGE_DIFF_THRESHOLD ? total : false;
+}
+
+/**
+ * Handle a git operation that may result in conflicts (cherry-pick, rebase, merge, revert).
+ * On error, checks for conflict state and refreshes the UI accordingly.
+ */
+async function handleConflictError(
+  e: unknown,
+  operationLabel: string,
+  set: (state: Partial<RepoState>) => void,
+  extra?: () => Promise<void>,
+): Promise<void> {
+  set({ isLoading: false });
+  const conflict = await getConflictState().catch(() => null);
+  if (conflict?.in_progress) {
+    const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
+    set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
+    if (extra) await extra();
+    toast.error(`${operationLabel} has conflicts — resolve them, then continue or abort`);
+  } else {
+    const { hookName, message } = parseError(e);
+    if (hookName) {
+      toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
+    } else {
+      toast.error(message);
+    }
+  }
 }
 
 interface RepoState {
@@ -152,6 +191,9 @@ interface RepoState {
 
   commitMessage: string;
   commitDescription: string;
+
+  /** When true, the next commit amends HEAD instead of creating a new one */
+  amendMode: boolean;
 
   // Stash
   stashes: StashInfo[];
@@ -231,6 +273,7 @@ interface RepoState {
   commit: (message: string, amend?: boolean) => Promise<void>;
   setCommitMessage: (msg: string) => void;
   setCommitDescription: (desc: string) => void;
+  setAmendMode: (on: boolean) => void;
   loadStashes: () => Promise<void>;
   selectStash: (index: number) => Promise<void>;
   selectStashFile: (index: number, filePath: string) => Promise<void>;
@@ -329,6 +372,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   commitFiles: [],
   commitMessage: "",
   commitDescription: "",
+  amendMode: false,
   stashes: [],
   selectedStashIndex: null,
   tags: [],
@@ -371,6 +415,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       commitFiles: [],
       commitMessage: "",
       commitDescription: "",
+      amendMode: false,
       lfsInfo: null,
       forgeStatus: null,
       gitIdentity: null,
@@ -421,15 +466,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         get().loadLfsInfo(),
         get().loadForgeStatus(),
         get().loadGitIdentity(),
-      ]).catch(() => {});
+      ]).catch((e) => console.warn("Background load failed:", e));
       // Track in recent repos + save as last opened (fire-and-forget)
       const activeProfile = useProfileStore.getState().activeProfile;
       Promise.all([
         addRecentRepo(path, name, activeProfile?.id ?? null).then(() => get().loadRecentRepos()),
         setUiState("last_repo_path", path),
-      ]).catch(() => {});
+      ]).catch((e) => console.warn("Recent repo tracking failed:", e));
     } catch (e) {
-      const msg = String(e);
+      const msg = errorMessage(e);
       set({ isLoading: false, error: msg });
       toast.error(msg);
     }
@@ -441,7 +486,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const head = branchList.find((b) => b.is_head);
       set({ branches: branchList, currentBranch: head?.name ?? null });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -466,7 +511,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       set({ fileStatuses: statuses });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -496,7 +541,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success(`Checked out ${localName} (tracking ${name})`);
       } catch (e) {
         set({ isLoading: false });
-        toast.error(String(e));
+        toast.error(errorMessage(e));
       }
       return;
     }
@@ -510,7 +555,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Checked out ${name}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -525,7 +570,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Reset ${pending.localName} to ${pending.remoteName}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -538,7 +583,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, fileStatuses: statuses });
       toast.success(`Created and checked out ${name}`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -556,7 +601,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Fetch complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e), { id: toastId });
+      toast.error(errorMessage(e), { id: toastId });
     } finally {
       unlisten();
     }
@@ -637,7 +682,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // rebase or reset that never triggered a refresh.
       const repoData = await fetchRepoData().catch(() => ({}));
       set({ ...repoData, isLoading: false });
-      toast.error(String(e), { id: toastId });
+      toast.error(errorMessage(e), { id: toastId });
     } finally {
       unlisten();
     }
@@ -658,7 +703,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         const files = await getCommitFiles(id);
         set({ commitFiles: files });
       } catch (e) {
-        toast.error(String(e));
+        toast.error(errorMessage(e));
       }
     }
   },
@@ -666,10 +711,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   selectFile: async (path, staged) => {
     set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null, commitFiles: [], largeDiffPending: null });
 
-    // Check if file is too large before fetching
-    const file = get().fileStatuses.find((f) => f.path === path && f.is_staged === staged);
-    const totalChanges = (file?.additions ?? 0) + (file?.deletions ?? 0);
-    if (totalChanges > LARGE_DIFF_THRESHOLD) {
+    const totalChanges = isLargeDiff(get().fileStatuses, path);
+    if (totalChanges) {
       set({ activeDiff: null, largeDiffPending: { path, staged, totalChanges } });
       return;
     }
@@ -680,17 +723,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
       set({ diffLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
   selectCommitFile: async (commitId, filePath) => {
     set({ selectedFilePath: filePath, largeDiffPending: null });
 
-    // Check if file is too large before fetching
-    const file = get().commitFiles.find((f) => f.path === filePath);
-    const totalChanges = (file?.additions ?? 0) + (file?.deletions ?? 0);
-    if (totalChanges > LARGE_DIFF_THRESHOLD) {
+    const totalChanges = isLargeDiff(get().commitFiles, filePath);
+    if (totalChanges) {
       set({ activeDiff: null, largeDiffPending: { path: filePath, commitId, totalChanges } });
       return;
     }
@@ -701,7 +742,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
       set({ diffLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -734,7 +775,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, largeDiffPending: null, diffLoading: false });
     } catch (e) {
       set({ largeDiffPending: null, diffLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -749,7 +790,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         set({ activeDiff: diff, selectedFileStaged: true });
       }
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -763,7 +804,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         set({ activeDiff: diff, selectedFileStaged: false });
       }
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -777,7 +818,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         set({ activeDiff: null, selectedFilePath: null });
       }
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -788,7 +829,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: null, selectedFilePath: null });
       toast.success("All changes discarded");
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -798,7 +839,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await get().loadStatus();
       toast.success(`Resolved ${filePath.split("/").pop()} — kept ours`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -808,7 +849,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await get().loadStatus();
       toast.success(`Resolved ${filePath.split("/").pop()} — kept theirs`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -824,7 +865,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const newDiff = await getFileDiff(filePath, false);
       set({ activeDiff: newDiff });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -839,7 +880,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const newDiff = await getFileDiff(filePath, true);
       set({ activeDiff: newDiff });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -855,7 +896,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const newDiff = await getFileDiff(filePath, false);
       set({ activeDiff: newDiff });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -871,7 +912,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const newDiff = await getFileDiff(filePath, true);
       set({ activeDiff: newDiff });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -880,7 +921,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const contents = await getConflictContentsCmd(filePath);
       set({ conflictContents: contents });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -891,7 +932,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ conflictContents: null, activeDiff: null, selectedFilePath: null });
       toast.success(`Resolved ${filePath.split("/").pop()}`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -913,10 +954,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         fileStatuses: statuses,
         commitMessage: "",
         commitDescription: "",
+        amendMode: false,
         selectedFilePath: null,
         activeDiff: null,
       });
-      toast.success("Committed successfully");
+      toast.success(amend ? "Commit amended" : "Committed successfully");
     } catch (e) {
       set({ isLoading: false });
       const { hookName, message } = parseError(e);
@@ -931,6 +973,25 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   setCommitMessage: (msg) => set({ commitMessage: msg }),
   setCommitDescription: (desc) => set({ commitDescription: desc }),
 
+  setAmendMode: (on) => {
+    if (on) {
+      // Pre-fill commit message/description from the HEAD commit
+      const { headCommitId, commits } = get();
+      const headCommit = commits.find((c) => c.id === headCommitId);
+      if (headCommit) {
+        set({
+          amendMode: true,
+          commitMessage: headCommit.message,
+          commitDescription: headCommit.body,
+        });
+      } else {
+        set({ amendMode: true });
+      }
+    } else {
+      set({ amendMode: false, commitMessage: "", commitDescription: "" });
+    }
+  },
+
   selectStash: async (index) => {
     set({
       selectedStashIndex: index,
@@ -943,16 +1004,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const files = await getStashFiles(index);
       set({ commitFiles: files });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
   selectStashFile: async (index, filePath) => {
     set({ selectedFilePath: filePath, largeDiffPending: null });
 
-    const file = get().commitFiles.find((f) => f.path === filePath);
-    const totalChanges = (file?.additions ?? 0) + (file?.deletions ?? 0);
-    if (totalChanges > LARGE_DIFF_THRESHOLD) {
+    const totalChanges = isLargeDiff(get().commitFiles, filePath);
+    if (totalChanges) {
       set({ activeDiff: null, largeDiffPending: { path: filePath, stashIndex: index, totalChanges } });
       return;
     }
@@ -963,7 +1023,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
       set({ diffLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -972,7 +1032,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const stashList = await getStashes();
       set({ stashes: stashList });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -991,7 +1051,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       });
       toast.success("Changes stashed");
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1002,7 +1062,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ fileStatuses: statuses });
       toast.success("Stash applied (kept in stash list)");
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1016,7 +1076,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ fileStatuses: statuses, stashes: stashList });
       toast.success("Stash applied");
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1027,7 +1087,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ stashes: stashList });
       toast.success("Stash dropped");
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1036,7 +1096,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const tagList = await getTags();
       set({ tags: tagList });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1047,7 +1107,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ tags: tagList });
       toast.success(`Tag "${name}" created`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1058,7 +1118,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ tags: tagList });
       toast.success(`Tag "${name}" deleted`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1067,7 +1127,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await pushTagCmd(name);
       toast.success(`Tag "${name}" pushed`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1080,7 +1140,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(mode === "soft" ? "Reset (soft) — changes kept staged" : "Reset (hard) — working tree clean");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1096,21 +1156,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success("Cherry-pick successful");
       }
     } catch (e) {
-      set({ isLoading: false });
-      // Check if the error is a conflict (git cherry-pick exits non-zero on conflict)
-      const conflict = await getConflictState().catch(() => null);
-      if (conflict?.in_progress) {
-        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
-        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
-        toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
-      } else {
-        const { hookName, message } = parseError(e);
-        if (hookName) {
-          toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
-        } else {
-          toast.error(message);
-        }
-      }
+      await handleConflictError(e, "Cherry-pick", set);
     }
   },
 
@@ -1130,24 +1176,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success(`Rebased onto ${targetBranch}`);
       }
     } catch (e) {
-      set({ isLoading: false });
-      const conflict = await getConflictState().catch(() => null);
-      if (conflict?.in_progress) {
-        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
-        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
-        if (conflict.operation === "rebase") {
+      await handleConflictError(e, "Rebase", set, async () => {
+        const conflict = await getConflictState().catch(() => null);
+        if (conflict?.operation === "rebase") {
           const progress = await getRebaseProgressCmd().catch(() => null);
           set({ rebaseProgress: progress });
         }
-        toast.error("Rebase has conflicts — resolve them, then continue or abort");
-      } else {
-        const { hookName, message } = parseError(e);
-        if (hookName) {
-          toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
-        } else {
-          toast.error(message);
-        }
-      }
+      });
     }
   },
 
@@ -1166,24 +1201,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success(`Merged ${target}`);
       }
     } catch (e) {
-      set({ isLoading: false });
-      // Check if the error is a conflict (git merge exits non-zero on conflict)
-      const conflict = await getConflictState().catch(() => null);
-      if (conflict?.in_progress) {
-        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
-        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
-        // Pre-fill commit message from MERGE_MSG
+      await handleConflictError(e, "Merge", set, async () => {
         const mergeMsg = await getMergeMessageCmd().catch(() => null);
         if (mergeMsg) set({ commitMessage: mergeMsg });
-        toast.error("Merge has conflicts — resolve them, then continue or abort");
-      } else {
-        const { hookName, message } = parseError(e);
-        if (hookName) {
-          toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
-        } else {
-          toast.error(message);
-        }
-      }
+      });
     }
   },
 
@@ -1196,7 +1217,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Deleted branch ${name}`);
     } catch (e) {
       set({ isLoading: false });
-      const message = String(e);
+      const message = errorMessage(e);
       // If the branch has unmerged commits, git suggests -D
       if (!force && message.includes("not fully merged")) {
         toast.error(`Branch '${name}' has unmerged commits`, {
@@ -1225,15 +1246,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success(`Reverted ${commitId.slice(0, 7)}`);
       }
     } catch (e) {
-      set({ isLoading: false });
-      const conflict = await getConflictState().catch(() => null);
-      if (conflict?.in_progress) {
-        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
-        set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
-        toast.error("Revert has conflicts — resolve them, then continue or abort");
-      } else {
-        toast.error(String(e));
-      }
+      await handleConflictError(e, "Revert", set);
     }
   },
 
@@ -1246,7 +1259,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Checked out ${commitId.slice(0, 7)} (detached HEAD)`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1259,7 +1272,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Created branch '${name}' at ${commitId.slice(0, 7)}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1272,7 +1285,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Renamed '${oldName}' to '${newName}'`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1285,7 +1298,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Deleted ${remote}/${branch} from remote`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1298,7 +1311,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Upstream set to ${remoteBranch}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1311,7 +1324,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(paths.length === 1 ? "Stashed 1 file" : `Stashed ${paths.length} files`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1319,7 +1332,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await showInFolderCmd(filePath);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1327,7 +1340,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await openInEditorCmd(filePath);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1338,7 +1351,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ fileStatuses: statuses });
       toast.success(`Deleted ${filePath.split("/").pop()}`);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1351,7 +1364,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Operation aborted");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1373,7 +1386,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success("Operation completed");
       }
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
       // Always refresh state after failure — the operation may have partially
       // succeeded (e.g. commit created but editor failed) or the rebase may
       // have completed despite the error.
@@ -1450,7 +1463,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, fileStatuses: statuses, stashes: stashList });
       toast.success(info.description);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1469,7 +1482,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const repos = await getRecentRepos();
       set({ recentRepos: repos });
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1563,7 +1576,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Token saved");
       await get().loadForgeStatus();
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1574,7 +1587,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("Token removed");
       await get().loadForgeStatus();
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1582,7 +1595,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await openUrlCmd(url);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     }
   },
 
@@ -1626,7 +1639,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("LFS initialised in this repository");
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     } finally {
       set({ isLoading: false });
     }
@@ -1639,7 +1652,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Tracking "${pattern}" with LFS`);
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     } finally {
       set({ isLoading: false });
     }
@@ -1652,7 +1665,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success(`Untracked "${pattern}" from LFS`);
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     } finally {
       set({ isLoading: false });
     }
@@ -1665,7 +1678,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.success("LFS objects pruned");
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(String(e));
+      toast.error(errorMessage(e));
     } finally {
       set({ isLoading: false });
     }

@@ -1,31 +1,11 @@
 //! Tauri commands for Git LFS operations.
 
+use crate::commands::helpers::{offload, repo_path};
 use crate::error::AppError;
 use crate::git::{lfs, types::LfsInfo};
 use crate::AppState;
 use tauri::State;
 use tracing::instrument;
-
-/// Helper to get the open repository path from state.
-fn repo_path(state: &State<'_, AppState>) -> Result<String, AppError> {
-    let lock = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    lock.clone()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))
-}
-
-/// Run a blocking closure on the tokio thread pool.
-async fn offload<F, T>(f: F) -> Result<T, AppError>
-where
-    F: FnOnce() -> Result<T, AppError> + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
-}
 
 /// Lightweight check: does this repo use LFS?
 ///

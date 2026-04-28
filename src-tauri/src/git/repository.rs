@@ -170,8 +170,11 @@ pub fn get_git_identity(path: &str) -> super::types::GitIdentity {
 
 /// Walk commits from HEAD, assign lanes, and return the full graph data.
 ///
-/// Opens a fresh git2::Repository per call (cheap, ~microseconds)
-/// to avoid Send/Sync issues with git2::Repository.
+/// # Thread safety
+/// Opens a fresh `git2::Repository` per call (cheap, ~microseconds).
+/// `git2::Repository` is NOT Send/Sync, so we cannot cache it across
+/// async boundaries. Each function that needs repo access opens its own
+/// instance inside a `spawn_blocking` closure and drops it before returning.
 pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
     let repo = Repository::open(path)?;
 
@@ -289,14 +292,18 @@ fn get_all_divergence(path: &str) -> HashMap<String, (u32, u32)> {
         // Parse "ahead N"
         if let Some(pos) = track.find("ahead ") {
             let rest = &track[pos + 6..];
-            let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            ahead = num_str.parse().unwrap_or(0);
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            ahead = rest[..end].parse().unwrap_or(0);
         }
         // Parse "behind N"
         if let Some(pos) = track.find("behind ") {
             let rest = &track[pos + 7..];
-            let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            behind = num_str.parse().unwrap_or(0);
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            behind = rest[..end].parse().unwrap_or(0);
         }
 
         if ahead > 0 || behind > 0 {
@@ -1481,6 +1488,17 @@ fn extract_branch_from_merge_msg(repo_path: &str) -> Option<String> {
     if let Some(rest) = first_line.strip_prefix("Merge remote-tracking branch '") {
         let full = rest.split('\'').next()?;
         return Some(full.strip_prefix("origin/").unwrap_or(full).to_string());
+    }
+    // "Merge pull request #N from owner/branch-name"
+    if let Some(rest) = first_line.strip_prefix("Merge pull request ") {
+        // Skip "#N from " to get "owner/branch-name"
+        if let Some(pos) = rest.find(" from ") {
+            let full = &rest[pos + 6..];
+            // Strip owner prefix: "owner/branch" → "branch"
+            return Some(full.split('/').skip(1).collect::<Vec<_>>().join("/"))
+                .filter(|s| !s.is_empty())
+                .or_else(|| Some(full.to_string()));
+        }
     }
     None
 }

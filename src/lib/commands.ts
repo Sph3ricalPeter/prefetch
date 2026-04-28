@@ -24,7 +24,7 @@ async function tracedInvoke<T>(command: string, args?: Record<string, unknown>):
   try {
     return await invoke<T>(command, args);
   } finally {
-    end();
+    try { end(); } catch { /* perf cleanup is best-effort */ }
   }
 }
 

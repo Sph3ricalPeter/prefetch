@@ -46,15 +46,34 @@ export interface BranchInfo {
   behind: number | null;
 }
 
+/** Porcelain status codes returned by the Rust backend. */
+export type StatusType =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "conflicted"
+  | "type_change";
+
+export type ConflictType =
+  | "both_modified"
+  | "both_added"
+  | "both_deleted"
+  | "deleted_by_us"
+  | "deleted_by_them"
+  | "added_by_us"
+  | "added_by_them";
+
 export interface FileStatus {
   path: string;
-  status_type: string;
+  status_type: StatusType;
   is_staged: boolean;
   additions: number | null;
   deletions: number | null;
   is_conflicted: boolean;
-  /** "both_modified", "both_added", "deleted_by_us", "deleted_by_them", etc. */
-  conflict_type: string | null;
+  conflict_type: ConflictType | null;
 }
 
 export interface FileDiff {
@@ -114,10 +133,11 @@ export interface HunkLineSelection {
   lineIndex: number;
 }
 
+export type ConflictOperation = "rebase" | "cherry-pick" | "merge" | "";
+
 export interface ConflictState {
   in_progress: boolean;
-  /** "rebase", "cherry-pick", "merge", or "" */
-  operation: string;
+  operation: ConflictOperation;
 }
 
 export interface RebaseProgress {
@@ -138,17 +158,19 @@ export interface UndoAction {
 
 // ── Forge (GitHub / GitLab) ───────────────────────────────────────────────────
 
+export type PrState = "open" | "closed" | "merged" | "opened";
+
 export interface PrInfo {
   number: number;
   title: string;
   url: string;
-  /** "open" | "closed" | "merged" | "opened" */
-  state: string;
+  state: PrState;
 }
 
+export type ForgeKind = "github" | "gitlab";
+
 export interface ForgeStatus {
-  /** "github" | "gitlab" | null */
-  kind: string | null;
+  kind: ForgeKind | null;
   host: string | null;
   owner: string | null;
   repo: string | null;
@@ -185,9 +207,10 @@ export interface LfsInfo {
 
 // ── Git identity ─────────────────────────────────────────────────────────────
 
+export type IdentitySource = "local" | "global" | "system" | "unknown" | "profile";
+
 export interface GitIdentity {
   name: string;
   email: string;
-  /** Where the identity was resolved from: "local" | "global" | "system" | "unknown" */
-  source: string;
+  source: IdentitySource;
 }

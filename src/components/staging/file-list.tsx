@@ -9,7 +9,7 @@ import {
   FolderOpen,
   Loader2,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -45,6 +45,7 @@ export function FileList() {
   const stashFiles = useRepoStore((s) => s.stashFiles);
   const showInFolder = useRepoStore((s) => s.showInFolder);
   const openInEditor = useRepoStore((s) => s.openInEditor);
+  const deleteFile = useRepoStore((s) => s.deleteFile);
 
   const fileViewMode = useRepoStore((s) => s.fileViewMode);
 
@@ -81,7 +82,90 @@ export function FileList() {
     x: number;
     y: number;
   } | null>(null);
+  // Multi-select context menu (shown when right-clicking a multi-selected file)
+  const [batchContextMenu, setBatchContextMenu] = useState<{
+    paths: string[];
+    isStaged: boolean;
+    x: number;
+    y: number;
+  } | null>(null);
   const viewMode = fileViewMode;
+
+  // ── Multi-select state ────────────────────────────────────────────────────
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
+  const lastClickedRef = useRef<{ path: string; section: "staged" | "unstaged" } | null>(null);
+
+  /** Handle click with Ctrl / Shift modifiers for multi-select.
+   *  Returns true if the click was handled as a multi-select action. */
+  const handleFileClick = useCallback(
+    (
+      e: React.MouseEvent,
+      file: FileStatus,
+      isStaged: boolean,
+      sectionFiles: FileStatus[],
+    ) => {
+      const section: "staged" | "unstaged" = isStaged ? "staged" : "unstaged";
+
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+click: toggle this file in the selection
+        setMultiSelected((prev) => {
+          const next = new Set(prev);
+          if (next.has(file.path)) {
+            next.delete(file.path);
+          } else {
+            next.add(file.path);
+          }
+          return next;
+        });
+        lastClickedRef.current = { path: file.path, section };
+        return;
+      }
+
+      if (e.shiftKey && lastClickedRef.current && lastClickedRef.current.section === section) {
+        // Shift+click: range select within the same section
+        const lastIdx = sectionFiles.findIndex((f) => f.path === lastClickedRef.current!.path);
+        const curIdx = sectionFiles.findIndex((f) => f.path === file.path);
+        if (lastIdx >= 0 && curIdx >= 0) {
+          const from = Math.min(lastIdx, curIdx);
+          const to = Math.max(lastIdx, curIdx);
+          const rangePaths = sectionFiles.slice(from, to + 1).map((f) => f.path);
+          setMultiSelected((prev) => {
+            const next = new Set(prev);
+            for (const p of rangePaths) next.add(p);
+            return next;
+          });
+          return;
+        }
+      }
+
+      // Plain click: clear multi-select, open diff
+      setMultiSelected(new Set());
+      lastClickedRef.current = { path: file.path, section };
+      selectFile(file.path, isStaged);
+    },
+    [selectFile],
+  );
+
+  /** Handle right-click: if file is in multi-select, show batch menu;
+   *  otherwise fall through to single-file context menu. */
+  const handleFileContextMenu = useCallback(
+    (e: React.MouseEvent, file: FileStatus, isStaged: boolean) => {
+      e.preventDefault();
+      if (multiSelected.size > 1 && multiSelected.has(file.path)) {
+        setBatchContextMenu({
+          paths: [...multiSelected],
+          isStaged,
+          x: e.clientX,
+          y: e.clientY,
+        });
+      } else {
+        // Clear multi-select and open single-file context menu
+        setMultiSelected(new Set());
+        setFileContextMenu({ file, isStaged, x: e.clientX, y: e.clientY });
+      }
+    },
+    [multiSelected],
+  );
 
   const conflicted = fileStatuses.filter((f) => f.is_conflicted);
   const staged = fileStatuses.filter((f) => f.is_staged && !f.is_conflicted);
@@ -141,8 +225,9 @@ export function FileList() {
           <FileTreeView
             files={unstaged}
             selectedFilePath={selectedFilePath}
+            multiSelected={multiSelected}
             isLfsFile={isLfsFile}
-            onSelect={(path) => selectFile(path, false)}
+            onSelect={(path, e) => handleFileClick(e, unstaged.find((f) => f.path === path)!, false, unstaged)}
             onToggle={(path) => wrappedStage([path])}
             toggleIcon={<Plus className="h-3 w-3" />}
             toggleTitle="Stage"
@@ -150,7 +235,7 @@ export function FileList() {
             onToggleBatch={(paths) => wrappedStage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading || busyOp !== null}
-            onFileContextMenu={(file, x, y) => setFileContextMenu({ file, isStaged: false, x, y })}
+            onFileContextMenu={(file, x, y, e) => handleFileContextMenu(e!, file, false)}
             onFolderContextMenu={(paths, folderPath, x, y) => setFolderContextMenu({ paths, folderPath, isStaged: false, x, y })}
           />
         ) : (
@@ -159,17 +244,15 @@ export function FileList() {
               key={`unstaged-${file.path}`}
               file={file}
               isSelected={selectedFilePath === file.path}
+              isMultiSelected={multiSelected.has(file.path)}
               isLfs={!!isLfsFile(file.path)}
-              onSelect={() => selectFile(file.path, false)}
+              onSelect={(e) => handleFileClick(e, file, false, unstaged)}
               onToggle={() => wrappedStage([file.path])}
               toggleIcon={<Plus className="h-3 w-3" />}
               toggleTitle="Stage"
               onDiscard={() => setConfirmDiscard([file.path])}
               disabled={isLoading || busyOp !== null}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setFileContextMenu({ file, isStaged: false, x: e.clientX, y: e.clientY });
-              }}
+              onContextMenu={(e) => handleFileContextMenu(e, file, false)}
             />
           ))
         )}
@@ -197,8 +280,9 @@ export function FileList() {
           <FileTreeView
             files={staged}
             selectedFilePath={selectedFilePath}
+            multiSelected={multiSelected}
             isLfsFile={isLfsFile}
-            onSelect={(path) => selectFile(path, true)}
+            onSelect={(path, e) => handleFileClick(e, staged.find((f) => f.path === path)!, true, staged)}
             onToggle={(path) => wrappedUnstage([path])}
             toggleIcon={<Minus className="h-3 w-3" />}
             toggleTitle="Unstage"
@@ -206,7 +290,7 @@ export function FileList() {
             onToggleBatch={(paths) => wrappedUnstage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading || busyOp !== null}
-            onFileContextMenu={(file, x, y) => setFileContextMenu({ file, isStaged: true, x, y })}
+            onFileContextMenu={(file, x, y, e) => handleFileContextMenu(e!, file, true)}
             onFolderContextMenu={(paths, folderPath, x, y) => setFolderContextMenu({ paths, folderPath, isStaged: true, x, y })}
           />
         ) : (
@@ -215,17 +299,15 @@ export function FileList() {
               key={`staged-${file.path}`}
               file={file}
               isSelected={selectedFilePath === file.path}
+              isMultiSelected={multiSelected.has(file.path)}
               isLfs={!!isLfsFile(file.path)}
-              onSelect={() => selectFile(file.path, true)}
+              onSelect={(e) => handleFileClick(e, file, true, staged)}
               onToggle={() => wrappedUnstage([file.path])}
               toggleIcon={<Minus className="h-3 w-3" />}
               toggleTitle="Unstage"
               onDiscard={() => setConfirmDiscard([file.path])}
               disabled={isLoading || busyOp !== null}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setFileContextMenu({ file, isStaged: true, x: e.clientX, y: e.clientY });
-              }}
+              onContextMenu={(e) => handleFileContextMenu(e, file, true)}
             />
           ))
         )}
@@ -257,6 +339,7 @@ export function FileList() {
             stashFiles,
             openInEditor,
             showInFolder,
+            deleteFile,
           )}
           onClose={() => setFileContextMenu(null)}
         />
@@ -278,6 +361,23 @@ export function FileList() {
             showInFolder,
           )}
           onClose={() => setFolderContextMenu(null)}
+        />
+      )}
+
+      {/* Batch (multi-select) context menu */}
+      {batchContextMenu && (
+        <ContextMenu
+          x={batchContextMenu.x}
+          y={batchContextMenu.y}
+          items={buildBatchContextMenuItems(
+            batchContextMenu.paths,
+            batchContextMenu.isStaged,
+            wrappedStage,
+            wrappedUnstage,
+            (paths) => setConfirmDiscard(paths),
+            stashFiles,
+          )}
+          onClose={() => setBatchContextMenu(null)}
         />
       )}
     </div>
@@ -347,6 +447,7 @@ function FileSection({
 function FileTreeView({
   files,
   selectedFilePath,
+  multiSelected,
   isLfsFile,
   onSelect,
   onToggle,
@@ -361,8 +462,9 @@ function FileTreeView({
 }: {
   files: FileStatus[];
   selectedFilePath: string | null;
+  multiSelected?: Set<string>;
   isLfsFile: (path: string) => boolean | undefined;
-  onSelect: (path: string) => void;
+  onSelect: (path: string, e: React.MouseEvent) => void;
   onToggle: (path: string) => void;
   toggleIcon: React.ReactNode;
   toggleTitle: string;
@@ -370,7 +472,7 @@ function FileTreeView({
   onToggleBatch: (paths: string[]) => void;
   onDiscardBatch: (paths: string[]) => void;
   disabled: boolean;
-  onFileContextMenu?: (file: FileStatus, x: number, y: number) => void;
+  onFileContextMenu?: (file: FileStatus, x: number, y: number, e: React.MouseEvent) => void;
   onFolderContextMenu?: (paths: string[], folderPath: string, x: number, y: number) => void;
 }) {
   const tree = useMemo(() => buildFileTree(files), [files]);
@@ -383,6 +485,7 @@ function FileTreeView({
           node={node}
           depth={0}
           selectedFilePath={selectedFilePath}
+          multiSelected={multiSelected}
           isLfsFile={isLfsFile}
           onSelect={onSelect}
           onToggle={onToggle}
@@ -404,6 +507,7 @@ function TreeNodeView({
   node,
   depth,
   selectedFilePath,
+  multiSelected,
   isLfsFile,
   onSelect,
   onToggle,
@@ -419,8 +523,9 @@ function TreeNodeView({
   node: FileTreeNode;
   depth: number;
   selectedFilePath: string | null;
+  multiSelected?: Set<string>;
   isLfsFile: (path: string) => boolean | undefined;
-  onSelect: (path: string) => void;
+  onSelect: (path: string, e: React.MouseEvent) => void;
   onToggle: (path: string) => void;
   toggleIcon: React.ReactNode;
   toggleTitle: string;
@@ -428,7 +533,7 @@ function TreeNodeView({
   onToggleBatch: (paths: string[]) => void;
   onDiscardBatch: (paths: string[]) => void;
   disabled: boolean;
-  onFileContextMenu?: (file: FileStatus, x: number, y: number) => void;
+  onFileContextMenu?: (file: FileStatus, x: number, y: number, e: React.MouseEvent) => void;
   onFolderContextMenu?: (paths: string[], folderPath: string, x: number, y: number) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -499,6 +604,7 @@ function TreeNodeView({
             node={child}
             depth={depth + 1}
             selectedFilePath={selectedFilePath}
+            multiSelected={multiSelected}
             isLfsFile={isLfsFile}
             onSelect={onSelect}
             onToggle={onToggle}
@@ -521,21 +627,24 @@ function TreeNodeView({
   const statusColor = statusTypeColor(file.status_type);
   const statusLabel = statusTypeLabel(file.status_type);
   const isSelected = selectedFilePath === file.path;
+  const isMulti = multiSelected?.has(file.path) ?? false;
   const isLfs = !!isLfsFile(file.path);
 
   return (
     <div
       className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
-        isSelected
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-secondary"
+        isMulti
+          ? "bg-primary/15 text-accent-foreground"
+          : isSelected
+            ? "bg-accent text-accent-foreground"
+            : "hover:bg-secondary"
       }`}
       style={{ paddingLeft: `${12 + indent + 16}px` }}
-      onClick={() => onSelect(file.path)}
+      onClick={(e) => onSelect(file.path, e)}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        onFileContextMenu?.(file, e.clientX, e.clientY);
+        onFileContextMenu?.(file, e.clientX, e.clientY, e);
       }}
     >
       <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -593,6 +702,7 @@ function TreeNodeView({
 function FileRow({
   file,
   isSelected,
+  isMultiSelected,
   isLfs,
   onSelect,
   onToggle,
@@ -604,8 +714,9 @@ function FileRow({
 }: {
   file: FileStatus;
   isSelected: boolean;
+  isMultiSelected?: boolean;
   isLfs: boolean;
-  onSelect: () => void;
+  onSelect: (e: React.MouseEvent) => void;
   onToggle: () => void;
   toggleIcon: React.ReactNode;
   toggleTitle: string;
@@ -623,9 +734,11 @@ function FileRow({
   return (
     <div
       className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
-        isSelected
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-secondary"
+        isMultiSelected
+          ? "bg-primary/15 text-accent-foreground"
+          : isSelected
+            ? "bg-accent text-accent-foreground"
+            : "hover:bg-secondary"
       }`}
       onClick={onSelect}
       onContextMenu={onContextMenu}
@@ -817,6 +930,7 @@ function buildFileContextMenuItems(
   stashFiles: (paths: string[]) => void,
   openInEditor: (path: string) => void,
   showInFolder: (path: string) => void,
+  deleteFile: (path: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
@@ -853,6 +967,11 @@ function buildFileContextMenuItems(
   items.push({
     label: "Discard changes",
     onClick: () => discard(file.path),
+    destructive: true,
+  });
+  items.push({
+    label: "Delete file",
+    onClick: () => deleteFile(file.path),
     destructive: true,
   });
 
@@ -895,6 +1014,42 @@ function buildFolderContextMenuItems(
   // Destructive
   items.push({
     label: "Discard folder changes",
+    onClick: () => discard(paths),
+    destructive: true,
+  });
+
+  return items;
+}
+
+function buildBatchContextMenuItems(
+  paths: string[],
+  isStaged: boolean,
+  stage: (paths: string[]) => void,
+  unstage: (paths: string[]) => void,
+  discard: (paths: string[]) => void,
+  stashFiles: (paths: string[]) => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+  const count = paths.length;
+
+  // Stage / unstage
+  if (isStaged) {
+    items.push({ label: `Unstage ${count} files`, onClick: () => unstage(paths) });
+  } else {
+    items.push({ label: `Stage ${count} files`, onClick: () => stage(paths) });
+  }
+
+  // Stash (only for unstaged)
+  if (!isStaged) {
+    items.push({ separator: true });
+    items.push({ label: `Stash ${count} files`, onClick: () => stashFiles(paths) });
+  }
+
+  items.push({ separator: true });
+
+  // Destructive
+  items.push({
+    label: `Discard ${count} files`,
     onClick: () => discard(paths),
     destructive: true,
   });

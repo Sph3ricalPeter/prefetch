@@ -11,24 +11,26 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
         return (vec![], 0);
     }
 
-    // Map from commit id -> row index for quick lookup (owned keys to avoid borrow conflict)
+    // Map from commit id → row index for quick lookup (owned keys to avoid borrow conflict).
     let id_to_row: HashMap<String, usize> = commits
         .iter()
         .enumerate()
         .map(|(i, c)| (c.id.clone(), i))
         .collect();
 
-    // active_lanes[i] = Some(commit_id) means lane i expects that commit next
-    let mut active_lanes: Vec<Option<String>> = Vec::new();
+    // active_lanes[i] = Some(row) means lane i expects the commit at that row index next.
+    // Using row indices (usize) instead of String IDs avoids per-commit string clones
+    // and replaces string comparisons with integer comparisons in lane lookups.
+    let mut active_lanes: Vec<Option<usize>> = Vec::new();
     let mut edges: Vec<GraphEdge> = Vec::new();
 
     #[allow(clippy::needless_range_loop)]
     for row in 0..commits.len() {
-        let commit_id = commits[row].id.clone();
+        // Clone parent_ids: we need to iterate parents after mutating commits[row].lane below.
         let parent_ids = commits[row].parent_ids.clone();
 
         // Find which lane expects this commit
-        let lane = find_lane_for_commit(&active_lanes, &commit_id);
+        let lane = active_lanes.iter().position(|slot| *slot == Some(row));
 
         let assigned_lane = match lane {
             Some(l) => {
@@ -45,7 +47,7 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
         // Clean up zombie lanes: clear any other slots that also expected this commit.
         // This prevents stale reservations from inflating the total lane count.
         for slot in active_lanes.iter_mut() {
-            if slot.as_deref() == Some(commit_id.as_str()) {
+            if *slot == Some(row) {
                 *slot = None;
             }
         }
@@ -54,11 +56,13 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
 
         // Handle parents
         if let Some(first_parent) = parent_ids.first() {
+            let first_parent_row = id_to_row.get(first_parent.as_str()).copied();
+
             // First parent continues this commit's lane
-            active_lanes[assigned_lane] = Some(first_parent.clone());
+            active_lanes[assigned_lane] = first_parent_row;
 
             // Create edge from this commit to the first parent
-            if let Some(&parent_row) = id_to_row.get(first_parent) {
+            if let Some(parent_row) = first_parent_row {
                 edges.push(GraphEdge {
                     from_row: row,
                     from_lane: assigned_lane,
@@ -71,16 +75,20 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
             // Additional parents (merge commits) — reuse an existing lane
             // if one already expects this parent, otherwise allocate new.
             for merge_parent in parent_ids.iter().skip(1) {
-                let merge_lane = match find_lane_for_commit(&active_lanes, merge_parent) {
+                let parent_row = id_to_row.get(merge_parent.as_str()).copied();
+
+                let merge_lane = match parent_row
+                    .and_then(|pr| active_lanes.iter().position(|slot| *slot == Some(pr)))
+                {
                     Some(existing) => existing,
                     None => {
                         let new_lane = allocate_free_lane(&mut active_lanes);
-                        active_lanes[new_lane] = Some(merge_parent.clone());
+                        active_lanes[new_lane] = parent_row;
                         new_lane
                     }
                 };
 
-                if let Some(&parent_row) = id_to_row.get(merge_parent) {
+                if let Some(parent_row) = parent_row {
                     edges.push(GraphEdge {
                         from_row: row,
                         from_lane: assigned_lane,
@@ -116,15 +124,8 @@ pub fn assign_lanes(commits: &mut [CommitInfo]) -> (Vec<GraphEdge>, usize) {
     (edges, total_lanes)
 }
 
-/// Find the lane that is expecting a specific commit id
-fn find_lane_for_commit(active_lanes: &[Option<String>], commit_id: &str) -> Option<usize> {
-    active_lanes
-        .iter()
-        .position(|slot| slot.as_deref() == Some(commit_id))
-}
-
 /// Find the leftmost free lane, or allocate a new one
-fn allocate_free_lane(active_lanes: &mut Vec<Option<String>>) -> usize {
+fn allocate_free_lane(active_lanes: &mut Vec<Option<usize>>) -> usize {
     if let Some(pos) = active_lanes.iter().position(|slot| slot.is_none()) {
         pos
     } else {

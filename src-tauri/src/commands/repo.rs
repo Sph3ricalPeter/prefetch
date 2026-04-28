@@ -1,4 +1,5 @@
 use crate::background::BackgroundFetcher;
+use crate::commands::helpers::{get_profile_env, get_profile_id, offload, repo_path};
 use crate::error::AppError;
 use crate::events;
 use crate::git::{
@@ -12,52 +13,6 @@ use crate::watcher::RepoWatcher;
 use crate::AppState;
 use tauri::{Emitter, State};
 use tracing::{debug, instrument, warn};
-
-/// Extract the repo path from state (convenience helper).
-fn repo_path(state: &State<'_, AppState>) -> Result<String, AppError> {
-    let lock = state
-        .repo_path
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    lock.as_ref()
-        .cloned()
-        .ok_or_else(|| AppError::Other("No repository open".to_string()))
-}
-
-/// Build profile environment variables from the active profile in AppState.
-/// Returns an empty Vec when no profile is active (no-op for git commands).
-fn get_profile_env(state: &State<'_, AppState>) -> Vec<(String, String)> {
-    let profile = state
-        .active_profile
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone());
-    repository::profile_env(&profile)
-}
-
-/// Extract the active profile's ID (for profile-scoped token lookup).
-fn get_profile_id(state: &State<'_, AppState>) -> Option<String> {
-    state
-        .active_profile
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()))
-}
-
-/// Run a blocking closure on the tokio thread pool instead of the main thread.
-///
-/// Tauri v2 runs sync `#[tauri::command]` functions on the main thread, which
-/// freezes the window during subprocess spawns and git2-rs operations. This
-/// helper moves the work off the main thread.
-async fn offload<F, T>(f: F) -> Result<T, AppError>
-where
-    F: FnOnce() -> Result<T, AppError> + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
-}
 
 // ── Repo open ────────────────────────────────────────────────────────────────
 
