@@ -393,6 +393,12 @@ pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Force-checkout a branch, discarding all local changes.
+pub fn force_checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
+    run_git(path, &["checkout", "--force", name], &[])?;
+    Ok(())
+}
+
 /// Checkout a branch and reset it to match a remote ref.
 /// Used for "Reset Local to Remote" when checking out a remote branch.
 pub fn reset_branch_to_remote(path: &str, branch: &str, remote_ref: &str) -> Result<(), AppError> {

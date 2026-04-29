@@ -1557,7 +1557,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 rounded-md bg-green-500/20 px-3 py-1 text-xs font-medium text-green-400 transition-colors hover:bg-green-500/30 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md bg-green-500/20 px-3 py-1 text-xs font-medium text-green-400 transition-colors hover:bg-green-500/30 disabled:opacity-40"
           >
             <Save className="w-3 h-3" />
             {saving ? "Saving..." : "Save Resolution"}
@@ -1599,7 +1599,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               <button
                 onClick={handleAcceptOurs}
                 disabled={saving}
-                className="shrink-0 flex items-center gap-1.5 rounded-md bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/30 disabled:opacity-50"
+                className="shrink-0 flex items-center gap-1.5 rounded-md bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/30 disabled:opacity-40"
               >
                 <Save className="w-3 h-3" />
                 Accept Ours
@@ -1678,7 +1678,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               <button
                 onClick={handleAcceptTheirs}
                 disabled={saving}
-                className="shrink-0 flex items-center gap-1.5 rounded-md bg-purple-500/20 px-3 py-1 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/30 disabled:opacity-50"
+                className="shrink-0 flex items-center gap-1.5 rounded-md bg-purple-500/20 px-3 py-1 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/30 disabled:opacity-40"
               >
                 <Save className="w-3 h-3" />
                 Accept Theirs

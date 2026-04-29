@@ -216,3 +216,4 @@ When compacting, always preserve:
 3. Merge `dev` → `main`
 4. Tag: `git tag v0.X.0` + push tag
 5. CI builds installers + creates GitHub release automatically
+6. **Release notes are auto-generated** from conventional commits between the previous tag and the current one. The workflow picks the top 5 changes (features first, then bug fixes). If commit messages follow the convention (`feat: ...`, `fix: ...`), notes are accurate automatically. For manual overrides, edit the release body on GitHub after publishing.

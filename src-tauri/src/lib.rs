@@ -67,6 +67,7 @@ pub fn run() {
             commands::repo::get_commits,
             commands::repo::get_branches,
             commands::repo::checkout_branch,
+            commands::repo::force_checkout_branch,
             commands::repo::reset_branch_to_remote,
             commands::repo::create_branch,
             commands::repo::fetch_repo,

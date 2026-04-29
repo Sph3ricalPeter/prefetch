@@ -1080,13 +1080,13 @@ function DiscardDialog({
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+            className="rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
           >
             Discard
           </button>

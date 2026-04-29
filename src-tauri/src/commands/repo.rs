@@ -184,6 +184,15 @@ pub async fn checkout_branch(name: String, state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
+pub async fn force_checkout_branch(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::force_checkout_branch(&path, &name)).await
+}
+
+#[tauri::command]
 pub async fn reset_branch_to_remote(
     branch: String,
     remote_ref: String,

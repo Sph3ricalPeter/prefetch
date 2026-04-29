@@ -92,7 +92,7 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
           Prefetch
         </span>
         <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-caption font-medium uppercase tracking-wider text-brand">
-          Alpha{appVersion ? ` v${appVersion}` : ""}
+          Alpha{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
         </span>
       </div>
 

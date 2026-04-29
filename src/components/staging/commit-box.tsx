@@ -7,6 +7,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const SOURCE_LABELS: Record<string, string> = {
   local: "Local repo config",
@@ -237,11 +238,9 @@ export function CommitBox() {
           {/* Amend last commit toggle */}
           {headCommitId && (
             <label className="flex items-center gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={amendMode}
-                onChange={(e) => setAmendMode(e.target.checked)}
-                className="h-3 w-3 rounded border-border bg-background accent-primary cursor-pointer"
+                onCheckedChange={(v) => setAmendMode(v === true)}
               />
               <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
                 Amend last commit

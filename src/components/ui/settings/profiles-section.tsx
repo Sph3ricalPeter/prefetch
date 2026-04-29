@@ -28,6 +28,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -341,7 +342,7 @@ function ProfileEdit({
               <TooltipTrigger asChild>
                 <button
                   onClick={handleBrowseSshKey}
-                  className="shrink-0 rounded border border-border p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                  className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                 >
                   <KeyRound className="h-3 w-3" />
                 </button>
@@ -405,17 +406,15 @@ function ProfileEdit({
 
         {/* Default toggle */}
         <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={isDefault}
-            onChange={(e) => setIsDefault(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-border accent-primary"
+            onCheckedChange={(v) => setIsDefault(v === true)}
           />
           <span className="text-xs text-muted-foreground">
             Set as default profile
           </span>
         </label>
-        <p className="text-caption text-faint -mt-2 ml-5">
+        <p className="text-caption text-faint -mt-2 ml-5.5">
           The default profile is used when no path prefix matches.
         </p>
 
@@ -424,7 +423,7 @@ function ProfileEdit({
           <button
             onClick={handleSave}
             disabled={!canSave || saving}
-            className="flex-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            className="flex-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
           >
             {saving
               ? "Saving..."
@@ -434,7 +433,7 @@ function ProfileEdit({
           </button>
           <button
             onClick={onBack}
-            className="rounded border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
           >
             Cancel
           </button>
@@ -555,13 +554,13 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                     <button
                       onClick={() => handleSave(host)}
                       disabled={!tokenInput.trim() || saving}
-                      className="flex-1 rounded bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                      className="flex-1 rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                     >
                       {saving ? "Saving..." : "Save"}
                     </button>
                     <button
                       onClick={() => { setEditingHost(null); setTokenInput(""); }}
-                      className="rounded border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                     >
                       Cancel
                     </button>
@@ -571,13 +570,13 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                 <div className="flex gap-1.5">
                   <button
                     onClick={() => { setEditingHost(host); setTokenInput(""); }}
-                    className="flex-1 rounded border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                    className="flex-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                   >
                     Replace
                   </button>
                   <button
                     onClick={() => handleDelete(host)}
-                    className="rounded border border-border px-2.5 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+                    className="rounded-md border border-border px-2.5 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
                   >
                     Remove
                   </button>

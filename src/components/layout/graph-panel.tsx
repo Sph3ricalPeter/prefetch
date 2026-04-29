@@ -48,6 +48,10 @@ export function GraphPanel() {
   const checkout = useRepoStore((s) => s.checkout);
   const undoInfo = useRepoStore((s) => s.undoInfo);
   const undoAction = useRepoStore((s) => s.undo);
+  const dirtyCheckoutPending = useRepoStore((s) => s.dirtyCheckoutPending);
+  const stashAndCheckout = useRepoStore((s) => s.stashAndCheckout);
+  const discardAndCheckout = useRepoStore((s) => s.discardAndCheckout);
+  const cancelDirtyCheckout = useRepoStore((s) => s.cancelDirtyCheckout);
   const remoteCheckoutPending = useRepoStore((s) => s.remoteCheckoutPending);
   const resetLocalToRemote = useRepoStore((s) => s.resetLocalToRemote);
   const cancelRemoteCheckout = useRepoStore((s) => s.cancelRemoteCheckout);
@@ -392,6 +396,42 @@ export function GraphPanel() {
           ]}
           onClose={() => setStashContextMenu(null)}
         />
+      )}
+
+      {/* Dirty working tree checkout dialog */}
+      {dirtyCheckoutPending && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
+              <p className="text-sm text-foreground">Uncommitted changes</p>
+            </div>
+            <p className="text-xs text-muted-foreground mb-4">
+              You have {dirtyCheckoutPending.changesCount} unsaved {dirtyCheckoutPending.changesCount === 1 ? "change" : "changes"}.
+              How would you like to proceed?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={cancelDirtyCheckout}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={stashAndCheckout}
+                className="rounded bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-accent transition-colors"
+              >
+                Stash &amp; Switch
+              </button>
+              <button
+                onClick={discardAndCheckout}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Discard &amp; Switch
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Remote checkout dialog */}

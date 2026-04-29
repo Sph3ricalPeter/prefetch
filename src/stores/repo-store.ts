@@ -24,6 +24,7 @@ import {
   getCommits,
   getBranches,
   checkoutBranch,
+  forceCheckoutBranch,
   resetBranchToRemote,
   createBranchCmd,
   fetchRepo,
@@ -210,6 +211,12 @@ interface RepoState {
   conflictContents: ConflictContents | null;
   rebaseProgress: RebaseProgress | null;
 
+  // Dirty working tree checkout dialog
+  dirtyCheckoutPending: {
+    targetName: string;
+    changesCount: number;
+  } | null;
+
   // Remote checkout dialog
   remoteCheckoutPending: {
     localName: string;
@@ -245,6 +252,9 @@ interface RepoState {
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
+  stashAndCheckout: () => Promise<void>;
+  discardAndCheckout: () => Promise<void>;
+  cancelDirtyCheckout: () => void;
   resetLocalToRemote: () => Promise<void>;
   cancelRemoteCheckout: () => void;
   createBranch: (name: string) => Promise<void>;
@@ -380,6 +390,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   conflictState: null,
   conflictContents: null,
   rebaseProgress: null,
+  dirtyCheckoutPending: null,
   remoteCheckoutPending: null,
   undoInfo: null,
   lastUndoTime: 0,
@@ -516,8 +527,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   checkout: async (name: string) => {
-    const { currentBranch, branches } = get();
+    const { currentBranch, branches, fileStatuses } = get();
     if (name === currentBranch) return;
+
+    // If working tree is dirty, prompt before switching
+    if (fileStatuses.length > 0) {
+      set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
+      return;
+    }
 
     // Smart remote branch handling: strip origin/ and check for local counterpart
     const remotePrefix = name.match(/^([^/]+)\//)?.[0];
@@ -558,6 +575,41 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       toast.error(errorMessage(e));
     }
   },
+
+  stashAndCheckout: async () => {
+    const pending = get().dirtyCheckoutPending;
+    if (!pending) return;
+    const target = pending.targetName;
+    set({ dirtyCheckoutPending: null, isLoading: true, error: null });
+    try {
+      await stashPushCmd(`Auto-stash before switching to ${target}`);
+      // Refresh file statuses so checkout() sees a clean tree
+      const freshStatuses = await getFileStatus();
+      set({ isLoading: false, fileStatuses: freshStatuses });
+      get().checkout(target);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(errorMessage(e));
+    }
+  },
+
+  discardAndCheckout: async () => {
+    const pending = get().dirtyCheckoutPending;
+    if (!pending) return;
+    const target = pending.targetName;
+    set({ dirtyCheckoutPending: null, isLoading: true, error: null });
+    try {
+      await forceCheckoutBranch(target);
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, isLoading: false, fileStatuses: statuses });
+      toast.success(`Checked out ${target}`);
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(errorMessage(e));
+    }
+  },
+
+  cancelDirtyCheckout: () => set({ dirtyCheckoutPending: null }),
 
   resetLocalToRemote: async () => {
     const pending = get().remoteCheckoutPending;
@@ -1037,6 +1089,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   pushStash: async (message?) => {
+    set({ isLoading: true });
     try {
       await stashPushCmd(message);
       const [statuses, stashList] = await Promise.all([
@@ -1044,6 +1097,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getStashes(),
       ]);
       set({
+        isLoading: false,
         fileStatuses: statuses,
         stashes: stashList,
         selectedFilePath: null,
@@ -1051,42 +1105,49 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       });
       toast.success("Changes stashed");
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   applyStash: async (index) => {
+    set({ isLoading: true });
     try {
       await stashApplyCmd(index);
       const statuses = await getFileStatus();
-      set({ fileStatuses: statuses });
+      set({ isLoading: false, fileStatuses: statuses });
       toast.success("Stash applied (kept in stash list)");
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   popStash: async (index) => {
+    set({ isLoading: true });
     try {
       await stashPopCmd(index);
       const [statuses, stashList] = await Promise.all([
         getFileStatus(),
         getStashes(),
       ]);
-      set({ fileStatuses: statuses, stashes: stashList });
+      set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
       toast.success("Stash applied");
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   dropStash: async (index) => {
+    set({ isLoading: true });
     try {
       await stashDropCmd(index);
       const stashList = await getStashes();
-      set({ stashes: stashList });
+      set({ isLoading: false, stashes: stashList });
       toast.success("Stash dropped");
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },

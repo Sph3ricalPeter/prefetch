@@ -157,7 +157,7 @@ export function LfsSection() {
               <button
                 onClick={handleAddPattern}
                 disabled={!newPattern.trim() || isLoading}
-                className="rounded px-1.5 py-0.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 transition-colors"
+                className="rounded-md bg-primary px-1.5 py-0.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Add
               </button>
@@ -187,7 +187,7 @@ export function LfsSection() {
               <button
                 onClick={pruneLfsObjects}
                 disabled={isLoading}
-                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Trash2 className="h-3 w-3" />
                 Prune unreferenced objects
