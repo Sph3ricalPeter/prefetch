@@ -31,7 +31,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_YOUR_PUBLIC_KEY",
+      "pubkey": "dW52cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQxQzczQTYwQTlEQzNGMDcKUldRSFA5eXBZRHJIMGRPVDBKaG4rZFJXNzIrQ1MycHdGeFZLdW94Ky9YOFZaVDdXNUhKSXJuT1AK",
       "endpoints": [
         "https://github.com/Sph3ricalPeter/prefetch/releases/latest/download/latest.json"
       ]

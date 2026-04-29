@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { toast } from "sonner";
 
 export type UpdateStatus =
   | "idle"
@@ -65,9 +66,11 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
         _updateHandle: update,
       });
     } catch (err) {
-      set({
-        status: "error",
-        error: err instanceof Error ? err.message : "Update check failed",
+      const message = err instanceof Error ? err.message : "Update check failed";
+      set({ status: "error", error: message });
+      toast.error("Update check failed", {
+        description: message,
+        duration: 8000,
       });
     }
   },
@@ -101,9 +104,11 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
 
       set({ status: "ready", downloadProgress: 100 });
     } catch (err) {
-      set({
-        status: "error",
-        error: err instanceof Error ? err.message : "Download failed",
+      const message = err instanceof Error ? err.message : "Download failed";
+      set({ status: "error", error: message });
+      toast.error("Update download failed", {
+        description: message,
+        duration: 8000,
       });
     }
   },
@@ -113,9 +118,11 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
     try {
       await relaunch();
     } catch (err) {
-      set({
-        status: "error",
-        error: err instanceof Error ? err.message : "Restart failed",
+      const message = err instanceof Error ? err.message : "Restart failed";
+      set({ status: "error", error: message });
+      toast.error("Update restart failed", {
+        description: message,
+        duration: 8000,
       });
     }
   },

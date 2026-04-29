@@ -18,6 +18,7 @@ export function UpdateIndicator() {
   const status = useUpdaterStore((s) => s.status);
   const version = useUpdaterStore((s) => s.availableVersion);
   const progress = useUpdaterStore((s) => s.downloadProgress);
+  const error = useUpdaterStore((s) => s.error);
   const startDownload = useUpdaterStore((s) => s.startDownload);
   const applyAndRestart = useUpdaterStore((s) => s.applyAndRestart);
   const dismissError = useUpdaterStore((s) => s.dismissError);
@@ -51,7 +52,7 @@ export function UpdateIndicator() {
           ? "Restart to apply update"
           : status === "restarting"
             ? "Restarting…"
-            : "Update failed — click to dismiss";
+            : `Update failed: ${error ?? "unknown error"} — click to dismiss`;
 
   return (
     <Tooltip>
