@@ -66,12 +66,6 @@ export function SettingsPage({ onClose, sidebarWidth = 256, onSidebarResize }: S
           ))}
         </nav>
 
-        {/* Version info at bottom */}
-        <div className="px-4 py-3 border-t border-border">
-          <p className="text-caption text-faint">
-            Prefetch v0.4.0
-          </p>
-        </div>
       </div>
 
       <ResizeHandle
