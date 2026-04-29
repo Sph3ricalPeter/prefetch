@@ -89,9 +89,8 @@ export function CommitBox() {
   const unresolvedCount = fileStatuses.filter((f) => f.is_conflicted).length;
 
   const stagedCount = fileStatuses.filter((f) => f.is_staged).length;
-  // Amend allows committing with 0 staged files (re-wording the message)
   const canCommit =
-    (stagedCount > 0 || amendMode) && commitMessage.trim().length > 0 && !isLoading;
+    stagedCount > 0 && commitMessage.trim().length > 0 && !isLoading;
   const canContinue = unresolvedCount === 0 && !isLoading;
 
   const handleCommit = () => {
@@ -300,7 +299,7 @@ export function CommitBox() {
             : amendMode
               ? stagedCount > 0
                 ? `Amend Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
-                : "Amend Commit"
+                : "Nothing staged"
               : stagedCount > 0
                 ? `Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
                 : "Nothing staged"}

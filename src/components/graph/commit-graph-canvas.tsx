@@ -11,6 +11,7 @@ import { gravatarUrl } from "@/lib/gravatar";
 const ROW_HEIGHT = 32;
 const LANE_WIDTH = 20;
 const NODE_RADIUS = 10;          // Change 4: was 8 (16px -> 20px diameter)
+const CURVE_RADIUS = 6;          // Constant corner radius for cross-lane edges (GitKraken-style)
 const SCROLLBAR_PAD = 6;         // matches scrollbar width for visual balance
 const GRAPH_PADDING_LEFT = 12 + SCROLLBAR_PAD; // left padding accounts for scrollbar parity
 const TEXT_GAP = 24;
@@ -849,9 +850,13 @@ export function CommitGraphCanvas({
         if (s.sameLane) {
           ctx.lineTo(s.tX, s.tY);
         } else {
-          const cp1Y = s.fY + (s.tY - s.fY) * 0.4;
-          const cp2Y = s.fY + (s.tY - s.fY) * 0.6;
-          ctx.bezierCurveTo(s.fX, cp1Y, s.tX, cp2Y, s.tX, s.tY);
+          // GitKraken-style L-shaped edge: horizontal from source to
+          // target's lane, one constant-radius corner, then vertical
+          // straight down into the target node from above.
+          const maxR = Math.min(Math.abs(s.tY - s.fY), Math.abs(s.tX - s.fX));
+          const r = Math.min(CURVE_RADIUS, maxR);
+          ctx.arcTo(s.tX, s.fY, s.tX, s.tY, r);
+          ctx.lineTo(s.tX, s.tY);
         }
       }
       ctx.stroke();
