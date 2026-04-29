@@ -1,6 +1,6 @@
 [package]
 name = "prefetch"
-version = "0.6.5"
+version = "0.6.6"
 description = "A desktop git client"
 authors = ["Sph3ricalPeter <sph3ricalpeter@gmail.com>"]
 license = "MIT"

@@ -72,6 +72,14 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       });
     } catch (err) {
       const message = errorMessage(err);
+
+      // Release exists but platform artifact not uploaded yet — treat as
+      // "no update available" rather than surfacing a confusing error.
+      if (message.includes("fallback platforms")) {
+        set({ status: "idle", availableVersion: null, _updateHandle: null });
+        return;
+      }
+
       set({ status: "error", error: message });
       toast.error("Update check failed", {
         description: message,
