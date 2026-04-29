@@ -14,8 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/github-script@v7
+        id: create-release
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Prefetch ${tag}`,
+              body: [
+                'Download the installer for your platform:',
+                '- **Windows**: `.exe` (NSIS installer)',
+                '- **macOS Apple Silicon**: `.dmg`',
+              ].join('\n'),
+              draft: true,
+              prerelease: false
+            });
+            return data.id;
+
   build:
     name: Build (${{ matrix.label }})
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -58,19 +85,27 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Prefetch ${{ github.ref_name }}"
-          releaseBody: |
-            Download the installer for your platform:
-            - **Windows**: `.msi` or `.exe` (NSIS installer)
-            - **macOS Apple Silicon**: `.dmg`
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  publish-release:
+    name: Publish Release
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false
+            });
 
   update-landing-page:
     name: Update landing page version
-    needs: build
+    needs: publish-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
