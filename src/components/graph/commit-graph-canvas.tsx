@@ -667,9 +667,10 @@ export function CommitGraphCanvas({
         const idx = commitIndex.get(cid);
         if (idx === undefined) continue;
         const commit = commits[idx];
-        // Follow first parent only (main line of this branch)
-        if (commit.parent_ids.length > 0) {
-          queue.push(commit.parent_ids[0]);
+        // Follow all parents so merge-parent commits (e.g. remote
+        // side of a git-pull merge) get the correct branch color.
+        for (const pid of commit.parent_ids) {
+          queue.push(pid);
         }
       }
     }
