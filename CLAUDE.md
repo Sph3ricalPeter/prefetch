@@ -209,7 +209,10 @@ When compacting, always preserve:
 
 ### Releasing
 1. Ensure all target milestone issues are closed
-2. Bump version in `package.json` and `src-tauri/tauri.conf.json`
+2. Bump version in **all three files** (must match):
+   - `package.json` → `"version"`
+   - `src-tauri/tauri.conf.json` → `"version"`
+   - `src-tauri/Cargo.toml` → `version`
 3. Merge `dev` → `main`
 4. Tag: `git tag v0.X.0` + push tag
 5. CI builds installers + creates GitHub release automatically

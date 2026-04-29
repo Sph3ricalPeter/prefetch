@@ -158,7 +158,9 @@ function UpdatesSection() {
           className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ${
             isBusy
               ? "border-border text-muted-foreground opacity-60"
-              : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
+              : status === "available"
+                ? "border-primary/50 bg-primary/10 text-foreground hover:bg-primary/20"
+                : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
           }`}
         >
           {isChecking && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -168,7 +170,9 @@ function UpdatesSection() {
           className={`text-xs ${
             status === "error"
               ? "text-destructive"
-              : "text-muted-foreground"
+              : status === "available"
+                ? "text-primary"
+                : "text-muted-foreground"
           }`}
         >
           {statusText}

@@ -67,7 +67,7 @@ export function UpdateIndicator() {
               : status === "error"
                 ? "border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20"
                 : status === "available"
-                  ? "border-border text-foreground hover:bg-secondary"
+                  ? "border-primary/50 bg-primary/10 text-foreground hover:bg-primary/20"
                   : "border-border text-muted-foreground"
           }`}
         >
