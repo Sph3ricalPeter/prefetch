@@ -235,7 +235,7 @@ export function FileList() {
             onToggleBatch={(paths) => wrappedStage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading || busyOp !== null}
-            onFileContextMenu={(file, x, y, e) => handleFileContextMenu(e!, file, false)}
+            onFileContextMenu={(file, _x, _y, e) => handleFileContextMenu(e!, file, false)}
             onFolderContextMenu={(paths, folderPath, x, y) => setFolderContextMenu({ paths, folderPath, isStaged: false, x, y })}
           />
         ) : (
@@ -290,7 +290,7 @@ export function FileList() {
             onToggleBatch={(paths) => wrappedUnstage(paths)}
             onDiscardBatch={(paths) => setConfirmDiscard(paths)}
             disabled={isLoading || busyOp !== null}
-            onFileContextMenu={(file, x, y, e) => handleFileContextMenu(e!, file, true)}
+            onFileContextMenu={(file, _x, _y, e) => handleFileContextMenu(e!, file, true)}
             onFolderContextMenu={(paths, folderPath, x, y) => setFolderContextMenu({ paths, folderPath, isStaged: true, x, y })}
           />
         ) : (
