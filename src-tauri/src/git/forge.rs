@@ -303,11 +303,18 @@ pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo>
             "Authorization",
             format!("Bearer {token}"),
         ),
-        "gitlab.com" => (
-            "https://gitlab.com/api/v4/user".to_string(),
-            "PRIVATE-TOKEN",
-            token.clone(),
-        ),
+        "gitlab.com" => match token_type {
+            TokenType::Pat => (
+                "https://gitlab.com/api/v4/user".to_string(),
+                "PRIVATE-TOKEN",
+                token.clone(),
+            ),
+            TokenType::OAuth => (
+                "https://gitlab.com/api/v4/user".to_string(),
+                "Authorization",
+                format!("Bearer {token}"),
+            ),
+        },
         _ => return None,
     };
 
@@ -403,7 +410,11 @@ fn gitlab_get_mr(config: &ForgeConfig, branch: &str, token: &Option<String>) -> 
         .header("User-Agent", "prefetch-git-client/0.1");
 
     if let Some(t) = token {
-        req = req.header("PRIVATE-TOKEN", t.as_str());
+        if t.starts_with("glpat-") {
+            req = req.header("PRIVATE-TOKEN", t.as_str());
+        } else {
+            req = req.header("Authorization", format!("Bearer {t}"));
+        }
     }
 
     let resp = req.send().ok()?;

@@ -208,9 +208,9 @@ impl OAuthConfig {
         Self {
             authorize_url: "https://gitlab.com/oauth/authorize".to_string(),
             token_url: "https://gitlab.com/oauth/token".to_string(),
-            client_id: String::new(), // GitLab OAuth not yet registered
-            client_secret: None,
-            scopes: "read_api write_repository".to_string(),
+            client_id: "f270ec7acf1d8e224e2b3ecdaf5d7e607080215c86a42ae09a060c98b709e580".to_string(),
+            client_secret: Some("gloas-f6a2cc508fae83d5798d8dbd78aed6f8370d38c789082369487f4bac057f51fa".to_string()),
+            scopes: "read_user read_api write_repository".to_string(),
         }
     }
 }

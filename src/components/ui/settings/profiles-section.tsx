@@ -451,7 +451,7 @@ function ProfileEdit({
 
 const FORGE_HOSTS = [
   { host: "github.com", label: "GitHub", oauthProvider: "github" as const, hasOAuth: true, tokenDocsUrl: "https://github.com/settings/tokens", placeholder: "ghp_...", scopes: ["repo — push, pull, fetch, PR detection"] },
-  { host: "gitlab.com", label: "GitLab", oauthProvider: "gitlab" as const, hasOAuth: false, tokenDocsUrl: "https://gitlab.com/-/user_settings/personal_access_tokens/legacy/new", placeholder: "glpat-...", scopes: ["read_api — PR/MR detection", "write_repository — push, pull, fetch"] },
+  { host: "gitlab.com", label: "GitLab", oauthProvider: "gitlab" as const, hasOAuth: true, tokenDocsUrl: "https://gitlab.com/-/user_settings/personal_access_tokens/legacy/new", placeholder: "glpat-...", scopes: ["read_api — PR/MR detection", "write_repository — push, pull, fetch"] },
 ];
 
 function ForgeTokensSection({ profileId }: { profileId: string }) {

@@ -26,7 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https://www.gravatar.com data: blob:; connect-src ipc: http://ipc.localhost https://www.gravatar.com"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https://www.gravatar.com https://avatars.githubusercontent.com https://secure.gravatar.com https://gitlab.com data: blob:; connect-src ipc: http://ipc.localhost https://www.gravatar.com"
     }
   },
   "plugins": {
