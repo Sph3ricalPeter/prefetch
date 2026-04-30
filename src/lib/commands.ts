@@ -318,6 +318,16 @@ export async function checkProfileToken(profileId: string, host: string): Promis
   return tracedInvoke<boolean>("check_profile_token", { profileId, host });
 }
 
+export interface TokenInfo {
+  token_type: "oauth" | "pat";
+  username: string;
+  avatar_url: string;
+}
+
+export async function getTokenInfo(profileId: string, host: string): Promise<TokenInfo | null> {
+  return tracedInvoke<TokenInfo | null>("get_token_info", { profileId, host });
+}
+
 export async function getPrForBranch(branch: string): Promise<PrInfo | null> {
   return tracedInvoke<PrInfo | null>("get_pr_for_branch", { branch });
 }

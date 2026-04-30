@@ -102,6 +102,18 @@ pub async fn check_profile_token(profile_id: String, host: String) -> Result<boo
     .await
 }
 
+// ── Token info ──────────────────────────────────────────────────────────────
+
+/// Fetch info about a stored token — type (OAuth/PAT), username, avatar.
+/// Returns null if no token is stored or the API call fails.
+#[tauri::command]
+pub async fn get_token_info(
+    profile_id: String,
+    host: String,
+) -> Result<Option<forge::TokenInfo>, AppError> {
+    offload(move || Ok(forge::get_token_info(Some(&profile_id), &host))).await
+}
+
 // ── PR / MR lookup ────────────────────────────────────────────────────────────
 
 /// Return the open PR/MR for the given branch, or null if none exists.

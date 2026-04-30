@@ -251,6 +251,95 @@ pub fn authenticated_remote_url(
     })
 }
 
+// ── Token info lookup ────────────────────────────────────────────────────────
+
+/// Token type — OAuth or Personal Access Token.
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum TokenType {
+    #[serde(rename = "oauth")]
+    OAuth,
+    #[serde(rename = "pat")]
+    Pat,
+}
+
+/// Information about a stored forge token.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TokenInfo {
+    pub token_type: TokenType,
+    pub username: String,
+    pub avatar_url: String,
+}
+
+/// Detect token type from its prefix.
+fn detect_token_type(host: &str, token: &str) -> TokenType {
+    match host {
+        "github.com" => {
+            if token.starts_with("ghp_") || token.starts_with("github_pat_") {
+                TokenType::Pat
+            } else {
+                TokenType::OAuth
+            }
+        }
+        "gitlab.com" => {
+            if token.starts_with("glpat-") {
+                TokenType::Pat
+            } else {
+                TokenType::OAuth
+            }
+        }
+        _ => TokenType::Pat, // assume PAT for unknown hosts
+    }
+}
+
+/// Fetch user info for a stored token by calling the forge's user API.
+/// Returns `None` if no token is stored or the API call fails.
+pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo> {
+    let token = load_token_for_profile(profile_id, host).ok()??;
+    let token_type = detect_token_type(host, &token);
+
+    let (url, auth_header, auth_value) = match host {
+        "github.com" => (
+            "https://api.github.com/user".to_string(),
+            "Authorization",
+            format!("Bearer {token}"),
+        ),
+        "gitlab.com" => (
+            "https://gitlab.com/api/v4/user".to_string(),
+            "PRIVATE-TOKEN",
+            token.clone(),
+        ),
+        _ => return None,
+    };
+
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "prefetch-git-client/0.1")
+        .header(auth_header, &auth_value)
+        .send()
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let json: serde_json::Value = resp.json().ok()?;
+
+    let username = match host {
+        "github.com" => json["login"].as_str()?.to_string(),
+        "gitlab.com" => json["username"].as_str()?.to_string(),
+        _ => return None,
+    };
+
+    let avatar_url = json["avatar_url"].as_str().unwrap_or("").to_string();
+
+    Some(TokenInfo {
+        token_type,
+        username,
+        avatar_url,
+    })
+}
+
 // ── PR / MR lookup ────────────────────────────────────────────────────────────
 
 /// Look up the open PR / MR for `branch` on the detected forge.

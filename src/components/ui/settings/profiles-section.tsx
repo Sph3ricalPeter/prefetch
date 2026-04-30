@@ -1,4 +1,4 @@
-import { useState, useEffect, type KeyboardEvent } from "react";
+import { useState, useEffect, useCallback, type KeyboardEvent } from "react";
 import {
   Plus,
   Trash2,
@@ -8,7 +8,6 @@ import {
   KeyRound,
   X,
   CheckCircle,
-  AlertCircle,
   Globe,
   LogIn,
   Loader2,
@@ -21,11 +20,12 @@ import { gravatarUrl } from "@/lib/gravatar";
 import {
   saveForgeToken as saveForgeTokenCmd,
   deleteForgeToken as deleteForgeTokenCmd,
-  checkProfileToken,
+  getTokenInfo,
   openUrl,
   startOAuthFlow,
   cancelOAuthFlow,
 } from "@/lib/commands";
+import type { TokenInfo } from "@/lib/commands";
 import type { Profile, ProfilePath } from "@/types/profile";
 import {
   Tooltip,
@@ -455,32 +455,50 @@ const FORGE_HOSTS = [
 ];
 
 function ForgeTokensSection({ profileId }: { profileId: string }) {
-  const [tokenStatus, setTokenStatus] = useState<Record<string, boolean>>({});
+  const [tokenInfos, setTokenInfos] = useState<Record<string, TokenInfo | null>>({});
+  const [loadingInfo, setLoadingInfo] = useState(true);
   const [editingHost, setEditingHost] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [oauthWaitingHost, setOauthWaitingHost] = useState<string | null>(null);
   const loadForgeStatus = useRepoStore((s) => s.loadForgeStatus);
 
-  // Check token status for each host
+  // Load token info (username, avatar, type) for each host.
+  // Also exposed as a callable for use after save/delete/OAuth.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refreshTokenInfos = useCallback(() => {
+    setLoadingInfo(true);
+    setRefreshKey((k) => k + 1);
+  }, []);
+
   useEffect(() => {
-    for (const { host } of FORGE_HOSTS) {
-      checkProfileToken(profileId, host)
-        .then((has) => setTokenStatus((prev) => ({ ...prev, [host]: has })))
-        .catch(() => {});
-    }
-  }, [profileId]);
+    let cancelled = false;
+    Promise.all(
+      FORGE_HOSTS.map(({ host }) =>
+        getTokenInfo(profileId, host)
+          .then((info) => ({ host, info }))
+          .catch(() => ({ host, info: null as TokenInfo | null }))
+      )
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, TokenInfo | null> = {};
+      for (const { host, info } of results) map[host] = info;
+      setTokenInfos(map);
+      setLoadingInfo(false);
+    });
+    return () => { cancelled = true; };
+  }, [profileId, refreshKey]);
 
   const handleSave = async (host: string) => {
     if (!tokenInput.trim()) return;
     setSaving(true);
     try {
       await saveForgeTokenCmd(host, tokenInput.trim(), profileId);
-      setTokenStatus((prev) => ({ ...prev, [host]: true }));
       setEditingHost(null);
       setTokenInput("");
       toast.success("Token saved");
       loadForgeStatus().catch(() => {});
+      refreshTokenInfos();
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -491,7 +509,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
   const handleDelete = async (host: string) => {
     try {
       await deleteForgeTokenCmd(host, profileId);
-      setTokenStatus((prev) => ({ ...prev, [host]: false }));
+      setTokenInfos((prev) => ({ ...prev, [host]: null }));
       toast.success("Token removed");
       loadForgeStatus().catch(() => {});
     } catch (e) {
@@ -503,9 +521,9 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
     setOauthWaitingHost(host);
     try {
       await startOAuthFlow(provider, profileId);
-      setTokenStatus((prev) => ({ ...prev, [host]: true }));
       toast.success("Authenticated via OAuth");
       loadForgeStatus().catch(() => {});
+      refreshTokenInfos();
     } catch (e) {
       const msg = String(e);
       if (!msg.includes("cancelled")) toast.error(msg);
@@ -530,20 +548,40 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
 
       <div className="space-y-2">
         {FORGE_HOSTS.map(({ host, label, oauthProvider, hasOAuth, tokenDocsUrl, placeholder, scopes }) => {
-          const hasToken = tokenStatus[host] ?? false;
+          const info = tokenInfos[host];
+          const hasToken = info != null;
           const isEditing = editingHost === host;
           const isWaiting = oauthWaitingHost === host;
 
           return (
             <div key={host} className="rounded-md border border-border px-3 py-2.5 space-y-2">
-              {/* Host header */}
+              {/* Host header + connected status */}
               <div className="flex items-center gap-2">
                 <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="text-xs font-medium text-foreground flex-1">{label}</span>
-                {hasToken ? (
-                  <CheckCircle className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                <span className="text-xs font-medium text-foreground">{label}</span>
+                <div className="flex-1" />
+                {loadingInfo ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-faint" />
+                ) : hasToken && info ? (
+                  <div className="flex items-center gap-1.5">
+                    {info.token_type === "oauth" && info.avatar_url ? (
+                      <img
+                        src={info.avatar_url}
+                        alt=""
+                        className="h-4 w-4 rounded-full"
+                      />
+                    ) : (
+                      <KeyRound className="h-3 w-3 text-muted-foreground" />
+                    )}
+                    <span className="text-caption text-muted-foreground">
+                      {info.token_type === "oauth"
+                        ? `@${info.username}`
+                        : "PAT connected"}
+                    </span>
+                    <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
+                  </div>
                 ) : (
-                  <AlertCircle className="h-3.5 w-3.5 text-faint shrink-0" />
+                  <span className="text-caption text-faint">Not connected</span>
                 )}
               </div>
 
@@ -628,7 +666,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                   )}
                   <button
                     onClick={() => { setEditingHost(host); setTokenInput(""); }}
-                    className="flex-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                    className={`${hasOAuth ? "" : "flex-1 "}rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors`}
                   >
                     Replace
                   </button>
