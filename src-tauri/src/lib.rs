@@ -3,6 +3,7 @@ mod commands;
 mod error;
 mod events;
 mod git;
+mod oauth;
 mod tracing_setup;
 mod watcher;
 
@@ -131,6 +132,8 @@ pub fn run() {
             commands::forge::check_profile_token,
             commands::forge::get_pr_for_branch,
             commands::forge::clear_pr_cache,
+            commands::forge::start_oauth_flow,
+            commands::forge::cancel_oauth_flow,
             commands::forge::open_url,
             // Profiles
             commands::profile::set_active_profile,

@@ -326,6 +326,25 @@ export async function clearPrCache(): Promise<void> {
   return tracedInvoke<void>("clear_pr_cache");
 }
 
+// ── OAuth ───────────────────────────────────────────────────────────────────
+
+export interface OAuthResult {
+  host: string;
+  success: boolean;
+}
+
+export async function startOAuthFlow(
+  provider: "github" | "gitlab",
+  clientId: string,
+  profileId?: string,
+): Promise<OAuthResult> {
+  return tracedInvoke<OAuthResult>("start_oauth_flow", { provider, clientId, profileId });
+}
+
+export async function cancelOAuthFlow(): Promise<void> {
+  return tracedInvoke<void>("cancel_oauth_flow");
+}
+
 export async function openUrl(url: string): Promise<void> {
   return tracedInvoke<void>("open_url", { url });
 }

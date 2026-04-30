@@ -6,6 +6,7 @@ use crate::git::{
     forge,
     types::{ForgeConfig, PrInfo},
 };
+use crate::oauth;
 use crate::AppState;
 use serde::Serialize;
 use tauri::State;
@@ -159,6 +160,41 @@ pub fn clear_pr_cache(state: State<'_, AppState>) -> Result<(), AppError> {
         .lock()
         .map_err(|e| AppError::Other(e.to_string()))?;
     cache.clear();
+    Ok(())
+}
+
+// ── OAuth ────────────────────────────────────────────────────────────────────
+
+/// Start an OAuth authorization code flow for the given forge.
+///
+/// Opens the system browser, waits for the callback, exchanges the code
+/// for a token, and stores it in the OS keychain.
+#[tauri::command]
+pub async fn start_oauth_flow(
+    provider: String,
+    client_id: String,
+    profile_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<oauth::OAuthResult, AppError> {
+    let pid = profile_id.or_else(|| get_profile_id(&state));
+
+    let provider = match provider.as_str() {
+        "github" => oauth::OAuthProvider::GitHub,
+        "gitlab" => oauth::OAuthProvider::GitLab,
+        other => {
+            return Err(AppError::Other(format!(
+                "Unknown OAuth provider: {other}"
+            )))
+        }
+    };
+
+    oauth::start_flow(provider, client_id, pid).await
+}
+
+/// Cancel any in-progress OAuth flow.
+#[tauri::command]
+pub async fn cancel_oauth_flow() -> Result<(), AppError> {
+    oauth::cancel_flow().await;
     Ok(())
 }
 
