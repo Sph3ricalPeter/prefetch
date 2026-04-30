@@ -335,10 +335,9 @@ export interface OAuthResult {
 
 export async function startOAuthFlow(
   provider: "github" | "gitlab",
-  clientId: string,
   profileId?: string,
 ): Promise<OAuthResult> {
-  return tracedInvoke<OAuthResult>("start_oauth_flow", { provider, clientId, profileId });
+  return tracedInvoke<OAuthResult>("start_oauth_flow", { provider, profileId });
 }
 
 export async function cancelOAuthFlow(): Promise<void> {

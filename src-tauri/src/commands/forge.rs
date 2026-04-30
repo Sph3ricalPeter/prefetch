@@ -172,7 +172,6 @@ pub fn clear_pr_cache(state: State<'_, AppState>) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn start_oauth_flow(
     provider: String,
-    client_id: String,
     profile_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<oauth::OAuthResult, AppError> {
@@ -188,7 +187,7 @@ pub async fn start_oauth_flow(
         }
     };
 
-    oauth::start_flow(provider, client_id, pid).await
+    oauth::start_flow(provider, pid).await
 }
 
 /// Cancel any in-progress OAuth flow.

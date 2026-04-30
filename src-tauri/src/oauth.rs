@@ -178,29 +178,38 @@ pub enum OAuthProvider {
     GitLab,
 }
 
-/// Configuration for an OAuth app (client_id, scopes, endpoints).
+/// Configuration for an OAuth app (client_id, client_secret, scopes, endpoints).
 struct OAuthConfig {
     authorize_url: String,
     token_url: String,
     client_id: String,
+    client_secret: Option<String>,
     scopes: String,
 }
 
+// Hardcoded OAuth App credentials — these are NOT secret for public desktop
+// clients. Security relies on PKCE + redirect URI, not client_secret secrecy.
+// This is the standard approach used by VS Code, GitKraken, etc.
+const GITHUB_CLIENT_ID: &str = "Ov23liXSB7DFFBzwqbm6";
+const GITHUB_CLIENT_SECRET: &str = "29be565be311f3ee34f307bbe9b2c838a9742739";
+
 impl OAuthConfig {
-    fn github(client_id: &str) -> Self {
+    fn github() -> Self {
         Self {
             authorize_url: "https://github.com/login/oauth/authorize".to_string(),
             token_url: "https://github.com/login/oauth/access_token".to_string(),
-            client_id: client_id.to_string(),
+            client_id: GITHUB_CLIENT_ID.to_string(),
+            client_secret: Some(GITHUB_CLIENT_SECRET.to_string()),
             scopes: "repo".to_string(),
         }
     }
 
-    fn gitlab(client_id: &str) -> Self {
+    fn gitlab() -> Self {
         Self {
             authorize_url: "https://gitlab.com/oauth/authorize".to_string(),
             token_url: "https://gitlab.com/oauth/token".to_string(),
-            client_id: client_id.to_string(),
+            client_id: String::new(), // GitLab OAuth not yet registered
+            client_secret: None,
             scopes: "read_api write_repository".to_string(),
         }
     }
@@ -243,13 +252,18 @@ pub async fn cancel_flow() {
 /// 5. Stores the token in the OS keychain
 pub async fn start_flow(
     provider: OAuthProvider,
-    client_id: String,
     profile_id: Option<String>,
 ) -> Result<OAuthResult, AppError> {
     let config = match provider {
-        OAuthProvider::GitHub => OAuthConfig::github(&client_id),
-        OAuthProvider::GitLab => OAuthConfig::gitlab(&client_id),
+        OAuthProvider::GitHub => OAuthConfig::github(),
+        OAuthProvider::GitLab => OAuthConfig::gitlab(),
     };
+
+    if config.client_id.is_empty() {
+        return Err(AppError::Other(format!(
+            "OAuth not yet configured for {provider:?} — use a Personal Access Token instead"
+        )));
+    }
 
     let host = match provider {
         OAuthProvider::GitHub => "github.com",
@@ -460,13 +474,20 @@ async fn exchange_code(
 ) -> Result<String, AppError> {
     let client = reqwest::Client::new();
 
-    let params = [
+    let mut params = vec![
         ("client_id", config.client_id.as_str()),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("grant_type", "authorization_code"),
         ("code_verifier", verifier),
     ];
+
+    // GitHub OAuth Apps require client_secret for the token exchange
+    let secret_ref;
+    if let Some(ref secret) = config.client_secret {
+        secret_ref = secret.clone();
+        params.push(("client_secret", &secret_ref));
+    }
 
     let resp = client
         .post(&config.token_url)

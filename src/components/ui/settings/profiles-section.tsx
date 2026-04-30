@@ -26,7 +26,6 @@ import {
   startOAuthFlow,
   cancelOAuthFlow,
 } from "@/lib/commands";
-import { getUiState, setUiState } from "@/lib/database";
 import type { Profile, ProfilePath } from "@/types/profile";
 import {
   Tooltip,
@@ -451,8 +450,8 @@ function ProfileEdit({
 // ── Forge tokens per profile ────────────────────────────────────────────────
 
 const FORGE_HOSTS = [
-  { host: "github.com", label: "GitHub", oauthProvider: "github" as const, oauthDocsUrl: "https://github.com/settings/developers", tokenDocsUrl: "https://github.com/settings/tokens", placeholder: "ghp_...", scopes: ["repo — push, pull, fetch, PR detection"] },
-  { host: "gitlab.com", label: "GitLab", oauthProvider: "gitlab" as const, oauthDocsUrl: "https://gitlab.com/-/user_settings/applications", tokenDocsUrl: "https://gitlab.com/-/user_settings/personal_access_tokens/legacy/new", placeholder: "glpat-...", scopes: ["read_api — PR/MR detection", "write_repository — push, pull, fetch"] },
+  { host: "github.com", label: "GitHub", oauthProvider: "github" as const, hasOAuth: true, tokenDocsUrl: "https://github.com/settings/tokens", placeholder: "ghp_...", scopes: ["repo — push, pull, fetch, PR detection"] },
+  { host: "gitlab.com", label: "GitLab", oauthProvider: "gitlab" as const, hasOAuth: false, tokenDocsUrl: "https://gitlab.com/-/user_settings/personal_access_tokens/legacy/new", placeholder: "glpat-...", scopes: ["read_api — PR/MR detection", "write_repository — push, pull, fetch"] },
 ];
 
 function ForgeTokensSection({ profileId }: { profileId: string }) {
@@ -460,23 +459,14 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
   const [editingHost, setEditingHost] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState("");
   const [saving, setSaving] = useState(false);
-  // OAuth state
-  const [oauthHost, setOauthHost] = useState<string | null>(null);
-  const [oauthClientId, setOauthClientId] = useState("");
-  const [oauthWaiting, setOauthWaiting] = useState(false);
-  const [storedClientIds, setStoredClientIds] = useState<Record<string, string>>({});
+  const [oauthWaitingHost, setOauthWaitingHost] = useState<string | null>(null);
   const loadForgeStatus = useRepoStore((s) => s.loadForgeStatus);
 
-  // Check token status + load stored OAuth client IDs
+  // Check token status for each host
   useEffect(() => {
     for (const { host } of FORGE_HOSTS) {
       checkProfileToken(profileId, host)
         .then((has) => setTokenStatus((prev) => ({ ...prev, [host]: has })))
-        .catch(() => {});
-      getUiState(`oauth_client_id_${host}`)
-        .then((id) => {
-          if (id) setStoredClientIds((prev) => ({ ...prev, [host]: id }));
-        })
         .catch(() => {});
     }
   }, [profileId]);
@@ -510,37 +500,23 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
   };
 
   const handleOAuth = async (host: string, provider: "github" | "gitlab") => {
-    const clientId = oauthClientId.trim() || storedClientIds[host];
-    if (!clientId) {
-      toast.error("Please enter an OAuth Client ID");
-      return;
-    }
-    // Persist client_id for next time
-    if (oauthClientId.trim()) {
-      await setUiState(`oauth_client_id_${host}`, clientId).catch(() => {});
-      setStoredClientIds((prev) => ({ ...prev, [host]: clientId }));
-    }
-    setOauthWaiting(true);
+    setOauthWaitingHost(host);
     try {
-      await startOAuthFlow(provider, clientId, profileId);
+      await startOAuthFlow(provider, profileId);
       setTokenStatus((prev) => ({ ...prev, [host]: true }));
-      setOauthHost(null);
-      setOauthClientId("");
       toast.success("Authenticated via OAuth");
       loadForgeStatus().catch(() => {});
     } catch (e) {
       const msg = String(e);
       if (!msg.includes("cancelled")) toast.error(msg);
     } finally {
-      setOauthWaiting(false);
+      setOauthWaitingHost(null);
     }
   };
 
   const handleCancelOAuth = async () => {
     await cancelOAuthFlow().catch(() => {});
-    setOauthWaiting(false);
-    setOauthHost(null);
-    setOauthClientId("");
+    setOauthWaitingHost(null);
   };
 
   return (
@@ -553,11 +529,10 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
       </p>
 
       <div className="space-y-2">
-        {FORGE_HOSTS.map(({ host, label, oauthProvider, oauthDocsUrl, tokenDocsUrl, placeholder, scopes }) => {
+        {FORGE_HOSTS.map(({ host, label, oauthProvider, hasOAuth, tokenDocsUrl, placeholder, scopes }) => {
           const hasToken = tokenStatus[host] ?? false;
           const isEditing = editingHost === host;
-          const isOAuth = oauthHost === host;
-          const savedClientId = storedClientIds[host];
+          const isWaiting = oauthWaitingHost === host;
 
           return (
             <div key={host} className="rounded-md border border-border px-3 py-2.5 space-y-2">
@@ -573,7 +548,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
               </div>
 
               {/* OAuth waiting state */}
-              {oauthWaiting && isOAuth ? (
+              {isWaiting ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 rounded bg-secondary px-2.5 py-2 text-caption text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
@@ -585,53 +560,6 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                   >
                     Cancel
                   </button>
-                </div>
-              ) : isOAuth ? (
-                /* OAuth client ID input */
-                <div className="space-y-2">
-                  <div className="rounded bg-secondary px-2.5 py-2 text-caption text-muted-foreground space-y-0.5">
-                    <p className="font-medium">OAuth App required</p>
-                    <p>
-                      Register an OAuth App on{" "}
-                      <button
-                        type="button"
-                        onClick={() => openUrl(oauthDocsUrl)}
-                        className="text-primary hover:underline"
-                      >
-                        {label}
-                      </button>
-                      {" "}with callback URL{" "}
-                      <span className="font-mono text-foreground">http://localhost</span>.
-                    </p>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder={savedClientId ? `Using saved: ${savedClientId.slice(0, 8)}...` : "OAuth Client ID"}
-                    value={oauthClientId}
-                    onChange={(e) => setOauthClientId(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleOAuth(host, oauthProvider);
-                      if (e.key === "Escape") { setOauthHost(null); setOauthClientId(""); }
-                    }}
-                    autoFocus
-                    className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => handleOAuth(host, oauthProvider)}
-                      disabled={!oauthClientId.trim() && !savedClientId}
-                      className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
-                    >
-                      <LogIn className="h-3 w-3" />
-                      Login with {label}
-                    </button>
-                    <button
-                      onClick={() => { setOauthHost(null); setOauthClientId(""); }}
-                      className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
                 </div>
               ) : isEditing ? (
                 /* Manual PAT input */
@@ -689,16 +617,18 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                 </div>
               ) : hasToken ? (
                 <div className="flex gap-1.5">
-                  <button
-                    onClick={() => { setOauthHost(host); setOauthClientId(""); }}
-                    className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                  >
-                    <LogIn className="h-3 w-3" />
-                    Re-login
-                  </button>
+                  {hasOAuth && (
+                    <button
+                      onClick={() => handleOAuth(host, oauthProvider)}
+                      className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                    >
+                      <LogIn className="h-3 w-3" />
+                      Re-login
+                    </button>
+                  )}
                   <button
                     onClick={() => { setEditingHost(host); setTokenInput(""); }}
-                    className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                    className="flex-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                   >
                     Replace
                   </button>
@@ -709,10 +639,10 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                     Remove
                   </button>
                 </div>
-              ) : (
+              ) : hasOAuth ? (
                 <div className="flex gap-1.5">
                   <button
-                    onClick={() => { setOauthHost(host); setOauthClientId(""); }}
+                    onClick={() => handleOAuth(host, oauthProvider)}
                     className="flex-1 flex items-center justify-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px"
                   >
                     <LogIn className="h-3 w-3" />
@@ -724,6 +654,16 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                   >
                     <KeyRound className="h-3 w-3" />
                     Manual token
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => { setEditingHost(host); setTokenInput(""); }}
+                    className="flex-1 flex items-center gap-1 justify-center rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px"
+                  >
+                    <KeyRound className="h-3 w-3" />
+                    Add token
                   </button>
                 </div>
               )}
