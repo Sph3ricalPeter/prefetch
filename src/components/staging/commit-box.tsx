@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, KeyRound, Globe } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
+import { useProfileStore } from "@/stores/profile-store";
 import { gravatarUrl } from "@/lib/gravatar";
+import { getTokenInfo } from "@/lib/commands";
+import type { TokenInfo } from "@/lib/commands";
 import {
   Tooltip,
   TooltipTrigger,
@@ -56,6 +59,8 @@ export function CommitBox() {
   const isLoading = useRepoStore((s) => s.isLoading);
   const gitIdentity = useRepoStore((s) => s.gitIdentity);
   const avatarUrl = useGravatar(gitIdentity?.email);
+  const forgeStatus = useRepoStore((s) => s.forgeStatus);
+  const activeProfile = useProfileStore((s) => s.activeProfile);
   const conflictState = useRepoStore((s) => s.conflictState);
   const rebaseProgress = useRepoStore((s) => s.rebaseProgress);
   const continueOperation = useRepoStore((s) => s.continueOperation);
@@ -65,6 +70,31 @@ export function CommitBox() {
   const headCommitId = useRepoStore((s) => s.headCommitId);
 
   const [showDescription, setShowDescription] = useState(false);
+  const [authInfoResult, setAuthInfoResult] = useState<{
+    profileId: string;
+    host: string;
+    info: TokenInfo | null;
+  } | null>(null);
+
+  // Load auth info when profile + forge are available
+  useEffect(() => {
+    const pid = activeProfile?.id;
+    const host = forgeStatus?.host;
+    if (!pid || !host) return;
+    let cancelled = false;
+    getTokenInfo(pid, host)
+      .then((info) => { if (!cancelled) setAuthInfoResult({ profileId: pid, host, info }); })
+      .catch(() => { if (!cancelled) setAuthInfoResult({ profileId: pid, host, info: null }); });
+    return () => { cancelled = true; };
+  }, [activeProfile?.id, forgeStatus?.host]);
+
+  // Derive authInfo — null when profile/host don't match the last fetch
+  const authInfo =
+    authInfoResult &&
+    authInfoResult.profileId === activeProfile?.id &&
+    authInfoResult.host === forgeStatus?.host
+      ? authInfoResult.info
+      : null;
 
   // Track the last rebase step key so we only auto-fill on step transitions
   const prevStepRef = useRef<string | null>(null);
@@ -159,9 +189,20 @@ export function CommitBox() {
               <span className="text-xs text-muted-foreground truncate">
                 {gitIdentity.name}
               </span>
-              <span className="ml-auto rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
-                {gitIdentity.source}
-              </span>
+              {authInfo ? (
+                <span className="ml-auto flex items-center gap-1 rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
+                  {authInfo.token_type === "oauth" ? (
+                    <Globe className="h-2.5 w-2.5" />
+                  ) : (
+                    <KeyRound className="h-2.5 w-2.5" />
+                  )}
+                  {authInfo.token_type === "oauth" ? "OAuth" : "PAT"}
+                </span>
+              ) : (
+                <span className="ml-auto rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
+                  {gitIdentity.source}
+                </span>
+              )}
             </div>
           </TooltipTrigger>
           <TooltipContent side="top" align="start">
@@ -171,6 +212,12 @@ export function CommitBox() {
               <p className="text-dim text-label">
                 Source: {SOURCE_LABELS[gitIdentity.source] ?? gitIdentity.source}
               </p>
+              {authInfo && (
+                <p className="text-dim text-label">
+                  Auth: {authInfo.token_type === "oauth" ? "OAuth" : "PAT"}
+                  {authInfo.username ? ` (@${authInfo.username})` : ""}
+                </p>
+              )}
             </div>
           </TooltipContent>
         </Tooltip>
