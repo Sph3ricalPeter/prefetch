@@ -288,7 +288,7 @@ export function GraphPanel() {
         ) : showConflictEditor && selectedFilePath ? (
           <ConflictEditor filePath={selectedFilePath} />
         ) : showDiff ? (
-          <div className="h-full overflow-auto">
+          <div className="h-full overflow-hidden">
             <DiffViewer
               diff={activeDiff}
               filePath={selectedFilePath ?? activeDiff.path}

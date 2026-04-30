@@ -1,6 +1,7 @@
 import type { FileDiff } from "@/types/git";
 import { DiffViewerReadonly } from "@/components/staging/diff-viewer-readonly";
 import { DiffViewerInteractive } from "@/components/staging/diff-viewer-interactive";
+import { DiffToolbar } from "@/components/staging/diff-toolbar";
 
 interface DiffViewerProps {
   diff: FileDiff;
@@ -31,9 +32,14 @@ export function DiffViewer({ diff, filePath, mode = "readonly" }: DiffViewerProp
 
   const resolvedPath = filePath ?? diff.path;
 
-  if (mode === "interactive") {
-    return <DiffViewerInteractive diff={diff} filePath={resolvedPath} />;
-  }
-
-  return <DiffViewerReadonly diff={diff} filePath={resolvedPath} />;
+  return (
+    <div className="flex flex-col h-full">
+      <DiffToolbar />
+      {mode === "interactive" ? (
+        <DiffViewerInteractive diff={diff} filePath={resolvedPath} />
+      ) : (
+        <DiffViewerReadonly diff={diff} filePath={resolvedPath} />
+      )}
+    </div>
+  );
 }

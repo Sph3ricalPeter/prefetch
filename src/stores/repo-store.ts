@@ -245,6 +245,11 @@ interface RepoState {
   /** Global file view mode — persisted across all views */
   fileViewMode: "flat" | "tree";
 
+  /** Diff view layout — unified (interleaved) or side-by-side (split columns) */
+  diffViewMode: "unified" | "side-by-side";
+  /** Whether long lines wrap in the diff viewer */
+  diffWrapLines: boolean;
+
   // Actions
   openRepository: (path: string) => Promise<void>;
   loadRecentRepos: () => Promise<void>;
@@ -338,6 +343,9 @@ interface RepoState {
   // UI settings (persisted)
   setFileViewMode: (mode: "flat" | "tree") => void;
   loadFileViewMode: () => Promise<void>;
+  setDiffViewMode: (mode: "unified" | "side-by-side") => void;
+  setDiffWrapLines: (on: boolean) => void;
+  loadDiffPreferences: () => Promise<void>;
 
   // LFS actions
   loadLfsInfo: (full?: boolean) => Promise<void>;
@@ -400,6 +408,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   forgeStatus: null,
   prCache: {},
   fileViewMode: "flat",
+  diffViewMode: "unified",
+  diffWrapLines: true,
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
@@ -1675,6 +1685,35 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
     } catch {
       // DB might not be ready yet — use default
+    }
+  },
+
+  setDiffViewMode: (mode) => {
+    set({ diffViewMode: mode });
+    setUiState("diff_view_mode", mode).catch(() => {});
+  },
+
+  setDiffWrapLines: (on) => {
+    set({ diffWrapLines: on });
+    setUiState("diff_wrap_lines", on ? "true" : "false").catch(() => {});
+  },
+
+  loadDiffPreferences: async () => {
+    try {
+      const [viewMode, wrapLines] = await Promise.all([
+        getUiState("diff_view_mode"),
+        getUiState("diff_wrap_lines"),
+      ]);
+      const update: Partial<RepoState> = {};
+      if (viewMode === "unified" || viewMode === "side-by-side") {
+        update.diffViewMode = viewMode;
+      }
+      if (wrapLines === "true" || wrapLines === "false") {
+        update.diffWrapLines = wrapLines === "true";
+      }
+      if (Object.keys(update).length > 0) set(update);
+    } catch {
+      // DB might not be ready yet — use defaults
     }
   },
 
