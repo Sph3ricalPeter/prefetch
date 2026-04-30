@@ -167,6 +167,66 @@ pub fn delete_token_for_profile(profile_id: Option<&str>, host: &str) -> Result<
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()), // already gone — not an error
         Err(e) => Err(AppError::Other(format!("Failed to delete token: {e}"))),
+    }?;
+    // Also remove any associated refresh token
+    delete_refresh_token_for_profile(profile_id, host).ok();
+    Ok(())
+}
+
+// ── Refresh token storage ───────────────────────────────────────────────────
+
+const REFRESH_SERVICE: &str = "prefetch-refresh";
+
+fn refresh_keyring_user(profile_id: Option<&str>, host: &str) -> String {
+    match profile_id {
+        Some(id) => format!("{id}/{host}"),
+        None => host.to_string(),
+    }
+}
+
+pub fn save_refresh_token_for_profile(
+    profile_id: Option<&str>,
+    host: &str,
+    token: &str,
+) -> Result<(), AppError> {
+    let user = refresh_keyring_user(profile_id, host);
+    keyring::Entry::new(REFRESH_SERVICE, &user)
+        .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?
+        .set_password(token)
+        .map_err(|e| AppError::Other(format!("Failed to save refresh token: {e}")))
+}
+
+pub fn load_refresh_token_for_profile(
+    profile_id: Option<&str>,
+    host: &str,
+) -> Result<Option<String>, AppError> {
+    if let Some(pid) = profile_id {
+        let user = refresh_keyring_user(Some(pid), host);
+        let entry = keyring::Entry::new(REFRESH_SERVICE, &user)
+            .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
+        match entry.get_password() {
+            Ok(token) => return Ok(Some(token)),
+            Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(AppError::Other(format!("Failed to load refresh token: {e}"))),
+        }
+    }
+    let entry = keyring::Entry::new(REFRESH_SERVICE, host)
+        .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
+    match entry.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(AppError::Other(format!("Failed to load refresh token: {e}"))),
+    }
+}
+
+fn delete_refresh_token_for_profile(profile_id: Option<&str>, host: &str) -> Result<(), AppError> {
+    let user = refresh_keyring_user(profile_id, host);
+    let entry = keyring::Entry::new(REFRESH_SERVICE, &user)
+        .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(AppError::Other(format!("Failed to delete refresh token: {e}"))),
     }
 }
 

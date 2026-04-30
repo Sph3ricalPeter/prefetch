@@ -330,8 +330,11 @@ pub async fn start_flow(
     // Exchange code for token
     let token = exchange_code(&config, &auth_code, &redirect_uri, &verifier).await?;
 
-    // Store token via existing keychain infrastructure
-    forge::save_token_for_profile(profile_id.as_deref(), host, &token)?;
+    // Store tokens via existing keychain infrastructure
+    forge::save_token_for_profile(profile_id.as_deref(), host, &token.access_token)?;
+    if let Some(ref rt) = token.refresh_token {
+        forge::save_refresh_token_for_profile(profile_id.as_deref(), host, rt)?;
+    }
 
     info!(host, "OAuth token stored successfully");
 
@@ -465,13 +468,18 @@ p {{ color: #a1a1aa; }}
 
 // ── Token exchange ──────────────────────────────────────────────────────────
 
+struct OAuthTokens {
+    access_token: String,
+    refresh_token: Option<String>,
+}
+
 /// Exchange the authorization code for an access token.
 async fn exchange_code(
     config: &OAuthConfig,
     code: &str,
     redirect_uri: &str,
     verifier: &str,
-) -> Result<String, AppError> {
+) -> Result<OAuthTokens, AppError> {
     let client = reqwest::Client::new();
 
     let mut params = vec![
@@ -511,9 +519,7 @@ async fn exchange_code(
         .await
         .map_err(|e| AppError::Other(format!("Failed to parse token response: {e}")))?;
 
-    // GitHub returns { access_token, token_type, scope }
-    // GitLab returns { access_token, token_type, expires_in, refresh_token, ... }
-    let token = json["access_token"]
+    let access_token = json["access_token"]
         .as_str()
         .ok_or_else(|| {
             let error = json["error"].as_str().unwrap_or("unknown");
@@ -522,7 +528,82 @@ async fn exchange_code(
         })?
         .to_string();
 
-    Ok(token)
+    let refresh_token = json["refresh_token"].as_str().map(|s| s.to_string());
+
+    Ok(OAuthTokens {
+        access_token,
+        refresh_token,
+    })
+}
+
+// ── Token refresh ──────────────────────────────────────────────────────────
+
+/// Refresh a GitLab OAuth access token using the stored refresh token.
+/// Updates both access and refresh tokens in the keychain on success.
+/// Does nothing for GitHub (tokens don't expire) or when no refresh token exists.
+pub async fn try_refresh_gitlab_token(
+    path: &str,
+    profile_id: Option<&str>,
+) -> Result<(), AppError> {
+    let config = forge::detect_forge(path).ok().flatten();
+    let config = match config {
+        Some(c) if c.kind == crate::git::types::ForgeKind::GitLab => c,
+        _ => return Ok(()),
+    };
+
+    let refresh_token = match forge::load_refresh_token_for_profile(profile_id, &config.host)? {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+
+    let gitlab = OAuthConfig::gitlab();
+    let client = reqwest::Client::new();
+
+    let mut params = vec![
+        ("client_id", gitlab.client_id.as_str()),
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token.as_str()),
+    ];
+    let secret_ref;
+    if let Some(ref secret) = gitlab.client_secret {
+        secret_ref = secret.clone();
+        params.push(("client_secret", &secret_ref));
+    }
+
+    let resp = client
+        .post(&gitlab.token_url)
+        .header("Accept", "application/json")
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("Token refresh request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        warn!(status = %status, body = %body, "GitLab token refresh failed");
+        return Err(AppError::Other(format!(
+            "Token refresh failed (HTTP {status}): {body}"
+        )));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Other(format!("Failed to parse refresh response: {e}")))?;
+
+    let new_access = json["access_token"]
+        .as_str()
+        .ok_or_else(|| AppError::Other("No access_token in refresh response".to_string()))?;
+
+    forge::save_token_for_profile(profile_id, &config.host, new_access)?;
+
+    if let Some(new_refresh) = json["refresh_token"].as_str() {
+        forge::save_refresh_token_for_profile(profile_id, &config.host, new_refresh)?;
+    }
+
+    info!("GitLab access token refreshed successfully");
+    Ok(())
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
