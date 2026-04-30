@@ -36,6 +36,50 @@ pub fn get_profile_id(state: &State<'_, AppState>) -> Option<String> {
         .and_then(|guard| guard.as_ref().map(|p| p.profile_id.clone()))
 }
 
+/// Validate that a user-supplied relative path resolves to a location inside
+/// the repository root. Returns the canonical absolute path on success.
+///
+/// Uses `dunce::canonicalize` on Windows to avoid `\\?\` UNC prefix issues.
+/// For paths that don't exist on disk yet (new files), we canonicalize the
+/// parent directory and verify the result stays within the repo.
+pub fn validate_repo_path(repo_root: &str, file_path: &str) -> Result<String, AppError> {
+    let repo_canonical = dunce::canonicalize(repo_root)
+        .map_err(|e| AppError::Other(format!("Cannot resolve repo path: {e}")))?;
+    let joined = std::path::Path::new(&repo_canonical).join(file_path);
+
+    // Try canonicalizing the full path (works when the file exists).
+    // If it doesn't exist, canonicalize the parent and append the file name.
+    let resolved = if joined.exists() {
+        dunce::canonicalize(&joined)
+            .map_err(|e| AppError::Other(format!("Cannot resolve path: {e}")))?
+    } else if let Some(parent) = joined.parent() {
+        let parent_canon = dunce::canonicalize(parent)
+            .map_err(|e| AppError::Other(format!("Cannot resolve parent path: {e}")))?;
+        match joined.file_name() {
+            Some(name) => parent_canon.join(name),
+            None => {
+                return Err(AppError::PathTraversal(file_path.to_string()));
+            }
+        }
+    } else {
+        return Err(AppError::PathTraversal(file_path.to_string()));
+    };
+
+    if !resolved.starts_with(&repo_canonical) {
+        return Err(AppError::PathTraversal(file_path.to_string()));
+    }
+
+    Ok(resolved.to_string_lossy().to_string())
+}
+
+/// Validate a batch of relative paths. Returns early on the first invalid path.
+pub fn validate_repo_paths(repo_root: &str, paths: &[String]) -> Result<(), AppError> {
+    for p in paths {
+        validate_repo_path(repo_root, p)?;
+    }
+    Ok(())
+}
+
 /// Run a blocking closure on the tokio thread pool instead of the main thread.
 ///
 /// Tauri v2 runs sync `#[tauri::command]` functions on the main thread, which

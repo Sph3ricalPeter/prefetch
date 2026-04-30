@@ -1,5 +1,5 @@
 use crate::background::BackgroundFetcher;
-use crate::commands::helpers::{get_profile_env, get_profile_id, offload, repo_path};
+use crate::commands::helpers::{get_profile_env, get_profile_id, offload, repo_path, validate_repo_path, validate_repo_paths};
 use crate::error::AppError;
 use crate::events;
 use crate::git::{
@@ -99,6 +99,7 @@ pub async fn get_file_diff(
     state: State<'_, AppState>,
 ) -> Result<FileDiff, AppError> {
     let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
     offload(move || repository::get_file_diff(&path, &file_path, staged)).await
 }
 
@@ -118,6 +119,7 @@ pub async fn get_commit_file_diff(
     state: State<'_, AppState>,
 ) -> Result<FileDiff, AppError> {
     let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
     offload(move || repository::get_commit_file_diff(&path, &commit_id, &file_path)).await
 }
 
@@ -144,6 +146,7 @@ pub async fn get_stash_file_diff(
     state: State<'_, AppState>,
 ) -> Result<FileDiff, AppError> {
     let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
     offload(move || repository::get_stash_file_diff(&path, index, &file_path)).await
 }
 
@@ -298,6 +301,7 @@ pub async fn resolve_conflict_ours(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
     offload(move || repository::resolve_ours(&path, &file_path)).await
 }
 
@@ -307,12 +311,14 @@ pub async fn resolve_conflict_theirs(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
     offload(move || repository::resolve_theirs(&path, &file_path)).await
 }
 
 #[tauri::command]
 pub async fn discard_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
+    validate_repo_paths(&repo, &paths)?;
     offload(move || repository::discard_files(&repo, &paths)).await
 }
 
@@ -325,12 +331,14 @@ pub async fn discard_all_changes(state: State<'_, AppState>) -> Result<(), AppEr
 #[tauri::command]
 pub async fn stage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
+    validate_repo_paths(&repo, &paths)?;
     offload(move || repository::stage_files(&repo, &paths)).await
 }
 
 #[tauri::command]
 pub async fn unstage_files(paths: Vec<String>, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
+    validate_repo_paths(&repo, &paths)?;
     offload(move || repository::unstage_files(&repo, &paths)).await
 }
 
@@ -352,6 +360,7 @@ pub async fn get_conflict_contents(
     state: State<'_, AppState>,
 ) -> Result<types::ConflictContents, AppError> {
     let repo = repo_path(&state)?;
+    validate_repo_path(&repo, &file_path)?;
     offload(move || repository::get_conflict_contents(&repo, &file_path)).await
 }
 
@@ -362,6 +371,7 @@ pub async fn resolve_conflict_manual(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
+    validate_repo_path(&repo, &file_path)?;
     offload(move || repository::resolve_conflict_with_content(&repo, &file_path, &content)).await
 }
 
@@ -580,6 +590,7 @@ pub async fn stash_push_files(
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
     let path = repo_path(&state)?;
+    validate_repo_paths(&path, &paths)?;
     let env = get_profile_env(&state);
     offload(move || repository::stash_push_files(&path, &paths, message.as_deref(), &env)).await
 }
@@ -587,8 +598,7 @@ pub async fn stash_push_files(
 #[tauri::command]
 pub async fn show_in_folder(file_path: String, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
-    let abs_path = std::path::Path::new(&repo).join(&file_path);
-    let abs_str = abs_path.to_string_lossy().to_string();
+    let abs_str = validate_repo_path(&repo, &file_path)?;
     offload(move || repository::show_in_folder(&abs_str)).await
 }
 
@@ -598,15 +608,13 @@ pub async fn open_in_default_editor(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
-    let abs_path = std::path::Path::new(&repo).join(&file_path);
-    let abs_str = abs_path.to_string_lossy().to_string();
+    let abs_str = validate_repo_path(&repo, &file_path)?;
     offload(move || repository::open_in_default_editor(&abs_str)).await
 }
 
 #[tauri::command]
 pub async fn delete_file(file_path: String, state: State<'_, AppState>) -> Result<(), AppError> {
     let repo = repo_path(&state)?;
-    let abs_path = std::path::Path::new(&repo).join(&file_path);
-    let abs_str = abs_path.to_string_lossy().to_string();
+    let abs_str = validate_repo_path(&repo, &file_path)?;
     offload(move || repository::delete_file(&abs_str)).await
 }

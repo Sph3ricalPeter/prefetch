@@ -3252,6 +3252,7 @@ name = "prefetch"
 version = "0.6.8"
 dependencies = [
  "anyhow",
+ "dunce",
  "git2",
  "keyring",
  "notify",

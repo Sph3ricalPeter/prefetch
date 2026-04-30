@@ -32,6 +32,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"], def
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 urlencoding = "2"
 open = "5"
+dunce = "1"
 tracing = { version = "0.1", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt", "ansi"] }
 tracing-chrome = "0.7"

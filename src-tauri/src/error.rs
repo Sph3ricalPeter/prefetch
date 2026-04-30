@@ -8,6 +8,9 @@ pub enum AppError {
     #[error("[hook:{hook_name}] {output}")]
     HookFailed { hook_name: String, output: String },
 
+    #[error("Path traversal blocked: {0}")]
+    PathTraversal(String),
+
     #[error("{0}")]
     Other(String),
 }
