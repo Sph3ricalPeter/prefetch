@@ -48,21 +48,36 @@ pub fn validate_repo_path(repo_root: &str, file_path: &str) -> Result<String, Ap
     let joined = std::path::Path::new(&repo_canonical).join(file_path);
 
     // Try canonicalizing the full path (works when the file exists).
-    // If it doesn't exist, canonicalize the parent and append the file name.
+    // If it doesn't exist (deleted files/folders), walk up the directory tree
+    // until we find an existing ancestor, canonicalize it, and append the rest.
     let resolved = if joined.exists() {
         dunce::canonicalize(&joined)
             .map_err(|e| AppError::Other(format!("Cannot resolve path: {e}")))?
-    } else if let Some(parent) = joined.parent() {
-        let parent_canon = dunce::canonicalize(parent)
-            .map_err(|e| AppError::Other(format!("Cannot resolve parent path: {e}")))?;
-        match joined.file_name() {
-            Some(name) => parent_canon.join(name),
-            None => {
-                return Err(AppError::PathTraversal(file_path.to_string()));
+    } else {
+        // Collect path components that don't exist on disk, walking upward.
+        let mut missing_parts = Vec::new();
+        let mut ancestor = joined.as_path();
+        loop {
+            if ancestor.exists() {
+                break;
+            }
+            match (ancestor.file_name(), ancestor.parent()) {
+                (Some(name), Some(parent)) => {
+                    missing_parts.push(name.to_os_string());
+                    ancestor = parent;
+                }
+                _ => {
+                    return Err(AppError::PathTraversal(file_path.to_string()));
+                }
             }
         }
-    } else {
-        return Err(AppError::PathTraversal(file_path.to_string()));
+        let mut result = dunce::canonicalize(ancestor)
+            .map_err(|e| AppError::Other(format!("Cannot resolve ancestor path: {e}")))?;
+        // Re-append the missing components in the correct order.
+        for part in missing_parts.into_iter().rev() {
+            result.push(part);
+        }
+        result
     };
 
     if !resolved.starts_with(&repo_canonical) {
@@ -78,6 +93,20 @@ pub fn validate_repo_paths(repo_root: &str, paths: &[String]) -> Result<(), AppE
         validate_repo_path(repo_root, p)?;
     }
     Ok(())
+}
+
+/// Refresh GitLab OAuth tokens if needed before git write operations.
+/// Silently succeeds when no refresh is needed or on failure (the git
+/// command will use whatever token is in the keychain).
+pub async fn refresh_forge_token(state: &State<'_, AppState>) {
+    let path = match repo_path(state) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let pid = get_profile_id(state);
+    crate::oauth::try_refresh_gitlab_token(&path, pid.as_deref())
+        .await
+        .ok();
 }
 
 /// Run a blocking closure on the tokio thread pool instead of the main thread.

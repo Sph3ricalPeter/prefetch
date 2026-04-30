@@ -1,5 +1,5 @@
 use crate::background::BackgroundFetcher;
-use crate::commands::helpers::{get_profile_env, get_profile_id, offload, repo_path, validate_repo_path, validate_repo_paths};
+use crate::commands::helpers::{get_profile_env, get_profile_id, offload, refresh_forge_token, repo_path, validate_repo_path, validate_repo_paths};
 use crate::error::AppError;
 use crate::events;
 use crate::git::{
@@ -216,6 +216,7 @@ pub async fn fetch_repo(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, AppError> {
+    refresh_forge_token(&state).await;
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
     let pid = get_profile_id(&state);
@@ -237,6 +238,7 @@ pub async fn pull_repo(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, AppError> {
+    refresh_forge_token(&state).await;
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
     let pid = get_profile_id(&state);
@@ -258,6 +260,7 @@ pub async fn push_repo(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, AppError> {
+    refresh_forge_token(&state).await;
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
     let pid = get_profile_id(&state);
@@ -279,6 +282,7 @@ pub async fn force_push_repo(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, AppError> {
+    refresh_forge_token(&state).await;
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
     let pid = get_profile_id(&state);
@@ -437,6 +441,7 @@ pub async fn delete_tag(name: String, state: State<'_, AppState>) -> Result<Stri
 
 #[tauri::command]
 pub async fn push_tag(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    refresh_forge_token(&state).await;
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
     let pid = get_profile_id(&state);
