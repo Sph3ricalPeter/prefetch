@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import type { FileDiff, DiffHunk, DiffLine } from "@/types/git";
 import { highlightLines, detectLang } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
+import { useThemeStore } from "@/stores/theme-store";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
 import type { ThemedToken } from "shiki";
 
@@ -19,6 +20,7 @@ export function DiffViewerReadonly({ diff, filePath }: DiffViewerReadonlyProps) 
   const scrollRef = useRef<HTMLDivElement>(null);
   const diffViewMode = useRepoStore((s) => s.diffViewMode);
   const diffWrapLines = useRepoStore((s) => s.diffWrapLines);
+  const shikiThemeId = useThemeStore((s) => s.codeTheme.shikiTheme.name);
 
   const lang = useMemo(() => detectLang(filePath), [filePath]);
 
@@ -33,7 +35,7 @@ export function DiffViewerReadonly({ diff, filePath }: DiffViewerReadonlyProps) 
         const hunk = diff.hunks[hi];
         const code = hunk.lines.map((l) => l.content).join("\n");
         try {
-          const tokens = await highlightLines(code, lang);
+          const tokens = await highlightLines(code, lang, shikiThemeId);
           if (!cancelled) {
             result.set(hi, tokens);
           }
@@ -49,7 +51,7 @@ export function DiffViewerReadonly({ diff, filePath }: DiffViewerReadonlyProps) 
 
     highlight();
     return () => { cancelled = true; };
-  }, [diff, lang]);
+  }, [diff, lang, shikiThemeId]);
 
   if (diff.is_binary) {
     return (
@@ -121,9 +123,9 @@ interface UnifiedDiffLineProps {
 function UnifiedDiffLine({ line, tokens, wrapClass }: UnifiedDiffLineProps) {
   const bgClass =
     line.origin === "+"
-      ? "bg-green-500/10"
+      ? "bg-[var(--diff-added-bg)]"
       : line.origin === "-"
-        ? "bg-red-500/10"
+        ? "bg-[var(--diff-removed-bg)]"
         : "";
 
   const originClass =
@@ -179,7 +181,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass }: SideBySideHunkProps) {
           {/* Left (old) */}
           <div className={`flex flex-1 min-w-0 overflow-hidden border-r border-border ${
             pair.left
-              ? pair.left.origin === "-" ? "bg-red-500/10" : ""
+              ? pair.left.origin === "-" ? "bg-[var(--diff-removed-bg)]" : ""
               : pair.right?.origin === "+" ? "bg-secondary/30" : ""
           }`}>
             {pair.left ? (
@@ -210,7 +212,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass }: SideBySideHunkProps) {
           {/* Right (new) */}
           <div className={`flex flex-1 min-w-0 overflow-hidden ${
             pair.right
-              ? pair.right.origin === "+" ? "bg-green-500/10" : ""
+              ? pair.right.origin === "+" ? "bg-[var(--diff-added-bg)]" : ""
               : pair.left?.origin === "-" ? "bg-secondary/30" : ""
           }`}>
             {pair.right ? (

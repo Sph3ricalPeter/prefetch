@@ -7,6 +7,7 @@ import type {
   TagInfo,
 } from "@/types/git";
 import { gravatarUrl } from "@/lib/gravatar";
+import { useThemeStore } from "@/stores/theme-store";
 
 const ROW_HEIGHT = 32;
 const LANE_WIDTH = 20;
@@ -28,14 +29,8 @@ const FONT_SANS = '"Inter", system-ui, sans-serif';
 const SIZE_LABEL = 11;
 const SIZE_BODY = 12;
 
-// Design system grays — must match index.css tokens (240° cool hue)
-const COLOR_FG       = "hsl(240 5% 96%)";  // --foreground
-const COLOR_MUTED    = "hsl(240 5% 65%)";  // --muted-foreground
-const COLOR_DIM      = "hsl(240 5% 45%)";  // --dim (tertiary)
-const COLOR_FAINT    = "hsl(240 5% 30%)";  // --faint (ghost)
-const BG_SELECTED    = "hsl(240 6% 10%)";  // --secondary
-const BG_HOVER       = "hsl(240 6% 8%)";   // between bg and secondary
-const BG_PAGE        = "hsl(240 6% 3.9%)"; // --background (for clearing behind separator labels)
+// Graph colors are now provided by the active app theme via useThemeStore().
+// See AppThemeGraph in src/lib/themes.ts for the shape.
 
 // ── Hierarchical branch color system ──────────────────────────────
 // Root branches (main/dev) get fixed base colors. Known prefixes
@@ -563,6 +558,7 @@ export function CommitGraphCanvas({
   onCommitContextMenu,
   onStashContextMenu,
 }: CommitGraphCanvasProps) {
+  const graphColors = useThemeStore((s) => s.appTheme.graph);
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredRowRef = useRef<number | null>(null);
@@ -700,10 +696,10 @@ export function CommitGraphCanvas({
     }
     const isDetached = !branches.some((b) => b.is_head && !b.is_remote);
     const highlightColor = isDetached
-      ? COLOR_MUTED
-      : (idx >= 0 && commits[idx] ? (commitColorMap.get(commits[idx].id) ?? laneColor(commits[idx].lane)) : COLOR_FG);
+      ? graphColors.muted
+      : (idx >= 0 && commits[idx] ? (commitColorMap.get(commits[idx].id) ?? laneColor(commits[idx].lane)) : graphColors.fg);
     return { row: idx >= 0 ? idx + rowOffset : -1, isDetached, highlightColor };
-  }, [headCommitId, commits, branches, rowOffset, commitColorMap]);
+  }, [headCommitId, commits, branches, rowOffset, commitColorMap, graphColors]);
 
   // Pre-compute selected row to avoid O(n) findIndex inside draw() on every frame
   const selectedRowIdx = useMemo(() => {
@@ -774,7 +770,7 @@ export function CommitGraphCanvas({
         ctx.fill();
         ctx.globalAlpha = 1;
       } else {
-        ctx.fillStyle = BG_SELECTED;
+        ctx.fillStyle = graphColors.bgSelected;
         ctx.beginPath();
         ctx.roundRect(SCROLLBAR_PAD, selectedRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
         ctx.fill();
@@ -783,7 +779,7 @@ export function CommitGraphCanvas({
 
     // WIP row selected highlight
     if (isWipSelected && hasWip && 0 >= firstVisibleRow && 0 <= lastVisibleRow) {
-      ctx.fillStyle = BG_SELECTED;
+      ctx.fillStyle = graphColors.bgSelected;
       ctx.beginPath();
       ctx.roundRect(SCROLLBAR_PAD, 0 * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
       ctx.fill();
@@ -805,7 +801,7 @@ export function CommitGraphCanvas({
         ctx.fill();
         ctx.globalAlpha = 1;
       } else {
-        ctx.fillStyle = BG_HOVER;
+        ctx.fillStyle = graphColors.bgHover;
         ctx.beginPath();
         ctx.roundRect(SCROLLBAR_PAD, hoveredRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
         ctx.fill();
@@ -883,18 +879,18 @@ export function CommitGraphCanvas({
       }
 
       // Empty circle node (subtle fill when selected)
-      ctx.strokeStyle = COLOR_DIM;
+      ctx.strokeStyle = graphColors.dim;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(nodeX, wipY, NODE_RADIUS, 0, Math.PI * 2);
       if (isWipSelected) {
-        ctx.fillStyle = COLOR_FAINT;
+        ctx.fillStyle = graphColors.faint;
         ctx.fill();
       }
       ctx.stroke();
 
       // File edit icon + change count
-      const wipTextColor = COLOR_MUTED;
+      const wipTextColor = graphColors.muted;
       const wipIconW = drawFileEditIcon(ctx, textOffset, wipY, wipTextColor);
       ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
       ctx.fillStyle = wipTextColor;
@@ -995,7 +991,7 @@ export function CommitGraphCanvas({
           if (usedWidth > maxLabelArea - 40) {
             const remaining = totalLabels - labelCount;
             if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", COLOR_DIM);
+              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", graphColors.dim);
             }
             break;
           }
@@ -1020,12 +1016,12 @@ export function CommitGraphCanvas({
           if (usedWidth > maxLabelArea - 40) {
             const remaining = totalLabels - labelCount;
             if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", COLOR_DIM);
+              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", graphColors.dim);
             }
             break;
           }
           const tagPillX = labelX + usedWidth;
-          const w = drawPill(ctx, tagPillX, y, tag.name, "rgba(255,255,255,0.08)", COLOR_DIM, drawTagIcon);
+          const w = drawPill(ctx, tagPillX, y, tag.name, "rgba(255,255,255,0.08)", graphColors.dim, drawTagIcon);
           hitAreas.push({
             x: tagPillX,
             y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
@@ -1044,7 +1040,7 @@ export function CommitGraphCanvas({
           if (usedWidth > maxLabelArea - 40) {
             const remaining = totalLabels - labelCount;
             if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", COLOR_DIM);
+              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", graphColors.dim);
             }
             break;
           }
@@ -1052,7 +1048,7 @@ export function CommitGraphCanvas({
           // Truncate stash message for the pill
           ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
           const stashLabel = truncateText(ctx, stash.message, 120);
-          const w = drawPill(ctx, stashPillX, y, stashLabel, "rgba(255,255,255,0.08)", COLOR_DIM, drawStashIcon);
+          const w = drawPill(ctx, stashPillX, y, stashLabel, "rgba(255,255,255,0.08)", graphColors.dim, drawStashIcon);
           hitAreas.push({
             x: stashPillX,
             y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
@@ -1072,7 +1068,7 @@ export function CommitGraphCanvas({
 
       // Short SHA
       ctx.font = `${SIZE_LABEL}px ${FONT_SANS}`;
-      ctx.fillStyle = COLOR_DIM;
+      ctx.fillStyle = graphColors.dim;
       ctx.fillText(commit.short_id, labelX, y);
 
       // Message + Body (Change 3: reclaimed right space, Change 6: inline body)
@@ -1083,7 +1079,7 @@ export function CommitGraphCanvas({
       const fullMsgWidth = ctx.measureText(commit.message).width;
       if (fullMsgWidth <= totalAvailWidth) {
         // Message fits — draw it, then body if available
-        ctx.fillStyle = COLOR_FG;
+        ctx.fillStyle = graphColors.fg;
         ctx.fillText(commit.message, msgX, y);
 
         // Change 6: Draw body text after message
@@ -1092,7 +1088,7 @@ export function CommitGraphCanvas({
           const bodyX = msgX + fullMsgWidth + bodyGap;
           const bodyAvail = totalAvailWidth - fullMsgWidth - bodyGap;
           if (bodyAvail > 30) {
-            ctx.fillStyle = COLOR_DIM;
+            ctx.fillStyle = graphColors.dim;
             const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
             const bodyText = truncateText(ctx, bodyOneLine, bodyAvail);
             ctx.fillText(bodyText, bodyX, y);
@@ -1111,7 +1107,7 @@ export function CommitGraphCanvas({
         }
       } else {
         // Message alone overflows — truncate it, no room for body
-        ctx.fillStyle = COLOR_FG;
+        ctx.fillStyle = graphColors.fg;
         ctx.fillText(truncateText(ctx, commit.message, totalAvailWidth), msgX, y);
       }
 
@@ -1125,7 +1121,7 @@ export function CommitGraphCanvas({
       const separatorY = row * ROW_HEIGHT - scrollTop; // top edge of the first row in group
 
       // Faint horizontal line across the text area
-      ctx.strokeStyle = COLOR_FAINT;
+      ctx.strokeStyle = graphColors.faint;
       ctx.globalAlpha = 0.4;
       ctx.lineWidth = 0.5;
       ctx.beginPath();
@@ -1141,18 +1137,18 @@ export function CommitGraphCanvas({
       const labelDrawX = width - labelWidth - 16;
 
       // Clear a gap in the line behind the label
-      ctx.fillStyle = BG_PAGE;
+      ctx.fillStyle = graphColors.bgPage;
       ctx.fillRect(labelDrawX - labelPad, separatorY - 7, labelWidth + labelPad * 2, 14);
 
       // Draw the label text
-      ctx.fillStyle = COLOR_FAINT;
+      ctx.fillStyle = graphColors.faint;
       ctx.fillText(label, labelDrawX, separatorY);
     }
 
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries]);
+  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);

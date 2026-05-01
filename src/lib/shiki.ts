@@ -1,4 +1,5 @@
 import { createHighlighter, type Highlighter, type ThemedToken } from "shiki";
+import { CODE_THEMES } from "@/lib/themes";
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 
@@ -40,30 +41,6 @@ const LANG_MAP: Record<string, string> = {
   svelte: "svelte",
 };
 
-// Custom dark theme matching the app's design tokens
-const PREFETCH_DARK = {
-  name: "prefetch-dark",
-  type: "dark" as const,
-  colors: {
-    "editor.background": "#09090b",
-    "editor.foreground": "#a1a1aa",
-  },
-  tokenColors: [
-    { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#52525b" } },
-    { scope: ["string", "string.quoted"], settings: { foreground: "#34d399" } },
-    { scope: ["constant.numeric", "constant.language"], settings: { foreground: "#c084fc" } },
-    { scope: ["keyword", "storage.type", "storage.modifier"], settings: { foreground: "#c084fc" } },
-    { scope: ["entity.name.function", "support.function"], settings: { foreground: "#60a5fa" } },
-    { scope: ["entity.name.type", "support.type", "support.class"], settings: { foreground: "#fbbf24" } },
-    { scope: ["variable", "variable.other"], settings: { foreground: "#e4e4e7" } },
-    { scope: ["entity.name.tag"], settings: { foreground: "#f87171" } },
-    { scope: ["entity.other.attribute-name"], settings: { foreground: "#c084fc" } },
-    { scope: ["punctuation"], settings: { foreground: "#71717a" } },
-    { scope: ["meta.object-literal.key"], settings: { foreground: "#93c5fd" } },
-    { scope: ["constant.other"], settings: { foreground: "#2dd4bf" } },
-  ],
-};
-
 // Common languages to preload
 const PRELOADED_LANGS = [
   "typescript",
@@ -84,34 +61,28 @@ const PRELOADED_LANGS = [
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      themes: [PREFETCH_DARK],
+      themes: CODE_THEMES.map((t) => t.shikiTheme),
       langs: [...PRELOADED_LANGS],
     });
   }
   return highlighterPromise;
 }
 
-/**
- * Detect shiki language ID from a file path extension.
- * Returns undefined if unknown (caller should fall back to plaintext).
- */
 export function detectLang(filePath: string): string | undefined {
   const ext = filePath.split(".").pop()?.toLowerCase();
   if (!ext) return undefined;
   return LANG_MAP[ext];
 }
 
-/**
- * Tokenize code lines with Shiki for syntax highlighting.
- * Returns an array of token arrays — one per line.
- */
 export async function highlightLines(
   code: string,
   lang: string | undefined,
+  themeId?: string,
 ): Promise<ThemedToken[][]> {
   const hl = await getHighlighter();
 
   const resolvedLang = lang ?? "text";
+  const resolvedTheme = themeId ?? "prefetch-dark";
 
   // Dynamically load language if not preloaded
   const loadedLangs = hl.getLoadedLanguages();
@@ -119,15 +90,17 @@ export async function highlightLines(
     try {
       await hl.loadLanguage(resolvedLang as never);
     } catch {
-      // Fallback to plain text if language not available
+      const fallbackFg =
+        CODE_THEMES.find((t) => t.shikiTheme.name === resolvedTheme)
+          ?.shikiTheme.colors["editor.foreground"] ?? "#a1a1aa";
       return code.split("\n").map((line) => [
-        { content: line, color: "#a1a1aa", offset: 0 },
+        { content: line, color: fallbackFg, offset: 0 },
       ]);
     }
   }
 
   return hl.codeToTokensBase(code, {
     lang: resolvedLang as never,
-    theme: "prefetch-dark" as never,
+    theme: resolvedTheme as never,
   });
 }

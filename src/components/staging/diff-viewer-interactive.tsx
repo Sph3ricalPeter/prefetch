@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileDiff, DiffHunk, DiffLine } from "@/types/git";
 import { highlightLines, detectLang } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
+import { useThemeStore } from "@/stores/theme-store";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
 import { Plus, CheckSquare } from "lucide-react";
 import type { ThemedToken } from "shiki";
@@ -32,6 +33,7 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
   const stageLines = useRepoStore((s) => s.stageLines);
   const diffViewMode = useRepoStore((s) => s.diffViewMode);
   const diffWrapLines = useRepoStore((s) => s.diffWrapLines);
+  const shikiThemeId = useThemeStore((s) => s.codeTheme.shikiTheme.name);
 
   const lang = useMemo(() => detectLang(filePath), [filePath]);
 
@@ -43,7 +45,7 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
       for (let hi = 0; hi < diff.hunks.length; hi++) {
         const code = diff.hunks[hi].lines.map((l) => l.content).join("\n");
         try {
-          const tokens = await highlightLines(code, lang);
+          const tokens = await highlightLines(code, lang, shikiThemeId);
           if (!cancelled) result.set(hi, tokens);
         } catch { /* fallback: no highlighting */ }
       }
@@ -51,7 +53,7 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
     }
     highlight();
     return () => { cancelled = true; };
-  }, [diff, lang]);
+  }, [diff, lang, shikiThemeId]);
 
   const toggleLine = useCallback((hunkIdx: number, lineIdx: number) => {
     setSelectedLines((prev) => {
@@ -241,9 +243,9 @@ function InteractiveDiffLine({
   const bgClass = isSelected
     ? "bg-blue-500/15"
     : line.origin === "+"
-      ? "bg-green-500/10"
+      ? "bg-[var(--diff-added-bg)]"
       : line.origin === "-"
-        ? "bg-red-500/10"
+        ? "bg-[var(--diff-removed-bg)]"
         : "";
 
   const originClass =
@@ -443,9 +445,9 @@ function SideBySideCell({
     : isSelected
       ? "bg-blue-500/15"
       : line.origin === "+"
-        ? "bg-green-500/10"
+        ? "bg-[var(--diff-added-bg)]"
         : line.origin === "-"
-          ? "bg-red-500/10"
+          ? "bg-[var(--diff-removed-bg)]"
           : "";
 
   return (
