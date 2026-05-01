@@ -207,7 +207,11 @@ pub fn load_refresh_token_for_profile(
         match entry.get_password() {
             Ok(token) => return Ok(Some(token)),
             Err(keyring::Error::NoEntry) => {}
-            Err(e) => return Err(AppError::Other(format!("Failed to load refresh token: {e}"))),
+            Err(e) => {
+                return Err(AppError::Other(format!(
+                    "Failed to load refresh token: {e}"
+                )))
+            }
         }
     }
     let entry = keyring::Entry::new(REFRESH_SERVICE, host)
@@ -215,7 +219,9 @@ pub fn load_refresh_token_for_profile(
     match entry.get_password() {
         Ok(token) => Ok(Some(token)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(AppError::Other(format!("Failed to load refresh token: {e}"))),
+        Err(e) => Err(AppError::Other(format!(
+            "Failed to load refresh token: {e}"
+        ))),
     }
 }
 
@@ -226,7 +232,9 @@ fn delete_refresh_token_for_profile(profile_id: Option<&str>, host: &str) -> Res
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(AppError::Other(format!("Failed to delete refresh token: {e}"))),
+        Err(e) => Err(AppError::Other(format!(
+            "Failed to delete refresh token: {e}"
+        ))),
     }
 }
 

@@ -8,6 +8,8 @@ src-tauri/target/
 # Environment
 .env
 .env.*
+!.env.example
+!src-tauri/.env.example
 
 # IDE
 .vscode/
