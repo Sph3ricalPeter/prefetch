@@ -463,12 +463,25 @@ export function GraphPanel() {
       {remoteCheckoutPending && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-sm">
-            <p className="text-sm text-foreground mb-1">
-              A local &apos;{remoteCheckoutPending.localName}&apos; already exists.
-            </p>
-            <p className="text-xs text-muted-foreground mb-4">
-              Choose how to handle the remote branch checkout.
-            </p>
+            {remoteCheckoutPending.alreadyOnLocal ? (
+              <>
+                <p className="text-sm text-foreground mb-1">
+                  Reset &apos;{remoteCheckoutPending.localName}&apos; to match &apos;{remoteCheckoutPending.remoteName}&apos;?
+                </p>
+                <p className="text-xs text-muted-foreground mb-4">
+                  This will hard-reset your local branch to the remote version. Any uncommitted changes will be lost.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-foreground mb-1">
+                  A local &apos;{remoteCheckoutPending.localName}&apos; already exists.
+                </p>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Choose how to handle the remote branch checkout.
+                </p>
+              </>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 onClick={cancelRemoteCheckout}
@@ -476,15 +489,17 @@ export function GraphPanel() {
               >
                 Cancel
               </button>
-              <button
-                onClick={() => {
-                  cancelRemoteCheckout();
-                  checkout(remoteCheckoutPending.localName);
-                }}
-                className="rounded bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-accent transition-colors"
-              >
-                Switch to Local
-              </button>
+              {!remoteCheckoutPending.alreadyOnLocal && (
+                <button
+                  onClick={() => {
+                    cancelRemoteCheckout();
+                    checkout(remoteCheckoutPending.localName);
+                  }}
+                  className="rounded bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-accent transition-colors"
+                >
+                  Switch to Local
+                </button>
+              )}
               <button
                 onClick={resetLocalToRemote}
                 className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"

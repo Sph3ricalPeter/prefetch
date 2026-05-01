@@ -221,6 +221,7 @@ interface RepoState {
   remoteCheckoutPending: {
     localName: string;
     remoteName: string;
+    alreadyOnLocal: boolean;
   } | null;
 
   // Undo
@@ -540,26 +541,36 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     const { currentBranch, branches, fileStatuses } = get();
     if (name === currentBranch) return;
 
-    // If working tree is dirty, prompt before switching
-    if (fileStatuses.length > 0) {
-      set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
-      return;
-    }
-
     // Smart remote branch handling: strip origin/ and check for local counterpart
     const remotePrefix = name.match(/^([^/]+)\//)?.[0];
     const isRemote = branches.some((b) => b.is_remote && b.name === name);
 
+    // If target is the remote counterpart of the current branch, always show
+    // the reset dialog — even with a dirty tree (reset --hard handles it)
     if (isRemote && remotePrefix) {
       const localName = name.slice(remotePrefix.length);
+
+      if (localName === currentBranch) {
+        set({ remoteCheckoutPending: { localName, remoteName: name, alreadyOnLocal: true } });
+        return;
+      }
+
       const localExists = branches.some((b) => !b.is_remote && b.name === localName);
 
       if (localExists) {
-        // Local branch exists — show dialog to choose between switch or reset
-        set({ remoteCheckoutPending: { localName, remoteName: name } });
+        if (fileStatuses.length > 0) {
+          set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
+          return;
+        }
+        set({ remoteCheckoutPending: { localName, remoteName: name, alreadyOnLocal: false } });
         return;
       }
-      // No local branch — checkout by local name, git will auto-create tracking branch
+
+      // No local branch — if dirty, prompt; otherwise auto-create tracking branch
+      if (fileStatuses.length > 0) {
+        set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
+        return;
+      }
       set({ isLoading: true, error: null });
       try {
         await checkoutBranch(localName);
@@ -570,6 +581,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         set({ isLoading: false });
         toast.error(errorMessage(e));
       }
+      return;
+    }
+
+    // If working tree is dirty, prompt before switching
+    if (fileStatuses.length > 0) {
+      set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
       return;
     }
 
@@ -842,6 +859,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   stage: async (paths) => {
+    set({ isLoading: true });
     try {
       await stageFilesCmd(paths);
       await get().loadStatus();
@@ -849,131 +867,156 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const { selectedFilePath } = get();
       if (selectedFilePath && paths.includes(selectedFilePath)) {
         const diff = await getFileDiff(selectedFilePath, true);
-        set({ activeDiff: diff, selectedFileStaged: true });
+        set({ activeDiff: diff, selectedFileStaged: true, isLoading: false });
+      } else {
+        set({ isLoading: false });
       }
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   unstage: async (paths) => {
+    set({ isLoading: true });
     try {
       await unstageFilesCmd(paths);
       await get().loadStatus();
       const { selectedFilePath } = get();
       if (selectedFilePath && paths.includes(selectedFilePath)) {
         const diff = await getFileDiff(selectedFilePath, false);
-        set({ activeDiff: diff, selectedFileStaged: false });
+        set({ activeDiff: diff, selectedFileStaged: false, isLoading: false });
+      } else {
+        set({ isLoading: false });
       }
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   discard: async (paths) => {
+    set({ isLoading: true });
     try {
-      await discardFilesCmd(paths);
-      await get().loadStatus();
-      // Clear diff if the discarded file was being viewed
+      // Clear diff immediately so it disappears at the same time as the file list
       const { selectedFilePath } = get();
       if (selectedFilePath && paths.includes(selectedFilePath)) {
-        set({ activeDiff: null, selectedFilePath: null });
+        set({ activeDiff: null, selectedFilePath: null, isLoading: true });
       }
+      await discardFilesCmd(paths);
+      await get().loadStatus();
+      set({ isLoading: false });
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   discardAll: async () => {
+    set({ isLoading: true });
     try {
       await discardAllCmd();
       await get().loadStatus();
-      set({ activeDiff: null, selectedFilePath: null });
+      set({ activeDiff: null, selectedFilePath: null, isLoading: false });
       toast.success("All changes discarded");
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   resolveOurs: async (filePath) => {
+    set({ isLoading: true });
     try {
       await resolveOursCmd(filePath);
       await get().loadStatus();
+      set({ isLoading: false });
       toast.success(`Resolved ${filePath.split("/").pop()} — kept ours`);
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   resolveTheirs: async (filePath) => {
+    set({ isLoading: true });
     try {
       await resolveTheirsCmd(filePath);
       await get().loadStatus();
+      set({ isLoading: false });
       toast.success(`Resolved ${filePath.split("/").pop()} — kept theirs`);
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   stageHunk: async (filePath, hunkIndex) => {
+    set({ isLoading: true });
     try {
       const diff = get().activeDiff;
-      if (!diff) return;
+      if (!diff) { set({ isLoading: false }); return; }
       const patch = generateHunkPatch(diff, hunkIndex);
-      if (!patch.trim()) return;
+      if (!patch.trim()) { set({ isLoading: false }); return; }
       await stagePatchCmd(patch);
       await get().loadStatus();
-      // Reload the diff (it changed after staging)
       const newDiff = await getFileDiff(filePath, false);
-      set({ activeDiff: newDiff });
+      set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   unstageHunk: async (filePath, hunkIndex) => {
+    set({ isLoading: true });
     try {
       const diff = get().activeDiff;
-      if (!diff) return;
+      if (!diff) { set({ isLoading: false }); return; }
       const patch = generateHunkPatch(diff, hunkIndex);
-      if (!patch.trim()) return;
+      if (!patch.trim()) { set({ isLoading: false }); return; }
       await unstagePatchCmd(patch);
       await get().loadStatus();
       const newDiff = await getFileDiff(filePath, true);
-      set({ activeDiff: newDiff });
+      set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   stageLines: async (filePath, selections) => {
+    set({ isLoading: true });
     try {
       const diff = get().activeDiff;
-      if (!diff) return;
+      if (!diff) { set({ isLoading: false }); return; }
       const lineKeys = new Set(selections.map((s) => `${s.hunkIndex}:${s.lineIndex}`));
       const patch = generatePatch(diff, lineKeys);
-      if (!patch.trim()) return;
+      if (!patch.trim()) { set({ isLoading: false }); return; }
       await stagePatchCmd(patch);
       await get().loadStatus();
       const newDiff = await getFileDiff(filePath, false);
-      set({ activeDiff: newDiff });
+      set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
   unstageLines: async (filePath, selections) => {
+    set({ isLoading: true });
     try {
       const diff = get().activeDiff;
-      if (!diff) return;
+      if (!diff) { set({ isLoading: false }); return; }
       const lineKeys = new Set(selections.map((s) => `${s.hunkIndex}:${s.lineIndex}`));
       const patch = generatePatch(diff, lineKeys);
-      if (!patch.trim()) return;
+      if (!patch.trim()) { set({ isLoading: false }); return; }
       await unstagePatchCmd(patch);
       await get().loadStatus();
       const newDiff = await getFileDiff(filePath, true);
-      set({ activeDiff: newDiff });
+      set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
@@ -988,12 +1031,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   resolveConflictManual: async (filePath, content) => {
+    set({ isLoading: true });
     try {
       await resolveConflictManualCmd(filePath, content);
       await get().loadStatus();
-      set({ conflictContents: null, activeDiff: null, selectedFilePath: null });
+      set({ conflictContents: null, activeDiff: null, selectedFilePath: null, isLoading: false });
       toast.success(`Resolved ${filePath.split("/").pop()}`);
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },
@@ -1416,12 +1461,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   deleteFile: async (filePath) => {
+    set({ isLoading: true });
     try {
       await deleteFileCmd(filePath);
       const statuses = await getFileStatus();
-      set({ fileStatuses: statuses });
+      set({ fileStatuses: statuses, isLoading: false });
       toast.success(`Deleted ${filePath.split("/").pop()}`);
     } catch (e) {
+      set({ isLoading: false });
       toast.error(errorMessage(e));
     }
   },

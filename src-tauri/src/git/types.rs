@@ -77,6 +77,12 @@ pub struct FileDiff {
     pub path: String,
     pub hunks: Vec<DiffHunk>,
     pub is_binary: bool,
+    /// True when the diff exceeded MAX_DIFF_LINES and was truncated.
+    #[serde(default)]
+    pub is_truncated: bool,
+    /// Total line count before truncation (0 when not truncated).
+    #[serde(default)]
+    pub total_lines: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -82,6 +82,8 @@ export interface FileDiff {
   path: string;
   hunks: DiffHunk[];
   is_binary: boolean;
+  is_truncated: boolean;
+  total_lines: number;
 }
 
 export interface DiffHunk {

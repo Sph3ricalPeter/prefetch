@@ -34,6 +34,7 @@ function matchesLfsPattern(filePath: string, pattern: string): boolean {
 export function FileList() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
+  const selectedFileStaged = useRepoStore((s) => s.selectedFileStaged);
   const lfsInfo = useRepoStore((s) => s.lfsInfo);
   const stage = useRepoStore((s) => s.stage);
   const unstage = useRepoStore((s) => s.unstage);
@@ -121,19 +122,26 @@ export function FileList() {
         return;
       }
 
-      if (e.shiftKey && lastClickedRef.current && lastClickedRef.current.section === section) {
-        // Shift+click: range select within the same section
-        const lastIdx = sectionFiles.findIndex((f) => f.path === lastClickedRef.current!.path);
-        const curIdx = sectionFiles.findIndex((f) => f.path === file.path);
-        if (lastIdx >= 0 && curIdx >= 0) {
-          const from = Math.min(lastIdx, curIdx);
-          const to = Math.max(lastIdx, curIdx);
-          const rangePaths = sectionFiles.slice(from, to + 1).map((f) => f.path);
-          setMultiSelected((prev) => {
-            const next = new Set(prev);
-            for (const p of rangePaths) next.add(p);
-            return next;
-          });
+      if (e.shiftKey && lastClickedRef.current) {
+        if (lastClickedRef.current.section === section) {
+          // Shift+click: range select within the same section
+          const lastIdx = sectionFiles.findIndex((f) => f.path === lastClickedRef.current!.path);
+          const curIdx = sectionFiles.findIndex((f) => f.path === file.path);
+          if (lastIdx >= 0 && curIdx >= 0) {
+            const from = Math.min(lastIdx, curIdx);
+            const to = Math.max(lastIdx, curIdx);
+            const rangePaths = sectionFiles.slice(from, to + 1).map((f) => f.path);
+            setMultiSelected((prev) => {
+              const next = new Set(prev);
+              for (const p of rangePaths) next.add(p);
+              return next;
+            });
+            return;
+          }
+        } else {
+          // Shift+click in a different section: start fresh anchor here
+          setMultiSelected(new Set([file.path]));
+          lastClickedRef.current = { path: file.path, section };
           return;
         }
       }
@@ -224,7 +232,7 @@ export function FileList() {
         {viewMode === "tree" ? (
           <FileTreeView
             files={unstaged}
-            selectedFilePath={selectedFilePath}
+            selectedFilePath={selectedFilePath && !selectedFileStaged ? selectedFilePath : null}
             multiSelected={multiSelected}
             isLfsFile={isLfsFile}
             onSelect={(path, e) => handleFileClick(e, unstaged.find((f) => f.path === path)!, false, unstaged)}
@@ -243,7 +251,7 @@ export function FileList() {
             <FileRow
               key={`unstaged-${file.path}`}
               file={file}
-              isSelected={selectedFilePath === file.path}
+              isSelected={selectedFilePath === file.path && !selectedFileStaged}
               isMultiSelected={multiSelected.has(file.path)}
               isLfs={!!isLfsFile(file.path)}
               onSelect={(e) => handleFileClick(e, file, false, unstaged)}
@@ -279,7 +287,7 @@ export function FileList() {
         {viewMode === "tree" ? (
           <FileTreeView
             files={staged}
-            selectedFilePath={selectedFilePath}
+            selectedFilePath={selectedFilePath && selectedFileStaged ? selectedFilePath : null}
             multiSelected={multiSelected}
             isLfsFile={isLfsFile}
             onSelect={(path, e) => handleFileClick(e, staged.find((f) => f.path === path)!, true, staged)}
@@ -298,7 +306,7 @@ export function FileList() {
             <FileRow
               key={`staged-${file.path}`}
               file={file}
-              isSelected={selectedFilePath === file.path}
+              isSelected={selectedFilePath === file.path && selectedFileStaged}
               isMultiSelected={multiSelected.has(file.path)}
               isLfs={!!isLfsFile(file.path)}
               onSelect={(e) => handleFileClick(e, file, true, staged)}

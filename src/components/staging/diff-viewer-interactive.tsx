@@ -37,19 +37,27 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
 
   const lang = useMemo(() => detectLang(filePath), [filePath]);
 
-  // Highlight all hunks
+  // Highlight hunks progressively — render each as it finishes
   useEffect(() => {
     let cancelled = false;
+    setTokensByHunk(new Map());
     async function highlight() {
-      const result = new Map<number, ThemedToken[][]>();
       for (let hi = 0; hi < diff.hunks.length; hi++) {
-        const code = diff.hunks[hi].lines.map((l) => l.content).join("\n");
+        if (cancelled) return;
+        const hunk = diff.hunks[hi];
+        if (hunk.lines.length > 5000 || !lang) continue;
+        const code = hunk.lines.map((l) => l.content).join("\n");
         try {
           const tokens = await highlightLines(code, lang, shikiThemeId);
-          if (!cancelled) result.set(hi, tokens);
+          if (!cancelled) {
+            setTokensByHunk((prev) => {
+              const next = new Map(prev);
+              next.set(hi, tokens);
+              return next;
+            });
+          }
         } catch { /* fallback: no highlighting */ }
       }
-      if (!cancelled) setTokensByHunk(result);
     }
     highlight();
     return () => { cancelled = true; };
