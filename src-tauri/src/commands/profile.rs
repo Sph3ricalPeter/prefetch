@@ -32,7 +32,12 @@ pub fn set_active_profile(
             .lock()
             .map_err(|e| AppError::Other(e.to_string()))?;
         *fetcher_lock = None; // Drop old fetcher
-        *fetcher_lock = Some(BackgroundFetcher::start(path, app, profile));
+        *fetcher_lock = Some(BackgroundFetcher::start(
+            path,
+            app,
+            profile,
+            std::sync::Arc::clone(&state.fetch_interval_secs),
+        ));
     }
 
     Ok(())

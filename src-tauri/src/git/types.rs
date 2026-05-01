@@ -55,6 +55,9 @@ pub struct BranchInfo {
     pub ahead: Option<u32>,
     /// Commits behind upstream (None if no upstream configured or remote branch).
     pub behind: Option<u32>,
+    /// True when HEAD is an ancestor of this branch — rebasing would be a
+    /// simple fast-forward (pointer move, no replay).
+    pub can_fast_forward: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

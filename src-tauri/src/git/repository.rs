@@ -317,11 +317,14 @@ fn get_all_divergence(path: &str) -> HashMap<String, (u32, u32)> {
 pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
     let repo = Repository::open(path)?;
 
-    // Get current HEAD branch name for is_head detection
-    let head_name = repo
-        .head()
-        .ok()
+    // Get current HEAD ref for is_head detection and fast-forward checks
+    let head_ref = repo.head().ok();
+    let head_name = head_ref
+        .as_ref()
         .and_then(|h| h.shorthand().map(|s| s.to_string()));
+    let head_oid = head_ref
+        .and_then(|h| h.peel_to_commit().ok())
+        .map(|c| c.id());
 
     // Batch-fetch ahead/behind for all local branches (single subprocess)
     let divergence = get_all_divergence(path);
@@ -344,9 +347,9 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
                 continue;
             }
 
-            let commit_id = branch
-                .get()
-                .peel_to_commit()
+            let branch_commit = branch.get().peel_to_commit().ok();
+            let commit_id = branch_commit
+                .as_ref()
                 .map(|c| c.id().to_string())
                 .unwrap_or_default();
 
@@ -364,6 +367,20 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
                 (None, None)
             };
 
+            // A rebase onto this branch would be a fast-forward if HEAD is
+            // an ancestor of this branch's tip (i.e. the branch is strictly
+            // ahead of HEAD with no divergence).
+            let can_fast_forward = if !is_remote && !is_head {
+                match (head_oid, branch_commit.as_ref()) {
+                    (Some(head), Some(bc)) => {
+                        repo.graph_descendant_of(bc.id(), head).unwrap_or(false)
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            };
+
             branches.push(BranchInfo {
                 name,
                 is_remote,
@@ -372,6 +389,7 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
                 short_commit_id,
                 ahead,
                 behind,
+                can_fast_forward,
             });
         }
     }
@@ -2123,7 +2141,7 @@ pub fn rebase_onto(
     target: &str,
     extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
-    run_git(path, &["rebase", target], extra_env)
+    run_git(path, &["rebase", "--autostash", target], extra_env)
 }
 
 /// Merge a target branch (or commit) into the current branch.

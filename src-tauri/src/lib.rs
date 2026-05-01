@@ -8,7 +8,8 @@ mod tracing_setup;
 mod watcher;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
 
 use background::BackgroundFetcher;
 use git::profile::ActiveProfile;
@@ -23,6 +24,10 @@ pub struct AppState {
     /// In-memory cache of branch name → PR info (or None if no open PR).
     /// Cleared on each successful fetch/pull.
     pub pr_cache: Mutex<HashMap<String, Option<PrInfo>>>,
+    /// Background-fetch interval in seconds. 0 = disabled.
+    /// Shared with the running BackgroundFetcher thread so writes here take
+    /// effect within one second without restarting the fetcher.
+    pub fetch_interval_secs: Arc<AtomicU64>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -62,6 +67,9 @@ pub fn run() {
             watcher: Mutex::new(None),
             fetcher: Mutex::new(None),
             pr_cache: Mutex::new(HashMap::new()),
+            // Default 5-minute interval; frontend overrides this from the
+            // saved setting (auto_fetch_interval) shortly after startup.
+            fetch_interval_secs: Arc::new(AtomicU64::new(300)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
@@ -146,6 +154,7 @@ pub fn run() {
             commands::lfs::lfs_track_pattern,
             commands::lfs::lfs_untrack_pattern,
             commands::lfs::lfs_prune_objects,
+            commands::repo::set_fetch_interval,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

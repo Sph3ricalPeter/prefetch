@@ -62,7 +62,12 @@ pub fn open_repo(
             .lock()
             .map_err(|e| AppError::Other(e.to_string()))?;
         *fetcher_lock = None;
-        *fetcher_lock = Some(BackgroundFetcher::start(path.clone(), app, profile));
+        *fetcher_lock = Some(BackgroundFetcher::start(
+            path.clone(),
+            app,
+            profile,
+            std::sync::Arc::clone(&state.fetch_interval_secs),
+        ));
     }
 
     debug!(repo_name = %name, "repo opened");
@@ -625,4 +630,15 @@ pub async fn delete_file(file_path: String, state: State<'_, AppState>) -> Resul
     let repo = repo_path(&state)?;
     let abs_str = validate_repo_path(&repo, &file_path)?;
     offload(move || repository::delete_file(&abs_str)).await
+}
+
+/// Update the background-fetch interval at runtime.
+/// Writes to the `Arc<AtomicU64>` shared with the running fetcher thread so
+/// the change takes effect within one second without restarting anything.
+/// Pass 0 to disable auto-fetch.
+#[tauri::command]
+pub fn set_fetch_interval(seconds: u64, state: State<'_, AppState>) {
+    state
+        .fetch_interval_secs
+        .store(seconds, std::sync::atomic::Ordering::Relaxed);
 }

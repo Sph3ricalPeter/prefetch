@@ -340,7 +340,9 @@ function buildBranchContextMenuItems(
       onClick: () => mergeInto(branch.name),
     });
     items.push({
-      label: `Rebase ${currentBranch} onto ${branch.name}`,
+      label: branch.can_fast_forward
+        ? `Fast-forward ${currentBranch} to ${branch.name}`
+        : `Rebase ${currentBranch} onto ${branch.name}`,
       onClick: () => rebaseOnto(branch.name),
     });
     items.push({ separator: true });

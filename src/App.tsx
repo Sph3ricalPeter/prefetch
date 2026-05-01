@@ -6,7 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { useThemeStore } from "@/stores/theme-store";
-import { initDatabase } from "@/lib/database";
+import { initDatabase, getUiState } from "@/lib/database";
+import { setFetchInterval as setFetchIntervalCmd } from "@/lib/commands";
 import { UpdateChecker } from "@/components/update-checker";
 
 /**
@@ -20,6 +21,7 @@ function DatabaseInit() {
   const loadRecentRepos = useRepoStore((s) => s.loadRecentRepos);
   const loadFileViewMode = useRepoStore((s) => s.loadFileViewMode);
   const loadDiffPreferences = useRepoStore((s) => s.loadDiffPreferences);
+  const openRepository = useRepoStore((s) => s.openRepository);
   const loadProfiles = useProfileStore((s) => s.loadProfiles);
   const restoreActiveProfile = useProfileStore((s) => s.restoreActiveProfile);
   const loadThemePreferences = useThemeStore((s) => s.loadThemePreferences);
@@ -37,7 +39,22 @@ function DatabaseInit() {
           loadDiffPreferences(),
           loadThemePreferences(),
           loadProfiles().then(() => restoreActiveProfile()),
+          // Restore saved auto-fetch interval so the Rust fetcher uses
+          // the user's preference from the first tick, not just the default.
+          getUiState("auto_fetch_interval").then((v) => {
+            if (v !== null) setFetchIntervalCmd(parseInt(v, 10)).catch(() => {});
+          }).catch(() => {}),
         ]);
+
+        // After all prefs + profiles are loaded, auto-reopen the last repo
+        // if the user enabled the setting.
+        if (!cancelled) {
+          const autoReopen = await getUiState("auto_reopen_last_repo").catch(() => null);
+          if (autoReopen === "true") {
+            const lastPath = await getUiState("last_repo_path").catch(() => null);
+            if (lastPath) openRepository(lastPath);
+          }
+        }
       } catch {
         if (!cancelled && retries < 3) {
           retries++;
@@ -47,7 +64,7 @@ function DatabaseInit() {
     };
     tryInit();
     return () => { cancelled = true; };
-  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadThemePreferences, loadProfiles, restoreActiveProfile]);
+  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadThemePreferences, loadProfiles, restoreActiveProfile, openRepository]);
 
   return null;
 }
