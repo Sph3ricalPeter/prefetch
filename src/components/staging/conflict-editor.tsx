@@ -20,9 +20,10 @@ import {
   type Range,
 } from "@codemirror/state";
 import { defaultKeymap } from "@codemirror/commands";
-import { prefetchDarkTheme } from "@/lib/codemirror-theme";
+import { getCodemirrorTheme } from "@/lib/codemirror-theme";
 import { getLanguageExtension } from "@/lib/codemirror-lang";
 import { highlightLines, detectLang } from "@/lib/shiki";
+import { useThemeStore } from "@/stores/theme-store";
 import {
   computeDiffRegions,
   buildOutputWithSources,
@@ -891,6 +892,9 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const loadConflictContents = useRepoStore((s) => s.loadConflictContents);
   const rebaseProgress = useRepoStore((s) => s.rebaseProgress);
   const conflictState = useRepoStore((s) => s.conflictState);
+  const codeTheme = useThemeStore((s) => s.codeTheme);
+  const shikiThemeId = codeTheme.shikiTheme.name;
+  const cmThemeData = codeTheme.codemirror;
 
   const [saving, setSaving] = useState(false);
   const [selections, setSelections] = useState<Map<number, ChunkSelection>>(
@@ -961,8 +965,8 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     async function highlight() {
       try {
         const [ot, tt] = await Promise.all([
-          highlightLines(conflictContents!.ours, lang),
-          highlightLines(conflictContents!.theirs, lang),
+          highlightLines(conflictContents!.ours, lang, shikiThemeId),
+          highlightLines(conflictContents!.theirs, lang, shikiThemeId),
         ]);
         if (!cancelled) {
           setOursTokens(ot);
@@ -976,7 +980,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     return () => {
       cancelled = true;
     };
-  }, [conflictContents, lang]);
+  }, [conflictContents, lang, shikiThemeId]);
 
   // ── CodeMirror language ext ────────────────────────────────
 
@@ -997,7 +1001,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     if (!outputRef.current || !conflictContents) return;
 
     const exts: Extension[] = [
-      prefetchDarkTheme,
+      getCodemirrorTheme(cmThemeData, codeTheme.shikiTheme.type === "dark"),
       keymap.of(defaultKeymap),
       EditorView.lineWrapping,
       referenceDocField,

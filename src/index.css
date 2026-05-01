@@ -77,18 +77,18 @@
   }
 }
 
-/* Noise texture overlay — subtle grain on the dark background */
+/* Noise texture overlay — subtle grain, opacity set by theme */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 9999;
   pointer-events: none;
-  opacity: 0.025;
+  opacity: var(--noise-opacity, 0.025);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Dark scrollbar styling — thin, consistent everywhere */
+/* Scrollbar styling — thin, theme-aware */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -99,12 +99,12 @@ body::before {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(240 5% 16%);
+  background: var(--scrollbar-thumb, hsl(240 5% 16%));
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(240 5% 24%);
+  background: var(--scrollbar-thumb-hover, hsl(240 5% 24%));
 }
 
 ::-webkit-scrollbar-corner {
@@ -159,6 +159,23 @@ body::before {
 
   /* Font families */
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Diff colors — overridden by code theme at runtime */
+  --diff-added-bg: rgba(34, 197, 94, 0.1);
+  --diff-added-line-bg: rgba(34, 197, 94, 0.15);
+  --diff-removed-bg: rgba(239, 68, 68, 0.1);
+  --diff-removed-line-bg: rgba(239, 68, 68, 0.15);
+  --diff-hunk-header-bg: hsl(240 6% 10%);
+  --diff-hunk-header-fg: hsl(240 5% 45%);
+  --diff-gutter-bg: hsl(240 6% 3.9%);
+  --diff-gutter-fg: hsl(240 5% 30%);
+
+  /* Scrollbar — overridden by app theme at runtime */
+  --scrollbar-thumb: hsl(240 5% 16%);
+  --scrollbar-thumb-hover: hsl(240 5% 24%);
+
+  /* Noise overlay — overridden by app theme at runtime */
+  --noise-opacity: 0.025;
 
   /* Type scale — 4 levels (caption, label, body=text-xs, title=text-sm) */
   --text-caption: 9px;

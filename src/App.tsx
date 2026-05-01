@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
+import { useThemeStore } from "@/stores/theme-store";
 import { initDatabase } from "@/lib/database";
 import { UpdateChecker } from "@/components/update-checker";
 
@@ -21,6 +22,7 @@ function DatabaseInit() {
   const loadDiffPreferences = useRepoStore((s) => s.loadDiffPreferences);
   const loadProfiles = useProfileStore((s) => s.loadProfiles);
   const restoreActiveProfile = useProfileStore((s) => s.restoreActiveProfile);
+  const loadThemePreferences = useThemeStore((s) => s.loadThemePreferences);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +35,7 @@ function DatabaseInit() {
           loadRecentRepos(),
           loadFileViewMode(),
           loadDiffPreferences(),
+          loadThemePreferences(),
           loadProfiles().then(() => restoreActiveProfile()),
         ]);
       } catch {
@@ -44,7 +47,7 @@ function DatabaseInit() {
     };
     tryInit();
     return () => { cancelled = true; };
-  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadProfiles, restoreActiveProfile]);
+  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadThemePreferences, loadProfiles, restoreActiveProfile]);
 
   return null;
 }

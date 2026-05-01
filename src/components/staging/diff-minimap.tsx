@@ -72,7 +72,7 @@ export function DiffMinimap({ diff, scrollRef }: DiffMinimapProps) {
           <div
             key={i}
             className={`absolute rounded-sm ${
-              region.type === "add" ? "bg-green-500/60" : "bg-red-500/60"
+              region.type === "add" ? "bg-[var(--diff-added-line-bg)]" : "bg-[var(--diff-removed-line-bg)]"
             }`}
             style={{
               top: `${region.start * 100}%`,

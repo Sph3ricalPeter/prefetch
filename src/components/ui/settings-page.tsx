@@ -4,16 +4,19 @@ import {
   Settings2,
   User,
   Database,
+  Palette,
 } from "lucide-react";
 import { ResizeHandle } from "@/components/ui/resize-handle";
 import { GeneralSection } from "./settings/general-section";
+import { AppearanceSection } from "./settings/appearance-section";
 import { ProfilesSection } from "./settings/profiles-section";
 import { LfsSection } from "./settings/lfs-section";
 
-type SettingsTab = "general" | "profiles" | "lfs";
+type SettingsTab = "general" | "appearance" | "profiles" | "lfs";
 
 const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: "general", label: "General", icon: <Settings2 className="h-3.5 w-3.5" /> },
+  { id: "appearance", label: "Appearance", icon: <Palette className="h-3.5 w-3.5" /> },
   { id: "profiles", label: "Profiles", icon: <User className="h-3.5 w-3.5" /> },
   { id: "lfs", label: "LFS", icon: <Database className="h-3.5 w-3.5" /> },
 ];
@@ -80,6 +83,7 @@ export function SettingsPage({ onClose, sidebarWidth = 256, onSidebarResize }: S
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-8 py-6">
           {activeTab === "general" && <GeneralSection />}
+          {activeTab === "appearance" && <AppearanceSection />}
           {activeTab === "profiles" && <ProfilesSection />}
           {activeTab === "lfs" && <LfsSection />}
         </div>
