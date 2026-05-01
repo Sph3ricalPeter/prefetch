@@ -15,7 +15,8 @@ import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
-import type { BranchInfo, ForgeStatus } from "@/types/git";
+import type { BranchInfo, ForgeKind, ForgeStatus } from "@/types/git";
+import { ForgeIcon } from "@/components/ui/forge-icons";
 import {
   Tooltip,
   TooltipTrigger,
@@ -50,10 +51,10 @@ export function GraphPanel() {
   const checkout = useRepoStore((s) => s.checkout);
   const undoInfo = useRepoStore((s) => s.undoInfo);
   const undoAction = useRepoStore((s) => s.undo);
-  const dirtyCheckoutPending = useRepoStore((s) => s.dirtyCheckoutPending);
-  const stashAndCheckout = useRepoStore((s) => s.stashAndCheckout);
-  const discardAndCheckout = useRepoStore((s) => s.discardAndCheckout);
-  const cancelDirtyCheckout = useRepoStore((s) => s.cancelDirtyCheckout);
+  const dirtyActionPending = useRepoStore((s) => s.dirtyActionPending);
+  const stashAndProceed = useRepoStore((s) => s.stashAndProceed);
+  const discardAndProceed = useRepoStore((s) => s.discardAndProceed);
+  const cancelDirtyAction = useRepoStore((s) => s.cancelDirtyAction);
   const remoteCheckoutPending = useRepoStore((s) => s.remoteCheckoutPending);
   const resetLocalToRemote = useRepoStore((s) => s.resetLocalToRemote);
   const cancelRemoteCheckout = useRepoStore((s) => s.cancelRemoteCheckout);
@@ -180,7 +181,11 @@ export function GraphPanel() {
                     className="group flex items-center gap-2 bg-card px-3 py-2 cursor-pointer transition-colors hover:bg-secondary"
                     onClick={() => openRepository(repo.path)}
                   >
-                    <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    {repo.forge_kind ? (
+                      <ForgeIcon kind={repo.forge_kind as ForgeKind} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
                     <div className="flex flex-col min-w-0 flex-1">
                       <span className="text-sm text-foreground truncate">
                         {repo.name}
@@ -423,8 +428,8 @@ export function GraphPanel() {
         />
       )}
 
-      {/* Dirty working tree checkout dialog */}
-      {dirtyCheckoutPending && (
+      {/* Dirty working tree dialog */}
+      {dirtyActionPending && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-sm">
             <div className="flex items-center gap-2 mb-1">
@@ -432,27 +437,27 @@ export function GraphPanel() {
               <p className="text-sm text-foreground">Uncommitted changes</p>
             </div>
             <p className="text-xs text-muted-foreground mb-4">
-              You have {dirtyCheckoutPending.changesCount} unsaved {dirtyCheckoutPending.changesCount === 1 ? "change" : "changes"}.
+              You have {dirtyActionPending.changesCount} unsaved {dirtyActionPending.changesCount === 1 ? "change" : "changes"}.
               How would you like to proceed?
             </p>
             <div className="flex justify-end gap-2">
               <button
-                onClick={cancelDirtyCheckout}
+                onClick={cancelDirtyAction}
                 className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={stashAndCheckout}
+                onClick={stashAndProceed}
                 className="rounded bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-accent transition-colors"
               >
-                Stash &amp; Switch
+                Stash &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
               </button>
               <button
-                onClick={discardAndCheckout}
+                onClick={discardAndProceed}
                 className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
               >
-                Discard &amp; Switch
+                Discard &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
               </button>
             </div>
           </div>

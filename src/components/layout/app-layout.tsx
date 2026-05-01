@@ -10,9 +10,9 @@ import { getUiState, setUiState } from "@/lib/database";
 const SIDEBAR_DEFAULT = 256; // w-64
 const DETAIL_DEFAULT = 370;
 const SIDEBAR_MIN = 140;
-const SIDEBAR_MAX = 320;
+const SIDEBAR_MAX = 370;
 const DETAIL_MIN = 200;
-const DETAIL_MAX = 480;
+const DETAIL_MAX = 580;
 const CENTER_MIN = 120;
 
 /** Clamp a panel width to its valid range, with NaN/Infinity protection. */

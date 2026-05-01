@@ -188,3 +188,17 @@ body::before {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* file-icons-js: scale + align icon font to match Lucide's h-3 w-3 (12px) */
+.file-icon.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.file-icon.icon::before {
+  position: static !important;
+  font-size: 11px !important;
+  width: auto !important;
+  display: inline !important;
+  line-height: 1 !important;
+}

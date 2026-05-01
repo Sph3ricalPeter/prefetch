@@ -139,6 +139,7 @@ pub fn run() {
             commands::forge::delete_forge_token,
             commands::forge::check_profile_token,
             commands::forge::get_token_info,
+            commands::forge::search_user_avatar,
             commands::forge::get_pr_for_branch,
             commands::forge::clear_pr_cache,
             commands::forge::start_oauth_flow,
