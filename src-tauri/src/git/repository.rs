@@ -84,6 +84,30 @@ fn hide_console_window(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
+const MAX_DIFF_LINES: usize = 50_000;
+
+fn truncate_diff(mut diff: FileDiff) -> FileDiff {
+    let total: usize = diff.hunks.iter().map(|h| h.lines.len()).sum();
+    if total <= MAX_DIFF_LINES {
+        return diff;
+    }
+    diff.is_truncated = true;
+    diff.total_lines = total as u32;
+    let mut remaining = MAX_DIFF_LINES;
+    for hunk in &mut diff.hunks {
+        if remaining == 0 {
+            hunk.lines.clear();
+        } else if hunk.lines.len() > remaining {
+            hunk.lines.truncate(remaining);
+            remaining = 0;
+        } else {
+            remaining -= hunk.lines.len();
+        }
+    }
+    diff.hunks.retain(|h| !h.lines.is_empty());
+    diff
+}
+
 /// Create a `git` command with console window hidden on Windows.
 pub(crate) fn git_cmd() -> Command {
     let mut cmd = Command::new("git");
@@ -830,18 +854,39 @@ pub(crate) fn run_git(
     args: &[&str],
     extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
-    let mut cmd = git_cmd();
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-    let output = cmd
-        .args(args)
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+    const MAX_RETRIES: u32 = 3;
+    const RETRY_DELAY_MS: u64 = 200;
 
-    if !output.status.success() {
+    for attempt in 0..MAX_RETRIES {
+        let mut cmd = git_cmd();
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
+        let output = cmd
+            .args(args)
+            .current_dir(path)
+            .output()
+            .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("{}{}", stdout.trim(), stderr.trim());
+            return Ok(if combined.is_empty() {
+                "Done".to_string()
+            } else {
+                combined
+            });
+        }
+
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+        // Retry on index.lock contention (another git process is running)
+        if attempt + 1 < MAX_RETRIES && stderr.contains("index.lock") {
+            std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+            continue;
+        }
+
         if let Some(hook_name) = detect_hook_failure(path, args, &stderr) {
             return Err(AppError::HookFailed {
                 hook_name,
@@ -851,14 +896,7 @@ pub(crate) fn run_git(
         return Err(AppError::Git(stderr));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}{}", stdout.trim(), stderr.trim());
-    Ok(if combined.is_empty() {
-        "Done".to_string()
-    } else {
-        combined
-    })
+    unreachable!()
 }
 
 /// Run a git CLI command with real-time progress streaming.
@@ -1124,6 +1162,20 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
     if diff_text.trim().is_empty() && !staged {
         let abs_path = Path::new(repo_path).join(file_path);
         if abs_path.exists() {
+            if let Ok(meta) = std::fs::metadata(&abs_path) {
+                let size = meta.len();
+                // Skip reading files > 1 MB — return truncated stub
+                if size > 1_000_000 {
+                    let estimated_lines = (size / 40) as u32; // rough estimate
+                    return Ok(FileDiff {
+                        path: file_path.to_string(),
+                        hunks: vec![],
+                        is_binary: false,
+                        is_truncated: true,
+                        total_lines: estimated_lines,
+                    });
+                }
+            }
             if let Ok(content) = std::fs::read_to_string(&abs_path) {
                 let lines: Vec<DiffLine> = content
                     .lines()
@@ -1136,7 +1188,7 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
                     })
                     .collect();
                 if !lines.is_empty() {
-                    return Ok(FileDiff {
+                    return Ok(truncate_diff(FileDiff {
                         path: file_path.to_string(),
                         hunks: vec![DiffHunk {
                             header: format!("@@ -0,0 +1,{} @@", lines.len()),
@@ -1147,7 +1199,9 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
                             lines,
                         }],
                         is_binary: false,
-                    });
+                        is_truncated: false,
+                        total_lines: 0,
+                    }));
                 }
             }
         }
@@ -1158,14 +1212,18 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
             path: file_path.to_string(),
             hunks: vec![],
             is_binary: true,
+            is_truncated: false,
+            total_lines: 0,
         });
     }
 
-    Ok(FileDiff {
+    Ok(truncate_diff(FileDiff {
         path: file_path.to_string(),
         hunks: parse_unified_diff(&diff_text),
         is_binary: false,
-    })
+        is_truncated: false,
+        total_lines: 0,
+    }))
 }
 
 fn parse_unified_diff(diff_text: &str) -> Vec<DiffHunk> {
@@ -1746,14 +1804,18 @@ pub fn get_commit_file_diff(
             path: file_path.to_string(),
             hunks: vec![],
             is_binary: true,
+            is_truncated: false,
+            total_lines: 0,
         });
     }
 
-    Ok(FileDiff {
+    Ok(truncate_diff(FileDiff {
         path: file_path.to_string(),
         hunks: parse_unified_diff(&diff_text),
         is_binary: false,
-    })
+        is_truncated: false,
+        total_lines: 0,
+    }))
 }
 
 /// List all stashes with commit and parent IDs.
@@ -1983,14 +2045,18 @@ pub fn get_stash_file_diff(
             path: file_path.to_string(),
             hunks: vec![],
             is_binary: true,
+            is_truncated: false,
+            total_lines: 0,
         });
     }
 
-    Ok(FileDiff {
+    Ok(truncate_diff(FileDiff {
         path: file_path.to_string(),
         hunks: parse_unified_diff(&diff_text),
         is_binary: false,
-    })
+        is_truncated: false,
+        total_lines: 0,
+    }))
 }
 
 /// Get the last undoable action from the reflog.

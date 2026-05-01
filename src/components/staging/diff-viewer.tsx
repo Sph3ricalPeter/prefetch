@@ -22,6 +22,16 @@ export function DiffViewer({ diff, filePath, mode = "readonly" }: DiffViewerProp
     );
   }
 
+  if (diff.is_truncated && diff.hunks.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 p-8">
+        <p className="text-sm text-muted-foreground">
+          File too large to display ({diff.total_lines.toLocaleString()} lines)
+        </p>
+      </div>
+    );
+  }
+
   if (diff.hunks.length === 0) {
     return (
       <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
@@ -39,6 +49,11 @@ export function DiffViewer({ diff, filePath, mode = "readonly" }: DiffViewerProp
         <DiffViewerInteractive diff={diff} filePath={resolvedPath} />
       ) : (
         <DiffViewerReadonly diff={diff} filePath={resolvedPath} />
+      )}
+      {diff.is_truncated && diff.hunks.length > 0 && (
+        <div className="shrink-0 border-t border-border px-4 py-2 text-center text-xs text-muted-foreground">
+          Diff truncated — showing first 50,000 of {diff.total_lines.toLocaleString()} lines
+        </div>
       )}
     </div>
   );
