@@ -44,6 +44,8 @@ export interface BranchInfo {
   ahead: number | null;
   /** Commits behind upstream (null if no upstream or remote branch). */
   behind: number | null;
+  /** True when HEAD is an ancestor — rebasing would be a fast-forward. */
+  can_fast_forward: boolean;
 }
 
 /** Porcelain status codes returned by the Rust backend. */

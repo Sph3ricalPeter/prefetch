@@ -397,3 +397,8 @@ export async function setActiveProfileCmd(
 export async function getActiveProfileCmd(): Promise<ActiveProfileConfig | null> {
   return tracedInvoke<ActiveProfileConfig | null>("get_active_profile");
 }
+
+/** Update the background-fetch interval. Pass 0 to disable. */
+export async function setFetchInterval(seconds: number): Promise<void> {
+  return tracedInvoke<void>("set_fetch_interval", { seconds });
+}

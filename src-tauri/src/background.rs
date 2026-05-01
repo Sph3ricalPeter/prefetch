@@ -15,7 +15,7 @@ fn hide_console_window(cmd: &mut Command) -> &mut Command {
 fn hide_console_window(cmd: &mut Command) -> &mut Command {
     cmd
 }
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -30,29 +30,48 @@ pub struct BackgroundFetcher {
 impl BackgroundFetcher {
     /// Start a background fetch loop for the given repo.
     ///
-    /// The fetcher runs in a separate thread and checks the stop flag
-    /// every second so it can shut down quickly when the repo changes.
+    /// The fetcher runs in a separate thread and checks the stop flag every
+    /// second so it can shut down quickly when the repo changes.
+    /// `interval` is a shared `Arc<AtomicU64>` (seconds); write to it from
+    /// any thread to change the fetch cadence at runtime. Pass 0 to disable.
     /// `active_profile` is cloned at start time; if the profile changes,
     /// the fetcher must be stopped and restarted.
     pub fn start(
         repo_path: String,
         _app: AppHandle,
         active_profile: Option<ActiveProfile>,
+        interval: Arc<AtomicU64>,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_clone = stop.clone();
+        let interval_clone = Arc::clone(&interval);
         let env_vars = profile_env(&active_profile);
         let pid = active_profile.as_ref().map(|p| p.profile_id.clone());
 
         thread::spawn(move || {
-            // Wait 5 minutes between fetches, checking stop flag each second
+            // Tick once per second; fetch after `interval` ticks.
+            // Reads the interval atomically on every tick so runtime changes
+            // take effect within one second.
+            let mut elapsed: u64 = 0;
             loop {
-                for _ in 0..300 {
-                    if stop_clone.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    thread::sleep(Duration::from_secs(1));
+                thread::sleep(Duration::from_secs(1));
+                if stop_clone.load(Ordering::Relaxed) {
+                    return;
                 }
+
+                let secs = interval_clone.load(Ordering::Relaxed);
+                if secs == 0 {
+                    // Disabled — reset counter so re-enabling starts a fresh
+                    // countdown rather than firing immediately.
+                    elapsed = 0;
+                    continue;
+                }
+
+                elapsed += 1;
+                if elapsed < secs {
+                    continue;
+                }
+                elapsed = 0;
 
                 if stop_clone.load(Ordering::Relaxed) {
                     return;

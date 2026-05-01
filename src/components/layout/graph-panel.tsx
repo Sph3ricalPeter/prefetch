@@ -7,6 +7,8 @@ import {
   AlertTriangle,
   Loader2,
 } from "lucide-react";
+import { getUiState, setUiState } from "@/lib/database";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
@@ -137,6 +139,14 @@ export function GraphPanel() {
   const recentRepos = useRepoStore((s) => s.recentRepos);
   const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
 
+  // Auto-reopen checkbox state (welcome screen only)
+  const [autoReopen, setAutoReopen] = useState(false);
+  useEffect(() => {
+    getUiState("auto_reopen_last_repo").then((v) => {
+      if (v === "true") setAutoReopen(true);
+    }).catch(() => {});
+  }, []);
+
   // No repo open — welcome screen
   if (!repoPath) {
     return (
@@ -204,6 +214,21 @@ export function GraphPanel() {
             </div>
           </div>
         )}
+
+        {/* Auto-reopen toggle */}
+        <label className="mt-1 flex items-center gap-2 cursor-pointer">
+          <Checkbox
+            checked={autoReopen}
+            onCheckedChange={(v) => {
+              const checked = v === true;
+              setAutoReopen(checked);
+              setUiState("auto_reopen_last_repo", checked ? "true" : "false").catch(() => {});
+            }}
+          />
+          <span className="text-xs text-muted-foreground select-none">
+            Reopen last repository on startup
+          </span>
+        </label>
       </div>
     );
   }
@@ -847,7 +872,9 @@ function buildCommitContextMenuItems(
           onClick: () => mergeInto(branch.name),
         });
         items.push({
-          label: `Rebase ${currentBranch} onto ${branch.name}`,
+          label: branch.can_fast_forward
+            ? `Fast-forward ${currentBranch} to ${branch.name}`
+            : `Rebase ${currentBranch} onto ${branch.name}`,
           onClick: () => rebaseOnto(branch.name),
         });
       }

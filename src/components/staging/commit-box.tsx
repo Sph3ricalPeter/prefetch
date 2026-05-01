@@ -49,6 +49,11 @@ function useGravatar(email: string | undefined): string | null {
   return email && loaded?.email === email ? loaded.url : null;
 }
 
+/** localStorage key for the commit message draft, scoped to the repo path. */
+function draftKey(repoPath: string) {
+  return `prefetch:commit_draft:${repoPath}`;
+}
+
 export function CommitBox() {
   const commitMessage = useRepoStore((s) => s.commitMessage);
   const setCommitMessage = useRepoStore((s) => s.setCommitMessage);
@@ -68,6 +73,7 @@ export function CommitBox() {
   const amendMode = useRepoStore((s) => s.amendMode);
   const setAmendMode = useRepoStore((s) => s.setAmendMode);
   const headCommitId = useRepoStore((s) => s.headCommitId);
+  const repoPath = useRepoStore((s) => s.repoPath);
 
   const [showDescription, setShowDescription] = useState(false);
   const [authInfoResult, setAuthInfoResult] = useState<{
@@ -111,6 +117,50 @@ export function CommitBox() {
       setCommitMessage(rebaseProgress.message);
     }
   }, [rebaseProgress, conflictState, setCommitMessage]);
+
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  // Restore the draft once when the component mounts or the repo changes.
+  // Skip if Zustand already has content (e.g. amend mode pre-filled from HEAD)
+  // or if an operation (rebase/merge) is in progress.
+  const restoredForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!repoPath) return;
+    if (restoredForRef.current === repoPath) return; // already restored for this repo
+    if (commitMessage || commitDescription) return;  // don't clobber existing content
+    if (conflictState?.in_progress) return;          // rebase/merge fills its own message
+
+    try {
+      const raw = localStorage.getItem(draftKey(repoPath));
+      if (raw) {
+        const draft = JSON.parse(raw) as { message?: string; description?: string };
+        if (draft.message) setCommitMessage(draft.message);
+        if (draft.description) setCommitDescription(draft.description);
+      }
+    } catch {
+      // Corrupt entry — ignore
+    }
+    restoredForRef.current = repoPath;
+  }, [repoPath, commitMessage, commitDescription, conflictState, setCommitMessage, setCommitDescription]);
+
+  // Persist draft to localStorage on every change.
+  // Clearing both fields (which happens after a successful commit) removes the
+  // entry so the next session starts fresh.
+  useEffect(() => {
+    if (!repoPath) return;
+    if (commitMessage || commitDescription) {
+      try {
+        localStorage.setItem(
+          draftKey(repoPath),
+          JSON.stringify({ message: commitMessage, description: commitDescription }),
+        );
+      } catch {
+        // localStorage full or unavailable — not critical
+      }
+    } else {
+      localStorage.removeItem(draftKey(repoPath));
+    }
+  }, [repoPath, commitMessage, commitDescription]);
+  // ─────────────────────────────────────────────────────────────────────────
 
   const isOperationInProgress = conflictState?.in_progress ?? false;
   const operationLabel = conflictState?.operation

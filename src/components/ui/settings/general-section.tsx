@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { getUiState, setUiState } from "@/lib/database";
 import { useUpdaterStore } from "@/stores/updater-store";
+import { setFetchInterval as setFetchIntervalCmd } from "@/lib/commands";
 
 const FETCH_INTERVALS = [
   { label: "1 minute", value: "60" },
@@ -19,19 +21,27 @@ const VIEW_MODES = [
 export function GeneralSection() {
   const [fetchInterval, setFetchInterval] = useState("300");
   const [fileViewMode, setFileViewMode] = useState("flat");
+  const [autoReopen, setAutoReopen] = useState(false);
 
   useEffect(() => {
     getUiState("auto_fetch_interval").then((v) => {
-      if (v) setFetchInterval(v);
+      if (v) {
+        setFetchInterval(v);
+        setFetchIntervalCmd(parseInt(v, 10)).catch(() => {});
+      }
     }).catch(() => {});
     getUiState("file_view_mode").then((v) => {
       if (v) setFileViewMode(v);
+    }).catch(() => {});
+    getUiState("auto_reopen_last_repo").then((v) => {
+      if (v === "true") setAutoReopen(true);
     }).catch(() => {});
   }, []);
 
   const handleFetchIntervalChange = (value: string) => {
     setFetchInterval(value);
     setUiState("auto_fetch_interval", value).catch(() => {});
+    setFetchIntervalCmd(parseInt(value, 10)).catch(() => {});
   };
 
   const handleViewModeChange = (value: string) => {
@@ -73,6 +83,26 @@ export function GeneralSection() {
         </div>
       </div>
 
+      {/* Reopen last repo */}
+      <div className="space-y-2">
+        <label className="block text-xs font-medium text-foreground">
+          Startup
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <Checkbox
+            checked={autoReopen}
+            onCheckedChange={(v) => {
+              const checked = v === true;
+              setAutoReopen(checked);
+              setUiState("auto_reopen_last_repo", checked ? "true" : "false").catch(() => {});
+            }}
+          />
+          <span className="text-xs text-foreground select-none">
+            Reopen last repository on startup
+          </span>
+        </label>
+      </div>
+
       {/* Updates */}
       <UpdatesSection />
 
@@ -111,10 +141,39 @@ function UpdatesSection() {
   const downloadProgress = useUpdaterStore((s) => s.downloadProgress);
   const error = useUpdaterStore((s) => s.error);
   const checkForUpdate = useUpdaterStore((s) => s.checkForUpdate);
+  const startDownload = useUpdaterStore((s) => s.startDownload);
+  const applyAndRestart = useUpdaterStore((s) => s.applyAndRestart);
 
   const isChecking = status === "checking";
   const isBusy =
     status === "downloading" || status === "restarting" || status === "checking";
+
+  // Derive button label and action based on updater state
+  let buttonLabel: string;
+  let buttonAction: () => void;
+  let buttonHighlighted = false;
+
+  if (isChecking) {
+    buttonLabel = "Checking…";
+    buttonAction = () => {};
+  } else if (status === "available") {
+    buttonLabel = `Update to v${availableVersion}`;
+    buttonAction = startDownload;
+    buttonHighlighted = true;
+  } else if (status === "downloading") {
+    buttonLabel = `Downloading… ${downloadProgress}%`;
+    buttonAction = () => {};
+  } else if (status === "ready") {
+    buttonLabel = "Restart to Apply";
+    buttonAction = applyAndRestart;
+    buttonHighlighted = true;
+  } else if (status === "restarting") {
+    buttonLabel = "Restarting…";
+    buttonAction = () => {};
+  } else {
+    buttonLabel = "Check for Updates";
+    buttonAction = checkForUpdate;
+  }
 
   let statusText: string;
   switch (status) {
@@ -127,13 +186,13 @@ function UpdatesSection() {
       statusText = "Checking for updates…";
       break;
     case "available":
-      statusText = `Update available: v${availableVersion}`;
+      statusText = `v${availableVersion} is ready to download`;
       break;
     case "downloading":
       statusText = `Downloading… ${downloadProgress}%`;
       break;
     case "ready":
-      statusText = "Update ready — restart to apply";
+      statusText = "Download complete — restart when ready";
       break;
     case "restarting":
       statusText = "Restarting…";
@@ -153,24 +212,24 @@ function UpdatesSection() {
       </p>
       <div className="flex items-center gap-3">
         <button
-          onClick={() => checkForUpdate()}
-          disabled={isBusy}
+          onClick={buttonAction}
+          disabled={isBusy && !buttonHighlighted}
           className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ${
-            isBusy
+            isBusy && !buttonHighlighted
               ? "border-border text-muted-foreground opacity-60"
-              : status === "available"
+              : buttonHighlighted
                 ? "border-primary/50 bg-primary/10 text-foreground hover:bg-primary/20"
                 : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
           }`}
         >
           {isChecking && <Loader2 className="h-3 w-3 animate-spin" />}
-          {isChecking ? "Checking…" : "Check for Updates"}
+          {buttonLabel}
         </button>
         <span
           className={`text-xs ${
             status === "error"
               ? "text-destructive"
-              : status === "available"
+              : status === "available" || status === "ready"
                 ? "text-primary"
                 : "text-muted-foreground"
           }`}
