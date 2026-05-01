@@ -1,5 +1,8 @@
 use crate::background::BackgroundFetcher;
-use crate::commands::helpers::{get_profile_env, get_profile_id, offload, refresh_forge_token, repo_path, validate_repo_path, validate_repo_paths};
+use crate::commands::helpers::{
+    get_profile_env, get_profile_id, offload, refresh_forge_token, repo_path, validate_repo_path,
+    validate_repo_paths,
+};
 use crate::error::AppError;
 use crate::events;
 use crate::git::{

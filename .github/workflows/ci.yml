@@ -43,9 +43,19 @@ jobs:
       - name: cargo check
         working-directory: src-tauri
         run: cargo check
+        env:
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GITLAB_OAUTH_CLIENT_ID: ${{ secrets.GITLAB_OAUTH_CLIENT_ID }}
+          GITLAB_OAUTH_CLIENT_SECRET: ${{ secrets.GITLAB_OAUTH_CLIENT_SECRET }}
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy -- -D warnings
+        env:
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GITLAB_OAUTH_CLIENT_ID: ${{ secrets.GITLAB_OAUTH_CLIENT_ID }}
+          GITLAB_OAUTH_CLIENT_SECRET: ${{ secrets.GITLAB_OAUTH_CLIENT_SECRET }}
       - name: cargo fmt
         working-directory: src-tauri
         run: cargo fmt -- --check
@@ -78,3 +88,8 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
       - run: npm ci
       - run: npx tauri build
+        env:
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GITLAB_OAUTH_CLIENT_ID: ${{ secrets.GITLAB_OAUTH_CLIENT_ID }}
+          GITLAB_OAUTH_CLIENT_SECRET: ${{ secrets.GITLAB_OAUTH_CLIENT_SECRET }}

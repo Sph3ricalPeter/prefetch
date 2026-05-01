@@ -26,10 +26,12 @@ fn generate_verifier() -> String {
     for chunk in bytes.chunks_mut(8) {
         let s = RandomState::new();
         let mut h = s.build_hasher();
-        h.write_u64(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64);
+        h.write_u64(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64,
+        );
         let val = h.finish();
         for (i, b) in chunk.iter_mut().enumerate() {
             *b = ((val >> (i * 8)) & 0xFF) as u8;
@@ -80,22 +82,21 @@ fn pkce_challenge(verifier: &str) -> String {
 
 fn sha256_impl(message: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
-        0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-        0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
-        0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-        0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
     ];
 
     let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
     ];
 
     // Pre-processing: pad message
@@ -187,19 +188,13 @@ struct OAuthConfig {
     scopes: String,
 }
 
-// Hardcoded OAuth App credentials — these are NOT secret for public desktop
-// clients. Security relies on PKCE + redirect URI, not client_secret secrecy.
-// This is the standard approach used by VS Code, GitKraken, etc.
-const GITHUB_CLIENT_ID: &str = "Ov23liXSB7DFFBzwqbm6";
-const GITHUB_CLIENT_SECRET: &str = "29be565be311f3ee34f307bbe9b2c838a9742739";
-
 impl OAuthConfig {
     fn github() -> Self {
         Self {
             authorize_url: "https://github.com/login/oauth/authorize".to_string(),
             token_url: "https://github.com/login/oauth/access_token".to_string(),
-            client_id: GITHUB_CLIENT_ID.to_string(),
-            client_secret: Some(GITHUB_CLIENT_SECRET.to_string()),
+            client_id: env!("GH_OAUTH_CLIENT_ID").to_string(),
+            client_secret: Some(env!("GH_OAUTH_CLIENT_SECRET").to_string()),
             scopes: "repo".to_string(),
         }
     }
@@ -208,8 +203,8 @@ impl OAuthConfig {
         Self {
             authorize_url: "https://gitlab.com/oauth/authorize".to_string(),
             token_url: "https://gitlab.com/oauth/token".to_string(),
-            client_id: "f270ec7acf1d8e224e2b3ecdaf5d7e607080215c86a42ae09a060c98b709e580".to_string(),
-            client_secret: Some("gloas-f6a2cc508fae83d5798d8dbd78aed6f8370d38c789082369487f4bac057f51fa".to_string()),
+            client_id: env!("GITLAB_OAUTH_CLIENT_ID").to_string(),
+            client_secret: Some(env!("GITLAB_OAUTH_CLIENT_SECRET").to_string()),
             scopes: "read_user read_api write_repository".to_string(),
         }
     }
@@ -300,8 +295,7 @@ pub async fn start_flow(
     );
 
     // Open browser
-    open::that(&auth_url)
-        .map_err(|e| AppError::Other(format!("Failed to open browser: {e}")))?;
+    open::that(&auth_url).map_err(|e| AppError::Other(format!("Failed to open browser: {e}")))?;
 
     // Set up cancellation
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
@@ -373,8 +367,7 @@ async fn wait_for_callback(
 
     // Check for error in query params
     if let Some(error) = extract_query_param(path, "error") {
-        let desc = extract_query_param(path, "error_description")
-            .unwrap_or_else(|| error.clone());
+        let desc = extract_query_param(path, "error_description").unwrap_or_else(|| error.clone());
         send_error_response(&mut stream, &desc).await;
         return Err(AppError::Other(format!("OAuth error: {desc}")));
     }
@@ -654,7 +647,10 @@ mod tests {
     #[test]
     fn test_extract_query_param() {
         let path = "/callback?code=abc123&state=xyz789";
-        assert_eq!(extract_query_param(path, "code"), Some("abc123".to_string()));
+        assert_eq!(
+            extract_query_param(path, "code"),
+            Some("abc123".to_string())
+        );
         assert_eq!(
             extract_query_param(path, "state"),
             Some("xyz789".to_string())

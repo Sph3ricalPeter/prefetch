@@ -192,11 +192,7 @@ pub async fn start_oauth_flow(
     let provider = match provider.as_str() {
         "github" => oauth::OAuthProvider::GitHub,
         "gitlab" => oauth::OAuthProvider::GitLab,
-        other => {
-            return Err(AppError::Other(format!(
-                "Unknown OAuth provider: {other}"
-            )))
-        }
+        other => return Err(AppError::Other(format!("Unknown OAuth provider: {other}"))),
     };
 
     oauth::start_flow(provider, pid).await
