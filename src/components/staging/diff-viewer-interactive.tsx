@@ -40,7 +40,7 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
   // Highlight hunks progressively — render each as it finishes
   useEffect(() => {
     let cancelled = false;
-    setTokensByHunk(new Map());
+    const tokenMap = new Map<number, import("@/lib/shiki").ShikiToken[][]>();
     async function highlight() {
       for (let hi = 0; hi < diff.hunks.length; hi++) {
         if (cancelled) return;
@@ -50,17 +50,17 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
         try {
           const tokens = await highlightLines(code, lang, shikiThemeId);
           if (!cancelled) {
-            setTokensByHunk((prev) => {
-              const next = new Map(prev);
-              next.set(hi, tokens);
-              return next;
-            });
+            tokenMap.set(hi, tokens);
+            setTokensByHunk(new Map(tokenMap));
           }
         } catch { /* fallback: no highlighting */ }
       }
     }
     highlight();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      setTokensByHunk(new Map());
+    };
   }, [diff, lang, shikiThemeId]);
 
   const toggleLine = useCallback((hunkIdx: number, lineIdx: number) => {

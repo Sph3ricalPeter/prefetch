@@ -27,7 +27,7 @@ export function DiffViewerReadonly({ diff, filePath }: DiffViewerReadonlyProps) 
   // Highlight hunks progressively — render each as it finishes
   useEffect(() => {
     let cancelled = false;
-    setTokensByHunk(new Map());
+    const tokenMap = new Map<number, import("@/lib/shiki").ShikiToken[][]>();
 
     async function highlight() {
       for (let hi = 0; hi < diff.hunks.length; hi++) {
@@ -39,11 +39,8 @@ export function DiffViewerReadonly({ diff, filePath }: DiffViewerReadonlyProps) 
         try {
           const tokens = await highlightLines(code, lang, shikiThemeId);
           if (!cancelled) {
-            setTokensByHunk((prev) => {
-              const next = new Map(prev);
-              next.set(hi, tokens);
-              return next;
-            });
+            tokenMap.set(hi, tokens);
+            setTokensByHunk(new Map(tokenMap));
           }
         } catch {
           // Fallback: no highlighting for this hunk
@@ -52,7 +49,10 @@ export function DiffViewerReadonly({ diff, filePath }: DiffViewerReadonlyProps) 
     }
 
     highlight();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      setTokensByHunk(new Map());
+    };
   }, [diff, lang, shikiThemeId]);
 
   if (diff.is_binary) {
