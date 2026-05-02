@@ -40,7 +40,7 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
   // Highlight hunks progressively — render each as it finishes
   useEffect(() => {
     let cancelled = false;
-    const tokenMap = new Map<number, import("@/lib/shiki").ShikiToken[][]>();
+    const tokenMap = new Map<number, Awaited<ReturnType<typeof highlightLines>>>();
     async function highlight() {
       for (let hi = 0; hi < diff.hunks.length; hi++) {
         if (cancelled) return;
