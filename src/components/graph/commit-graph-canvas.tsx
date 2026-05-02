@@ -7,6 +7,7 @@ import type {
   TagInfo,
 } from "@/types/git";
 import { gravatarUrl } from "@/lib/gravatar";
+import { searchUserAvatar } from "@/lib/commands";
 import { useThemeStore } from "@/stores/theme-store";
 
 const ROW_HEIGHT = 32;
@@ -143,12 +144,35 @@ function laneColor(lane: number): string {
 // null = load attempted but failed (permanent fallback to initials).
 const avatarCache = new Map<string, HTMLImageElement | null>();
 
+// Tracks emails already tried for forge avatar lookup to avoid duplicate API calls.
+// true = forge lookup in progress or completed (no result).
+const forgeAvatarAttempted = new Set<string>();
+
 /** Pick a readable text color (black or white) for a given hex background */
 function contrastText(hex: string): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return 0.299 * r + 0.587 * g + 0.114 * b > 140 ? "#000000" : "#ffffff";
+}
+
+/** Two-letter initials from author name (e.g. "Vojtech Vavera" → "VV") */
+function authorInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase() || "?";
+}
+
+/** Stable per-contributor color derived from email hash */
+function authorColor(email: string): string {
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) {
+    hash = ((hash << 5) - hash + email.charCodeAt(i)) | 0;
+  }
+  const h = ((hash % 360) + 360) % 360;
+  return hslToHex({ h, s: 55, l: 50 });
 }
 
 
@@ -924,7 +948,21 @@ export function CommitGraphCanvas({
             requestDrawRef.current();
           };
           loadImg.onerror = () => {
-            // Stays null -- permanent fallback to initials
+            // Gravatar failed -- try forge API as fallback
+            if (!forgeAvatarAttempted.has(email)) {
+              forgeAvatarAttempted.add(email);
+              searchUserAvatar(email).then((url) => {
+                if (url) {
+                  const forgeImg = new Image();
+                  forgeImg.crossOrigin = "anonymous";
+                  forgeImg.src = url;
+                  forgeImg.onload = () => {
+                    avatarCache.set(email, forgeImg);
+                    requestDrawRef.current();
+                  };
+                }
+              }).catch(() => {});
+            }
           };
           img = null;
         }
@@ -944,20 +982,19 @@ export function CommitGraphCanvas({
           );
           ctx.restore();
         } else {
-          // Fallback -- colored circle with author initial
+          // Fallback -- stable-color circle with two-letter initials
+          const avatarBg = authorColor(email);
           ctx.beginPath();
           ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
-          ctx.fillStyle = color;
+          ctx.fillStyle = avatarBg;
           ctx.fill();
           ctx.save();
-          ctx.fillStyle = contrastText(color);
-          ctx.font = `bold ${Math.round(NODE_RADIUS * 1.2)}px ${FONT_SANS}`;
+          ctx.fillStyle = contrastText(avatarBg);
+          const initials = authorInitials(commit.author_name);
+          const fontSize = initials.length > 1 ? Math.round(NODE_RADIUS * 0.95) : Math.round(NODE_RADIUS * 1.2);
+          ctx.font = `bold ${fontSize}px ${FONT_SANS}`;
           ctx.textAlign = "center";
-          ctx.fillText(
-            commit.author_name.charAt(0).toUpperCase(),
-            x,
-            y,
-          );
+          ctx.fillText(initials, x, y);
           ctx.restore();
         }
 
@@ -1168,7 +1205,24 @@ export function CommitGraphCanvas({
       if (!scroll) return;
 
       const rect = scroll.getBoundingClientRect();
-      const y = e.clientY - rect.top + scroll.scrollTop;
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Check if click hit a stash badge
+      for (const badge of badgeHitAreasRef.current) {
+        if (
+          badge.stashIndex != null &&
+          clickX >= badge.x &&
+          clickX <= badge.x + badge.width &&
+          clickY >= badge.y &&
+          clickY <= badge.y + badge.height
+        ) {
+          if (onSelectStash) onSelectStash(badge.stashIndex);
+          return;
+        }
+      }
+
+      const y = clickY + scroll.scrollTop;
       const visRow = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
 
       // WIP row
@@ -1183,7 +1237,7 @@ export function CommitGraphCanvas({
         onSelectCommit(id === selectedCommitId ? null : id);
       }
     },
-    [commits, selectedCommitId, onSelectCommit, hasWip, rowOffset, onClickWip],
+    [commits, selectedCommitId, onSelectCommit, onSelectStash, hasWip, rowOffset, onClickWip],
   );
 
   const handleDoubleClick = useCallback(
@@ -1195,24 +1249,21 @@ export function CommitGraphCanvas({
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
 
-      // Check if double-click hit a badge
+      // Check if double-click hit a branch badge → checkout
       for (const badge of badgeHitAreasRef.current) {
         if (
+          badge.badgeType === "branch" &&
           clickX >= badge.x &&
           clickX <= badge.x + badge.width &&
           clickY >= badge.y &&
           clickY <= badge.y + badge.height
         ) {
-          if (badge.stashIndex != null && onSelectStash) {
-            onSelectStash(badge.stashIndex);
-          } else {
-            onCheckoutBranch(badge.branchName);
-          }
+          onCheckoutBranch(badge.branchName);
           return;
         }
       }
     },
-    [onCheckoutBranch, onSelectStash],
+    [onCheckoutBranch],
   );
 
   const handleMouseMove = useCallback(

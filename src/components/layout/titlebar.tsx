@@ -34,6 +34,8 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { UpdateIndicator } from "@/components/update-indicator";
+import { ForgeIcon } from "@/components/ui/forge-icons";
+import type { ForgeKind } from "@/types/git";
 
 /** Lazily resolve the Tauri window handle — safe to import outside Tauri context */
 let _appWindow: TauriWindow | null = null;
@@ -170,6 +172,7 @@ function TitlebarRepoSwitcher() {
   const repoPath = useRepoStore((s) => s.repoPath);
   const repoName = useRepoStore((s) => s.repoName);
   const currentBranch = useRepoStore((s) => s.currentBranch);
+  const headCommitId = useRepoStore((s) => s.headCommitId);
   const recentRepos = useRepoStore((s) => s.recentRepos);
   const openRepository = useRepoStore((s) => s.openRepository);
   const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
@@ -222,7 +225,7 @@ function TitlebarRepoSwitcher() {
         className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
       >
         <span className="font-medium text-foreground">{repoName}</span>
-        {currentBranch && (
+        {currentBranch ? (
           <>
             <span className="text-faint">/</span>
             <span className="flex items-center gap-1">
@@ -230,7 +233,15 @@ function TitlebarRepoSwitcher() {
               {currentBranch}
             </span>
           </>
-        )}
+        ) : headCommitId ? (
+          <>
+            <span className="text-faint">/</span>
+            <span className="flex items-center gap-1 text-muted-foreground">
+              ~HEAD
+              <span className="font-mono text-faint">{headCommitId.slice(0, 7)}</span>
+            </span>
+          </>
+        ) : null}
         {commits.length > 0 && (
           <>
             <span className="text-faint">&middot;</span>
@@ -271,7 +282,11 @@ function TitlebarRepoSwitcher() {
                       openRepository(repo.path);
                     }}
                   >
-                    <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    {repo.forge_kind ? (
+                      <ForgeIcon kind={repo.forge_kind as ForgeKind} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    )}
                     <div className="flex flex-col min-w-0 flex-1">
                       <span className="text-xs text-foreground truncate">{repo.name}</span>
                       <span className="text-label text-faint truncate">{repo.path}</span>

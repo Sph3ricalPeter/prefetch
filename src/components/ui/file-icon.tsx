@@ -1,52 +1,6 @@
-import {
-  FileText,
-  FileCode,
-  FileJson,
-  FileImage,
-  Globe,
-  Palette,
-  Cog,
-  Settings,
-  FileType,
-} from "lucide-react";
+import { getClassWithColor } from "file-icons-js";
 
-const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
-  // Code
-  ts: FileCode,
-  tsx: FileCode,
-  js: FileCode,
-  jsx: FileCode,
-  rs: Cog,
-  py: FileCode,
-  go: FileCode,
-  java: FileCode,
-  // Data
-  json: FileJson,
-  // Web
-  html: Globe,
-  htm: Globe,
-  css: Palette,
-  scss: Palette,
-  less: Palette,
-  // Config
-  toml: Settings,
-  yml: Settings,
-  yaml: Settings,
-  env: Settings,
-  lock: Settings,
-  // Docs
-  md: FileType,
-  mdx: FileType,
-  txt: FileText,
-  // Images
-  png: FileImage,
-  jpg: FileImage,
-  jpeg: FileImage,
-  gif: FileImage,
-  svg: FileImage,
-  ico: FileImage,
-  webp: FileImage,
-};
+const FALLBACK_CLASS = "text-icon";
 
 export function FileIcon({
   filename,
@@ -55,7 +9,10 @@ export function FileIcon({
   filename: string;
   className?: string;
 }) {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  const Icon = ICON_MAP[ext] ?? FileText;
-  return <Icon className={className} />;
+  const iconClass = getClassWithColor(filename) ?? FALLBACK_CLASS;
+  return (
+    <span
+      className={`file-icon icon ${iconClass} ${className ?? ""}`}
+    />
+  );
 }

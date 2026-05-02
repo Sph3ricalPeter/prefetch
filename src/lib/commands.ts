@@ -328,6 +328,10 @@ export async function getTokenInfo(profileId: string, host: string): Promise<Tok
   return tracedInvoke<TokenInfo | null>("get_token_info", { profileId, host });
 }
 
+export async function searchUserAvatar(email: string): Promise<string | null> {
+  return tracedInvoke<string | null>("search_user_avatar", { email });
+}
+
 export async function getPrForBranch(branch: string): Promise<PrInfo | null> {
   return tracedInvoke<PrInfo | null>("get_pr_for_branch", { branch });
 }

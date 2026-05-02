@@ -94,10 +94,12 @@ import {
   deleteFileCmd,
 } from "@/lib/commands";
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
+import { MultiStepAction } from "@/lib/multi-step";
 import {
   addRecentRepo,
   getRecentRepos,
   removeRecentRepo,
+  updateRepoForgeKind,
   getUiState,
   setUiState,
   type RecentRepo,
@@ -211,8 +213,9 @@ interface RepoState {
   conflictContents: ConflictContents | null;
   rebaseProgress: RebaseProgress | null;
 
-  // Dirty working tree checkout dialog
-  dirtyCheckoutPending: {
+  // Dirty working tree dialog — shown when an operation needs a clean tree
+  dirtyActionPending: {
+    operation: "checkout" | "pull" | "merge" | "cherry-pick" | "revert" | "checkout-detached";
     targetName: string;
     changesCount: number;
   } | null;
@@ -258,9 +261,9 @@ interface RepoState {
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
-  stashAndCheckout: () => Promise<void>;
-  discardAndCheckout: () => Promise<void>;
-  cancelDirtyCheckout: () => void;
+  stashAndProceed: () => Promise<void>;
+  discardAndProceed: () => Promise<void>;
+  cancelDirtyAction: () => void;
   resetLocalToRemote: () => Promise<void>;
   cancelRemoteCheckout: () => void;
   createBranch: (name: string) => Promise<void>;
@@ -370,6 +373,31 @@ async function fetchRepoData(): Promise<Partial<RepoState>> {
   };
 }
 
+function operationLabel(op: string, target: string): string {
+  switch (op) {
+    case "checkout": return `Checkout ${target}`;
+    case "checkout-detached": return `Checkout ${target.slice(0, 7)}`;
+    case "pull": return "Pull";
+    case "merge": return `Merge ${target}`;
+    case "cherry-pick": return `Cherry-pick ${target.slice(0, 7)}`;
+    case "revert": return `Revert ${target.slice(0, 7)}`;
+    default: return op;
+  }
+}
+
+type StoreGet = () => RepoState;
+
+async function retryOperation(get: StoreGet, operation: string, targetName: string): Promise<void> {
+  switch (operation) {
+    case "checkout": await get().checkout(targetName); break;
+    case "checkout-detached": await get().checkoutDetached(targetName); break;
+    case "pull": await get().pull(); break;
+    case "merge": await get().mergeInto(targetName); break;
+    case "cherry-pick": await get().cherryPick(targetName); break;
+    case "revert": await get().revertCommit(targetName); break;
+  }
+}
+
 export const useRepoStore = create<RepoState>()((set, get) => ({
   repoPath: null,
   repoName: null,
@@ -399,7 +427,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   conflictState: null,
   conflictContents: null,
   rebaseProgress: null,
-  dirtyCheckoutPending: null,
+  dirtyActionPending: null,
   remoteCheckoutPending: null,
   undoInfo: null,
   lastUndoTime: 0,
@@ -559,7 +587,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
       if (localExists) {
         if (fileStatuses.length > 0) {
-          set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
+          set({ dirtyActionPending: { operation: "checkout", targetName: name, changesCount: fileStatuses.length } });
           return;
         }
         set({ remoteCheckoutPending: { localName, remoteName: name, alreadyOnLocal: false } });
@@ -568,7 +596,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
       // No local branch — if dirty, prompt; otherwise auto-create tracking branch
       if (fileStatuses.length > 0) {
-        set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
+        set({ dirtyActionPending: { operation: "checkout", targetName: name, changesCount: fileStatuses.length } });
         return;
       }
       set({ isLoading: true, error: null });
@@ -586,7 +614,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
     // If working tree is dirty, prompt before switching
     if (fileStatuses.length > 0) {
-      set({ dirtyCheckoutPending: { targetName: name, changesCount: fileStatuses.length } });
+      set({ dirtyActionPending: { operation: "checkout", targetName: name, changesCount: fileStatuses.length } });
       return;
     }
 
@@ -603,40 +631,69 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
-  stashAndCheckout: async () => {
-    const pending = get().dirtyCheckoutPending;
+  stashAndProceed: async () => {
+    const pending = get().dirtyActionPending;
     if (!pending) return;
-    const target = pending.targetName;
-    set({ dirtyCheckoutPending: null, isLoading: true, error: null });
+    const { operation, targetName } = pending;
+    set({ dirtyActionPending: null, isLoading: true, error: null });
+
+    const opLabel = operationLabel(operation, targetName);
+    const ms = new MultiStepAction(`Stash & ${opLabel}`, ["git stash push", opLabel]);
     try {
-      await stashPushCmd(`Auto-stash before switching to ${target}`);
-      // Refresh file statuses so checkout() sees a clean tree
+      ms.startStep(0);
+      await stashPushCmd(`Auto-stash before ${operation}`);
+      ms.completeStep(0);
+      ms.startStep(1);
+      ms.completeStep(1);
+      ms.finish(1500);
+
       const freshStatuses = await getFileStatus();
       set({ isLoading: false, fileStatuses: freshStatuses });
-      get().checkout(target);
+      await retryOperation(get, operation, targetName);
     } catch (e) {
+      const failIdx = ms.runningStepIndex();
+      ms.failStep(failIdx >= 0 ? failIdx : 0, errorMessage(e));
       set({ isLoading: false });
-      toast.error(errorMessage(e));
     }
   },
 
-  discardAndCheckout: async () => {
-    const pending = get().dirtyCheckoutPending;
+  discardAndProceed: async () => {
+    const pending = get().dirtyActionPending;
     if (!pending) return;
-    const target = pending.targetName;
-    set({ dirtyCheckoutPending: null, isLoading: true, error: null });
+    const { operation, targetName } = pending;
+    set({ dirtyActionPending: null, isLoading: true, error: null });
+
+    const opLabel = operationLabel(operation, targetName);
+    const ms = new MultiStepAction(`Discard & ${opLabel}`, ["Discard changes", opLabel]);
     try {
-      await forceCheckoutBranch(target);
-      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses });
-      toast.success(`Checked out ${target}`);
+      ms.startStep(0);
+      if (operation === "checkout") {
+        await forceCheckoutBranch(targetName);
+        ms.completeStep(0);
+        ms.startStep(1);
+        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+        set({ ...repoData, isLoading: false, fileStatuses: statuses });
+        ms.completeStep(1);
+        ms.finish();
+      } else {
+        await discardAllCmd();
+        ms.completeStep(0);
+        ms.startStep(1);
+        ms.completeStep(1);
+        ms.finish(1500);
+
+        const freshStatuses = await getFileStatus();
+        set({ isLoading: false, fileStatuses: freshStatuses });
+        await retryOperation(get, operation, targetName);
+      }
     } catch (e) {
+      const failIdx = ms.runningStepIndex();
+      ms.failStep(failIdx >= 0 ? failIdx : 0, errorMessage(e));
       set({ isLoading: false });
-      toast.error(errorMessage(e));
     }
   },
 
-  cancelDirtyCheckout: () => set({ dirtyCheckoutPending: null }),
+  cancelDirtyAction: () => set({ dirtyActionPending: null }),
 
   resetLocalToRemote: async () => {
     const pending = get().remoteCheckoutPending;
@@ -687,6 +744,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   pull: async () => {
+    const { fileStatuses } = get();
+    if (fileStatuses.length > 0) {
+      set({ dirtyActionPending: { operation: "pull", targetName: "", changesCount: fileStatuses.length } });
+      return;
+    }
     set({ isLoading: true });
     const toastId = toast.loading("Pulling...");
     const unlisten = await listen<string>("git_progress", (event) => {
@@ -713,32 +775,30 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   push: async () => {
     set({ isLoading: true });
-    const toastId = toast.loading("Pushing...");
-    const unlisten = await listen<string>("git_progress", (event) => {
-      toast.loading(event.payload, { id: toastId });
-    });
+    const ms = new MultiStepAction("Push", ["git push", "Sync remote refs"]);
     try {
+      ms.startStep(0);
       await pushRepo();
-      // Fetch after push to sync all remote tracking refs, then read local state.
-      toast.loading("Syncing…", { id: toastId });
+      ms.completeStep(0);
+
+      ms.startStep(1);
       await fetchRepo().catch(() => {});
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
-      toast.success("Push complete", { id: toastId });
+      ms.completeStep(1);
+      ms.finish();
     } catch (e) {
       set({ isLoading: false });
       const { hookName, message } = parseError(e);
+      const failIdx = ms.runningStepIndex();
       if (hookName) {
-        toast.error(`Hook '${hookName}' failed`, { id: toastId, description: message.slice(0, 300), duration: 10000 });
+        ms.failStep(failIdx >= 0 ? failIdx : 0, `Hook '${hookName}' failed: ${message.slice(0, 200)}`);
       } else if (message.includes("rejected") || message.includes("non-fast-forward") || message.includes("fetch first")) {
-        // Detect rejected push (diverged history after reset)
-        toast.error("Push rejected — remote has diverged", { id: toastId });
+        ms.failStep(failIdx >= 0 ? failIdx : 0, "Push rejected — remote has diverged");
         set({ forcePushPending: true });
       } else {
-        toast.error(message, { id: toastId });
+        ms.failStep(failIdx >= 0 ? failIdx : 0, message);
       }
-    } finally {
-      unlisten();
     }
   },
 
@@ -1261,6 +1321,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   cherryPick: async (commitId) => {
+    const { fileStatuses } = get();
+    if (fileStatuses.length > 0) {
+      set({ dirtyActionPending: { operation: "cherry-pick", targetName: commitId, changesCount: fileStatuses.length } });
+      return;
+    }
     set({ isLoading: true });
     try {
       await cherryPickCommit(commitId);
@@ -1303,6 +1368,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   mergeInto: async (target) => {
+    const { fileStatuses } = get();
+    if (fileStatuses.length > 0) {
+      set({ dirtyActionPending: { operation: "merge", targetName: target, changesCount: fileStatuses.length } });
+      return;
+    }
     set({ isLoading: true });
     try {
       await mergeBranchCmd(target);
@@ -1351,6 +1421,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   revertCommit: async (commitId) => {
+    const { fileStatuses } = get();
+    if (fileStatuses.length > 0) {
+      set({ dirtyActionPending: { operation: "revert", targetName: commitId, changesCount: fileStatuses.length } });
+      return;
+    }
     set({ isLoading: true });
     try {
       await revertCommitCmd(commitId);
@@ -1367,6 +1442,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   checkoutDetached: async (commitId) => {
+    const { fileStatuses } = get();
+    if (fileStatuses.length > 0) {
+      set({ dirtyActionPending: { operation: "checkout-detached", targetName: commitId, changesCount: fileStatuses.length } });
+      return;
+    }
     set({ isLoading: true });
     try {
       await checkoutDetachedCmd(commitId);
@@ -1672,6 +1752,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       const status = await getForgeStatus();
       set({ forgeStatus: status });
+      const path = get().repoPath;
+      if (path && status.kind) {
+        updateRepoForgeKind(path, status.kind).catch(() => {});
+      }
     } catch {
       // Forge detection is non-critical
     }

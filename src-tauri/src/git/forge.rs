@@ -415,6 +415,64 @@ pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo>
     })
 }
 
+// ── User avatar search ──────────────────────────────────────────────────────
+
+/// Search for a user's avatar URL by email using the forge's API.
+/// Returns `None` if no user is found or the API call fails.
+pub fn search_user_avatar(host: &str, token: &Option<String>, email: &str) -> Option<String> {
+    let client = reqwest::blocking::Client::new();
+
+    if host.contains("github") {
+        let url = format!(
+            "https://api.{}/search/users?q={}+in:email&per_page=1",
+            host,
+            urlencoding::encode(email)
+        );
+        let mut req = client
+            .get(&url)
+            .header("User-Agent", "prefetch-git-client/0.1")
+            .header("Accept", "application/vnd.github+json");
+        if let Some(t) = token {
+            req = req.header("Authorization", format!("Bearer {t}"));
+        }
+        let resp = req.send().ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let json: serde_json::Value = resp.json().ok()?;
+        let items = json["items"].as_array()?;
+        let user = items.first()?;
+        return user["avatar_url"].as_str().map(|s| s.to_string());
+    }
+
+    if host.contains("gitlab") {
+        let url = format!(
+            "https://{}/api/v4/users?search={}",
+            host,
+            urlencoding::encode(email)
+        );
+        let mut req = client
+            .get(&url)
+            .header("User-Agent", "prefetch-git-client/0.1");
+        if let Some(t) = token {
+            if t.starts_with("glpat-") {
+                req = req.header("PRIVATE-TOKEN", t.as_str());
+            } else {
+                req = req.header("Authorization", format!("Bearer {t}"));
+            }
+        }
+        let resp = req.send().ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let users: Vec<serde_json::Value> = resp.json().ok()?;
+        let user = users.first()?;
+        return user["avatar_url"].as_str().map(|s| s.to_string());
+    }
+
+    None
+}
+
 // ── PR / MR lookup ────────────────────────────────────────────────────────────
 
 /// Look up the open PR / MR for `branch` on the detected forge.

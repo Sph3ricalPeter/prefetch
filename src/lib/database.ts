@@ -53,6 +53,15 @@ export async function initDatabase(): Promise<void> {
   } catch {
     // Column already exists — ignore
   }
+
+  // Add forge_kind column to recent_repos (migration)
+  try {
+    await db.execute(
+      `ALTER TABLE recent_repos ADD COLUMN forge_kind TEXT`,
+    );
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 /** Get the database instance. Throws if not initialized. */
@@ -70,6 +79,7 @@ export interface RecentRepo {
   name: string;
   last_opened_at: number;
   profile_id: string | null;
+  forge_kind: string | null;
 }
 
 /** Add or update a repo in the recent list. */
@@ -77,13 +87,14 @@ export async function addRecentRepo(
   path: string,
   name: string,
   profileId?: string | null,
+  forgeKind?: string | null,
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   await getDb().execute(
-    `INSERT INTO recent_repos (path, name, last_opened_at, profile_id)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT(path) DO UPDATE SET name = $2, last_opened_at = $3, profile_id = $4`,
-    [path, name, now, profileId ?? null],
+    `INSERT INTO recent_repos (path, name, last_opened_at, profile_id, forge_kind)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT(path) DO UPDATE SET name = $2, last_opened_at = $3, profile_id = $4, forge_kind = COALESCE($5, forge_kind)`,
+    [path, name, now, profileId ?? null, forgeKind ?? null],
   );
 }
 
@@ -92,16 +103,15 @@ export async function getRecentRepos(
   profileId?: string | null,
 ): Promise<RecentRepo[]> {
   if (profileId) {
-    // Show repos for this profile + unassigned repos
     return await getDb().select<RecentRepo[]>(
-      `SELECT path, name, last_opened_at, profile_id FROM recent_repos
+      `SELECT path, name, last_opened_at, profile_id, forge_kind FROM recent_repos
        WHERE profile_id = $1 OR profile_id IS NULL
        ORDER BY last_opened_at DESC LIMIT 20`,
       [profileId],
     );
   }
   return await getDb().select<RecentRepo[]>(
-    "SELECT path, name, last_opened_at, profile_id FROM recent_repos ORDER BY last_opened_at DESC LIMIT 20",
+    "SELECT path, name, last_opened_at, profile_id, forge_kind FROM recent_repos ORDER BY last_opened_at DESC LIMIT 20",
   );
 }
 
@@ -124,6 +134,17 @@ export async function updateRepoProfile(
   await getDb().execute(
     "UPDATE recent_repos SET profile_id = $1 WHERE path = $2",
     [profileId, repoPath],
+  );
+}
+
+/** Update the forge kind for a repo already in the recent list. */
+export async function updateRepoForgeKind(
+  repoPath: string,
+  forgeKind: string | null,
+): Promise<void> {
+  await getDb().execute(
+    "UPDATE recent_repos SET forge_kind = $1 WHERE path = $2",
+    [forgeKind, repoPath],
   );
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, GitBranch, GitPullRequest } from "lucide-react";
+import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal } from "lucide-react";
 import type { BranchInfo, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
@@ -12,6 +12,7 @@ import {
 export function BranchList({ filter = "" }: { filter?: string }) {
   const branches = useRepoStore((s) => s.branches);
   const currentBranch = useRepoStore((s) => s.currentBranch);
+  const headCommitId = useRepoStore((s) => s.headCommitId);
   const checkout = useRepoStore((s) => s.checkout);
   const rebaseOnto = useRepoStore((s) => s.rebaseOnto);
   const mergeInto = useRepoStore((s) => s.mergeInto);
@@ -70,6 +71,22 @@ export function BranchList({ filter = "" }: { filter?: string }) {
   return (
     <div className="flex flex-col">
       <div>
+        {/* Detached HEAD indicator */}
+        {!currentBranch && headCommitId && (
+          <div className="flex items-center gap-2 px-3 py-1 text-xs bg-accent/60">
+            <GitCommitHorizontal className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="text-muted-foreground">~HEAD</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-caption text-faint font-mono">
+                  {headCommitId.slice(0, 7)}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>Detached HEAD at {headCommitId.slice(0, 7)}</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+
         {/* Local branches */}
         <BranchSection
           label="Local"

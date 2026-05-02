@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, AlertTriangle, KeyRound, Globe } from "lucide-react";
+import { ForgeIcon } from "@/components/ui/forge-icons";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { gravatarUrl } from "@/lib/gravatar";
-import { getTokenInfo } from "@/lib/commands";
+import { getTokenInfo, searchUserAvatar } from "@/lib/commands";
 import type { TokenInfo } from "@/lib/commands";
 import {
   Tooltip,
@@ -28,24 +29,28 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase() || "?";
 }
 
-/** Tries to load a gravatar; returns the URL on success, null on 404/error. */
-function useGravatar(email: string | undefined): string | null {
+/** Tries Gravatar first, then forge API; returns the URL on success, null on failure. */
+function useAvatar(email: string | undefined): string | null {
   const [loaded, setLoaded] = useState<{ email: string; url: string } | null>(null);
 
   useEffect(() => {
     if (!email) return;
     let cancelled = false;
-    const src = gravatarUrl(email, 40); // 2x for retina on a 20px element
+    const src = gravatarUrl(email, 40);
     const img = new Image();
     img.onload = () => {
       if (!cancelled) setLoaded({ email, url: src });
     };
-    img.onerror = () => {};
+    img.onerror = () => {
+      // Gravatar failed — try forge API
+      searchUserAvatar(email).then((forgeUrl) => {
+        if (!cancelled && forgeUrl) setLoaded({ email, url: forgeUrl });
+      }).catch(() => {});
+    };
     img.src = src;
     return () => { cancelled = true; };
   }, [email]);
 
-  // Derive null from props instead of calling setState synchronously in the effect
   return email && loaded?.email === email ? loaded.url : null;
 }
 
@@ -63,7 +68,7 @@ export function CommitBox() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const isLoading = useRepoStore((s) => s.isLoading);
   const gitIdentity = useRepoStore((s) => s.gitIdentity);
-  const avatarUrl = useGravatar(gitIdentity?.email);
+  const avatarUrl = useAvatar(gitIdentity?.email);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
   const activeProfile = useProfileStore((s) => s.activeProfile);
   const conflictState = useRepoStore((s) => s.conflictState);
@@ -241,7 +246,9 @@ export function CommitBox() {
               </span>
               {authInfo ? (
                 <span className="ml-auto flex items-center gap-1 rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
-                  {authInfo.token_type === "oauth" ? (
+                  {forgeStatus?.kind ? (
+                    <ForgeIcon kind={forgeStatus.kind} className="h-2.5 w-2.5" />
+                  ) : authInfo.token_type === "oauth" ? (
                     <Globe className="h-2.5 w-2.5" />
                   ) : (
                     <KeyRound className="h-2.5 w-2.5" />
@@ -264,7 +271,7 @@ export function CommitBox() {
               </p>
               {authInfo && (
                 <p className="text-dim text-label">
-                  Auth: {authInfo.token_type === "oauth" ? "OAuth" : "PAT"}
+                  Auth: {forgeStatus?.kind === "github" ? "GitHub" : forgeStatus?.kind === "gitlab" ? "GitLab" : ""} {authInfo.token_type === "oauth" ? "OAuth" : "PAT"}
                   {authInfo.username ? ` (@${authInfo.username})` : ""}
                 </p>
               )}

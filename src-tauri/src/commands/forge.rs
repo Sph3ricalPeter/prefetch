@@ -114,6 +114,32 @@ pub async fn get_token_info(
     offload(move || Ok(forge::get_token_info(Some(&profile_id), &host))).await
 }
 
+// ── User avatar search ───────────────────────────────────────────────────────
+
+/// Search for a user's avatar URL by email using the forge's API.
+/// Uses the current repo's detected forge and stored token.
+#[tauri::command]
+pub async fn search_user_avatar(
+    email: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, AppError> {
+    let path = repo_path(&state)?;
+    let profile_id = get_profile_id(&state);
+
+    offload(move || {
+        let config = forge::detect_forge(&path)?;
+        match config {
+            None => Ok(None),
+            Some(cfg) => {
+                let token =
+                    forge::load_token_for_profile(profile_id.as_deref(), &cfg.host).unwrap_or(None);
+                Ok(forge::search_user_avatar(&cfg.host, &token, &email))
+            }
+        }
+    })
+    .await
+}
+
 // ── PR / MR lookup ────────────────────────────────────────────────────────────
 
 /// Return the open PR/MR for the given branch, or null if none exists.
