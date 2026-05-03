@@ -1489,14 +1489,11 @@ pub fn get_conflict_contents(
         let theirs_branch =
             read_rebase_onto_name(repo_path).unwrap_or_else(|| theirs_commit_id.clone());
 
-        let rebase_commit_message = run_git(
-            repo_path,
-            &["log", "-1", "--format=%s", "REBASE_HEAD"],
-            &[],
-        )
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+        let rebase_commit_message =
+            run_git(repo_path, &["log", "-1", "--format=%s", "REBASE_HEAD"], &[])
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
 
         Ok(types::ConflictContents {
             base,
