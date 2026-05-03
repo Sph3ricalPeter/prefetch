@@ -1489,6 +1489,15 @@ pub fn get_conflict_contents(
         let theirs_branch =
             read_rebase_onto_name(repo_path).unwrap_or_else(|| theirs_commit_id.clone());
 
+        let rebase_commit_message = run_git(
+            repo_path,
+            &["log", "-1", "--format=%s", "REBASE_HEAD"],
+            &[],
+        )
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
         Ok(types::ConflictContents {
             base,
             ours: git_theirs, // swap: user's branch content (git stage 3)
@@ -1497,6 +1506,7 @@ pub fn get_conflict_contents(
             theirs_commit_id,
             ours_branch,
             theirs_branch,
+            rebase_commit_message,
         })
     } else {
         // Merge and cherry-pick: git's ours/theirs matches user expectations.
@@ -1547,6 +1557,7 @@ pub fn get_conflict_contents(
             theirs_commit_id,
             ours_branch,
             theirs_branch,
+            rebase_commit_message: None,
         })
     }
 }

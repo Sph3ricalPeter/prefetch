@@ -130,6 +130,8 @@ export interface ConflictContents {
   ours_branch: string;
   /** Branch or ref name for theirs (incoming) */
   theirs_branch: string;
+  /** During rebase: subject line of the commit being replayed */
+  rebase_commit_message: string | null;
 }
 
 export interface HunkLineSelection {

@@ -886,10 +886,24 @@ export function CommitGraphCanvas({
     // --- WIP row ---
     if (hasWip && firstVisibleRow === 0) {
       const wipY = ROW_HEIGHT / 2 - scrollTop;
-      const nodeX = commits.length > 0 ? laneX(commits[0].lane) : laneX(0);
+      // Place WIP node on HEAD's lane, not commits[0]'s lane
+      const headCommitIdx = headRow >= 0 ? headRow - rowOffset : -1;
+      const headCommit = headCommitIdx >= 0 ? commits[headCommitIdx] : null;
+      const nodeX = headCommit ? laneX(headCommit.lane) : (commits.length > 0 ? laneX(commits[0].lane) : laneX(0));
 
-      // Connect WIP to first commit with a dashed line
-      if (commits.length > 0) {
+      // Connect WIP to HEAD commit with a dashed line
+      if (headCommit) {
+        const headY = headRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
+        ctx.strokeStyle = getCommitColor(headCommit);
+        ctx.globalAlpha = 0.4;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(nodeX, wipY);
+        ctx.lineTo(nodeX, headY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      } else if (commits.length > 0) {
         const firstCommitY = (0 + rowOffset) * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
         ctx.strokeStyle = getCommitColor(commits[0]);
         ctx.globalAlpha = 0.4;
