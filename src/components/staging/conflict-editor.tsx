@@ -35,7 +35,7 @@ import {
   type OutputLineMapping,
 } from "@/lib/conflict-regions";
 import { useRepoStore } from "@/stores/repo-store";
-import { Check, GitCompare, Minus, Plus, RotateCcw, Save } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, GitCompare, Minus, Plus, RotateCcw, Save } from "lucide-react";
 import type { ThemedToken } from "shiki";
 
 // ── CodeMirror annotations + compartments ───────────────────
@@ -910,6 +910,44 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const refPanesRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // ── Synchronized scrolling ─────────────────────────────────
+  const oursScrollRef = useRef<HTMLDivElement>(null);
+  const theirsScrollRef = useRef<HTMLDivElement>(null);
+  const scrollLockRef = useRef<string | null>(null);
+
+  const syncScroll = useCallback((source: "ours" | "theirs" | "output") => {
+    if (scrollLockRef.current && scrollLockRef.current !== source) return;
+    scrollLockRef.current = source;
+
+    let sourceEl: HTMLElement | null = null;
+    if (source === "ours") sourceEl = oursScrollRef.current;
+    else if (source === "theirs") sourceEl = theirsScrollRef.current;
+    else sourceEl = editorViewRef.current?.scrollDOM ?? null;
+
+    if (!sourceEl) {
+      scrollLockRef.current = null;
+      return;
+    }
+
+    const maxScroll = sourceEl.scrollHeight - sourceEl.clientHeight;
+    const ratio = maxScroll > 0 ? sourceEl.scrollTop / maxScroll : 0;
+
+    const targets: HTMLElement[] = [];
+    if (source !== "ours" && oursScrollRef.current) targets.push(oursScrollRef.current);
+    if (source !== "theirs" && theirsScrollRef.current) targets.push(theirsScrollRef.current);
+    const outputScroll = editorViewRef.current?.scrollDOM;
+    if (source !== "output" && outputScroll) targets.push(outputScroll);
+
+    for (const el of targets) {
+      const targetMax = el.scrollHeight - el.clientHeight;
+      el.scrollTop = ratio * targetMax;
+    }
+
+    requestAnimationFrame(() => {
+      scrollLockRef.current = null;
+    });
+  }, []);
+
   useEffect(() => {
     loadConflictContents(filePath);
   }, [filePath, loadConflictContents]);
@@ -958,19 +996,25 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const [theirsTokens, setTheirsTokens] = useState<ThemedToken[][] | null>(
     null,
   );
+  const [baseTokens, setBaseTokens] = useState<ThemedToken[][] | null>(null);
 
   useEffect(() => {
     if (!conflictContents) return;
     let cancelled = false;
     async function highlight() {
       try {
-        const [ot, tt] = await Promise.all([
+        const promises: Promise<ThemedToken[][]>[] = [
           highlightLines(conflictContents!.ours, lang, shikiThemeId),
           highlightLines(conflictContents!.theirs, lang, shikiThemeId),
-        ]);
+        ];
+        if (conflictContents!.base) {
+          promises.push(highlightLines(conflictContents!.base, lang, shikiThemeId));
+        }
+        const results = await Promise.all(promises);
         if (!cancelled) {
-          setOursTokens(ot);
-          setTheirsTokens(tt);
+          setOursTokens(results[0]);
+          setTheirsTokens(results[1]);
+          setBaseTokens(results[2] ?? null);
         }
       } catch {
         /* fallback */
@@ -1124,7 +1168,12 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
       annotations: isSyncAnnotation.of(true),
     });
 
+    // Sync output scroll to ours/theirs panes
+    const scrollHandler = () => syncScroll("output");
+    view.scrollDOM.addEventListener("scroll", scrollHandler);
+
     return () => {
+      view.scrollDOM.removeEventListener("scroll", scrollHandler);
       view.destroy();
       editorViewRef.current = null;
     };
@@ -1546,6 +1595,11 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
             {rebaseProgress.commit_id && (
               <span className="font-mono ml-1">{rebaseProgress.commit_id}</span>
             )}
+            {conflictContents?.rebase_commit_message && (
+              <span className="ml-1.5 italic truncate max-w-[300px] inline-block align-bottom" title={conflictContents.rebase_commit_message}>
+                {conflictContents.rebase_commit_message}
+              </span>
+            )}
           </span>
         )}
         <div className="flex items-center gap-1 ml-auto">
@@ -1609,42 +1663,52 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                 Accept Ours
               </button>
             </div>
-            <div className="overflow-auto flex-1 text-xs font-mono leading-5">
-              {regions.map((region, ri) => {
-                const lineStart = regionLineInfo[ri].oursStart;
-                if (region.type === "unchanged") {
+            <div className="relative flex-1 min-h-0">
+              <div
+                ref={oursScrollRef}
+                onScroll={() => syncScroll("ours")}
+                className="absolute inset-0 overflow-auto text-xs font-mono leading-5"
+              >
+                {regions.map((region, ri) => {
+                  const lineStart = regionLineInfo[ri].oursStart;
+                  if (region.type === "unchanged") {
+                    return (
+                      <UnchangedBlock
+                        key={ri}
+                        lines={region.aLines}
+                        tokens={oursTokens}
+                        startTokenLine={lineStart}
+                        startLineNo={region.aStartLine}
+                      />
+                    );
+                  }
+                  const sel = selections.get(ri);
+                  const isChecked =
+                    region.aLines.length > 0 &&
+                    (sel ? sel.oursLines.size === region.aLines.length : true);
                   return (
-                    <UnchangedBlock
+                    <ChangedBlock
                       key={ri}
                       lines={region.aLines}
                       tokens={oursTokens}
                       startTokenLine={lineStart}
                       startLineNo={region.aStartLine}
+                      side="ours"
+                      isChunkSelected={isChecked}
+                      selectedLines={
+                        sel?.oursLines ??
+                        new Set(region.aLines.map((_, i) => i))
+                      }
+                      onToggleChunk={() => toggleChunkOurs(ri)}
+                      onToggleLine={(li) => toggleLine(ri, "ours", li)}
+                      baseLines={region.baseLines}
+                      baseTokens={baseTokens}
+                      baseStartLine={region.baseStartLine}
                     />
                   );
-                }
-                const sel = selections.get(ri);
-                const isChecked = sel
-                  ? sel.oursLines.size === region.aLines.length
-                  : true;
-                return (
-                  <ChangedBlock
-                    key={ri}
-                    lines={region.aLines}
-                    tokens={oursTokens}
-                    startTokenLine={lineStart}
-                    startLineNo={region.aStartLine}
-                    side="ours"
-                    isChunkSelected={isChecked}
-                    selectedLines={
-                      sel?.oursLines ??
-                      new Set(region.aLines.map((_, i) => i))
-                    }
-                    onToggleChunk={() => toggleChunkOurs(ri)}
-                    onToggleLine={(li) => toggleLine(ri, "ours", li)}
-                  />
-                );
-              })}
+                })}
+              </div>
+              <ScrollMinimap regions={regions} side="ours" />
             </div>
           </div>
 
@@ -1688,39 +1752,49 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                 Accept Theirs
               </button>
             </div>
-            <div className="overflow-auto flex-1 text-xs font-mono leading-5">
-              {regions.map((region, ri) => {
-                const lineStart = regionLineInfo[ri].theirsStart;
-                if (region.type === "unchanged") {
+            <div className="relative flex-1 min-h-0">
+              <div
+                ref={theirsScrollRef}
+                onScroll={() => syncScroll("theirs")}
+                className="absolute inset-0 overflow-auto text-xs font-mono leading-5"
+              >
+                {regions.map((region, ri) => {
+                  const lineStart = regionLineInfo[ri].theirsStart;
+                  if (region.type === "unchanged") {
+                    return (
+                      <UnchangedBlock
+                        key={ri}
+                        lines={region.bLines}
+                        tokens={theirsTokens}
+                        startTokenLine={lineStart}
+                        startLineNo={region.bStartLine}
+                      />
+                    );
+                  }
+                  const sel = selections.get(ri);
+                  const isChecked =
+                    region.bLines.length > 0 &&
+                    (sel ? sel.theirsLines.size === region.bLines.length : false);
                   return (
-                    <UnchangedBlock
+                    <ChangedBlock
                       key={ri}
                       lines={region.bLines}
                       tokens={theirsTokens}
                       startTokenLine={lineStart}
                       startLineNo={region.bStartLine}
+                      side="theirs"
+                      isChunkSelected={isChecked}
+                      selectedLines={sel?.theirsLines ?? new Set<number>()}
+                      onToggleChunk={() => toggleChunkTheirs(ri)}
+                      onToggleLine={(li) => toggleLine(ri, "theirs", li)}
+                      baseLines={region.baseLines}
+                      baseTokens={baseTokens}
+                      baseStartLine={region.baseStartLine}
                     />
                   );
-                }
-                const sel = selections.get(ri);
-                const isChecked = sel
-                  ? sel.theirsLines.size === region.bLines.length
-                  : false;
-                return (
-                  <ChangedBlock
-                    key={ri}
-                    lines={region.bLines}
-                    tokens={theirsTokens}
-                    startTokenLine={lineStart}
-                    startLineNo={region.bStartLine}
-                    side="theirs"
-                    isChunkSelected={isChecked}
-                    selectedLines={sel?.theirsLines ?? new Set<number>()}
-                    onToggleChunk={() => toggleChunkTheirs(ri)}
-                    onToggleLine={(li) => toggleLine(ri, "theirs", li)}
-                  />
-                );
-              })}
+                })}
+              </div>
+              <ScrollMinimap regions={regions} side="theirs" />
             </div>
           </div>
         </div>
@@ -1877,6 +1951,9 @@ interface ChangedBlockProps {
   selectedLines: Set<number>;
   onToggleChunk: () => void;
   onToggleLine: (lineIndex: number) => void;
+  baseLines?: string[];
+  baseTokens?: ThemedToken[][] | null;
+  baseStartLine?: number;
 }
 
 function ChangedBlock({
@@ -1889,90 +1966,210 @@ function ChangedBlock({
   selectedLines,
   onToggleChunk,
   onToggleLine,
+  baseLines,
+  baseTokens,
+  baseStartLine,
 }: ChangedBlockProps) {
+  const [baseExpanded, setBaseExpanded] = useState(false);
   const borderClass =
     side === "ours" ? "border-l-blue-500/50" : "border-l-purple-500/50";
 
+  const hasBase = baseLines && baseLines.length > 0;
+
+  if (lines.length === 0) {
+    return (
+      <div className={`border-l-2 ${borderClass}`}>
+        <div className="px-2 py-0.5">
+          <span
+            className={`text-[10px] italic ${
+              side === "ours" ? "text-blue-400/30" : "text-purple-400/30"
+            }`}
+          >
+            — deleted —
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`border-l-2 ${borderClass}`}>
-      {/* Chunk header with checkbox */}
-      <div
-        className={`flex items-center gap-1 px-1 py-0.5 cursor-pointer transition-colors ${
-          side === "ours"
-            ? "bg-blue-500/[0.08] hover:bg-blue-500/15"
-            : "bg-purple-500/[0.08] hover:bg-purple-500/15"
-        }`}
-        onClick={onToggleChunk}
-      >
-        <span
-          className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
-            isChunkSelected
-              ? side === "ours"
-                ? "bg-blue-500 text-white"
-                : "bg-purple-500 text-white"
-              : "border border-muted-foreground/30"
-          }`}
-        >
-          {isChunkSelected && <Check className="w-2.5 h-2.5" />}
-        </span>
-        <span
-          className={`text-[10px] font-medium ${
-            side === "ours" ? "text-blue-400/70" : "text-purple-400/70"
-          }`}
-        >
-          {side === "ours" ? "Ours" : "Theirs"} &middot; {lines.length} line
-          {lines.length !== 1 ? "s" : ""}
-        </span>
-      </div>
-
-      {lines.map((line, li) => {
-        const isSelected = selectedLines.has(li);
-        return (
-          <div
-            key={li}
-            className={`flex group/cline cursor-pointer transition-colors ${
-              isSelected
-                ? side === "ours"
-                  ? "bg-blue-500/10"
-                  : "bg-purple-500/10"
-                : "bg-zinc-800/30 opacity-50 hover:opacity-75"
-            }`}
-            onClick={() => onToggleLine(li)}
+      {/* Collapsible base (ancestor) section */}
+      {hasBase && (
+        <div className="bg-zinc-500/[0.06] border-b border-border/30">
+          <button
+            onClick={() => setBaseExpanded((v) => !v)}
+            className="flex items-center gap-1 w-full px-2 py-0.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors"
           >
-            <span className="w-5 shrink-0 flex items-center justify-center select-none">
-              <span
-                className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center opacity-0 group-hover/cline:opacity-100 transition-opacity ${
-                  side === "ours" ? "text-blue-400" : "text-purple-400"
-                }`}
-              >
-                {isSelected ? (
-                  <Minus className="w-2.5 h-2.5" />
-                ) : (
-                  <Plus className="w-2.5 h-2.5" />
-                )}
-              </span>
+            {baseExpanded ? (
+              <ChevronDown className="w-3 h-3 shrink-0" />
+            ) : (
+              <ChevronRight className="w-3 h-3 shrink-0" />
+            )}
+            <span>
+              Base · {baseLines.length} line{baseLines.length !== 1 ? "s" : ""}
             </span>
-            <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
-              {startLineNo + li}
-            </span>
-            <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
-              {tokens?.[startTokenLine + li]?.length ? (
-                tokens[startTokenLine + li].map(
-                  (token: ThemedToken, i: number) => (
-                    <span key={i} style={{ color: token.color }}>
-                      {token.content}
+          </button>
+          {baseExpanded && (
+            <div className="opacity-60">
+              {baseLines.map((line, li) => {
+                const tokenLine = baseStartLine ? baseStartLine - 1 + li : -1;
+                return (
+                  <div key={li} className="flex">
+                    <span className="w-5 shrink-0" />
+                    <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                      {baseStartLine ? baseStartLine + li : ""}
                     </span>
-                  ),
-                )
-              ) : (
-                <span className="text-muted-foreground">
-                  {line || <span className="text-muted-foreground/20">{"↵"}</span>}
+                    <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
+                      {baseTokens?.[tokenLine]?.length ? (
+                        baseTokens[tokenLine].map(
+                          (token: ThemedToken, i: number) => (
+                            <span key={i} style={{ color: token.color }}>
+                              {token.content}
+                            </span>
+                          ),
+                        )
+                      ) : (
+                        <span className="text-muted-foreground">
+                          {line || <span className="text-muted-foreground/20">{"↵"}</span>}
+                        </span>
+                      )}
+                    </pre>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex">
+        {/* Side column: checkbox centered vertically */}
+        <div
+          className={`shrink-0 w-7 flex flex-col items-center justify-center cursor-pointer select-none transition-colors ${
+            side === "ours"
+              ? "bg-blue-500/[0.06] hover:bg-blue-500/10"
+              : "bg-purple-500/[0.06] hover:bg-purple-500/10"
+          }`}
+          onClick={onToggleChunk}
+          title={`${isChunkSelected ? "Deselect" : "Select"} all ${side} lines`}
+        >
+          <span
+            className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
+              isChunkSelected
+                ? side === "ours"
+                  ? "bg-blue-500 text-white"
+                  : "bg-purple-500 text-white"
+                : "border border-muted-foreground/30"
+            }`}
+          >
+            {isChunkSelected && <Check className="w-2.5 h-2.5" />}
+          </span>
+        </div>
+
+        {/* Lines */}
+        <div className="flex-1 min-w-0">
+          {lines.map((line, li) => {
+            const isSelected = selectedLines.has(li);
+            return (
+              <div
+                key={li}
+                className={`flex group/cline cursor-pointer transition-colors ${
+                  isSelected
+                    ? side === "ours"
+                      ? "bg-blue-500/10"
+                      : "bg-purple-500/10"
+                    : side === "ours"
+                      ? "bg-blue-500/[0.04]"
+                      : "bg-purple-500/[0.04]"
+                }`}
+                onClick={() => onToggleLine(li)}
+              >
+                <span className="w-5 shrink-0 flex items-center justify-center select-none">
+                  <span
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center opacity-0 group-hover/cline:opacity-100 transition-opacity ${
+                      side === "ours" ? "text-blue-400" : "text-purple-400"
+                    }`}
+                  >
+                    {isSelected ? (
+                      <Minus className="w-2.5 h-2.5" />
+                    ) : (
+                      <Plus className="w-2.5 h-2.5" />
+                    )}
+                  </span>
                 </span>
-              )}
-            </pre>
-          </div>
-        );
-      })}
+                <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                  {startLineNo + li}
+                </span>
+                <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
+                  {tokens?.[startTokenLine + li]?.length ? (
+                    tokens[startTokenLine + li].map(
+                      (token: ThemedToken, i: number) => (
+                        <span key={i} style={{ color: token.color }}>
+                          {token.content}
+                        </span>
+                      ),
+                    )
+                  ) : (
+                    <span className="text-muted-foreground">
+                      {line || <span className="text-muted-foreground/20">{"↵"}</span>}
+                    </span>
+                  )}
+                </pre>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Scrollbar minimap ───────────────────────────────────────
+
+function ScrollMinimap({
+  regions,
+  side,
+}: {
+  regions: DiffRegion[];
+  side: "ours" | "theirs";
+}) {
+  const markers = useMemo(() => {
+    let totalLines = 0;
+    const positions: { top: number; lines: number }[] = [];
+
+    for (const region of regions) {
+      const lines =
+        side === "ours" ? region.aLines.length : region.bLines.length;
+      if (region.type === "changed") {
+        positions.push({ top: totalLines, lines: Math.max(lines, 1) });
+      }
+      totalLines += lines;
+    }
+
+    if (totalLines === 0 || positions.length === 0) return [];
+
+    return positions.map((p) => ({
+      topPct: (p.top / totalLines) * 100,
+      heightPct: Math.max(0.4, (p.lines / totalLines) * 100),
+    }));
+  }, [regions, side]);
+
+  if (markers.length === 0) return null;
+
+  return (
+    <div className="absolute top-0 right-0 bottom-0 w-[6px] z-10 pointer-events-none">
+      {markers.map((m, i) => (
+        <div
+          key={i}
+          className="absolute right-[1px] w-[4px] rounded-full bg-amber-500/70"
+          style={{
+            top: `${m.topPct}%`,
+            height: `${m.heightPct}%`,
+            minHeight: 3,
+          }}
+        />
+      ))}
     </div>
   );
 }

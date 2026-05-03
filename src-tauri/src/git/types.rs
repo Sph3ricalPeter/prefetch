@@ -156,6 +156,8 @@ pub struct ConflictContents {
     pub ours_branch: String,
     /// Branch or ref name for theirs (incoming).
     pub theirs_branch: String,
+    /// During rebase: subject line of the commit being replayed.
+    pub rebase_commit_message: Option<String>,
 }
 
 /// Describes the last undoable action from the reflog.
