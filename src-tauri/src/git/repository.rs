@@ -1022,7 +1022,7 @@ fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
 /// false positives from CRLF/autocrlf handling on Windows.
 pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
     let output = git_cmd()
-        .args(["status", "--porcelain=v1", "-unormal"])
+        .args(["status", "--porcelain=v1", "-uall"])
         .current_dir(path)
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git status: {e}")))?;
@@ -1049,15 +1049,7 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         }
         let index_status = line.as_bytes()[0] as char;
         let wt_status = line.as_bytes()[1] as char;
-        let raw_path = unquote_git_path(&line[3..]);
-
-        // `-unormal` reports untracked directories as "?? dirname/" (trailing slash).
-        // These are directories, not files — skip them to avoid ghost entries in the
-        // file list that show "?" with no name and "No changes" when clicked.
-        if raw_path.ends_with('/') {
-            continue;
-        }
-        let file_path = raw_path;
+        let file_path = unquote_git_path(&line[3..]);
 
         // Check for merge conflicts (both columns have U, or specific conflict combos)
         let is_conflict = matches!(
