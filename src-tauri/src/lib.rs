@@ -73,6 +73,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::repo::open_repo,
+            commands::repo::clone_repo,
             commands::repo::get_commits,
             commands::repo::get_branches,
             commands::repo::checkout_branch,
@@ -142,6 +143,7 @@ pub fn run() {
             commands::forge::search_user_avatar,
             commands::forge::get_pr_for_branch,
             commands::forge::clear_pr_cache,
+            commands::forge::list_forge_repos,
             commands::forge::start_oauth_flow,
             commands::forge::cancel_oauth_flow,
             commands::forge::open_url,

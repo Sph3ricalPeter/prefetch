@@ -183,6 +183,16 @@ export interface ForgeStatus {
   has_token: boolean;
 }
 
+export interface ForgeRepo {
+  name: string;
+  full_name: string;
+  clone_url_https: string;
+  clone_url_ssh: string | null;
+  description: string | null;
+  is_private: boolean;
+  updated_at: string;
+}
+
 // ── LFS ───────────────────────────────────────────────────────────────────────
 
 export interface LfsTrackPattern {

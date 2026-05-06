@@ -455,6 +455,47 @@ pub fn create_branch(path: &str, name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Clone a remote repository with progress streaming.
+///
+/// If the URL is HTTPS and a token is available for the host, credentials
+/// are injected into the URL to avoid credential-helper prompts.
+pub fn clone_repo<F: Fn(&str)>(
+    url: &str,
+    target_path: &str,
+    on_progress: F,
+    extra_env: &[(String, String)],
+    token: Option<&str>,
+) -> Result<String, AppError> {
+    let mut args: Vec<String> = Vec::new();
+    let mut env = extra_env.to_vec();
+
+    let effective_url = if url.starts_with("https://") {
+        if let Some(tok) = token {
+            let username = if url.contains("gitlab") {
+                "oauth2"
+            } else {
+                "x-access-token"
+            };
+            let authed_url = url.replacen("https://", &format!("https://{username}:{tok}@"), 1);
+            args.extend(["-c", "credential.helper="].iter().map(|s| s.to_string()));
+            env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
+            env.push(("GCM_INTERACTIVE".to_string(), "never".to_string()));
+            authed_url
+        } else {
+            url.to_string()
+        }
+    } else {
+        url.to_string()
+    };
+
+    args.extend(["clone", "--progress"].iter().map(|s| s.to_string()));
+    args.push(effective_url);
+    args.push(target_path.to_string());
+
+    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_with_progress(".", &args_refs, &on_progress, &env)
+}
+
 /// Fetch all remotes with progress streaming.
 ///
 /// When a forge token is stored for an HTTPS remote, credentials are

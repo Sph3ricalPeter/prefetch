@@ -198,6 +198,18 @@ pub struct PrInfo {
     pub state: String,
 }
 
+/// A repository from the forge API (GitHub/GitLab).
+#[derive(Debug, Clone, Serialize)]
+pub struct ForgeRepo {
+    pub name: String,
+    pub full_name: String,
+    pub clone_url_https: String,
+    pub clone_url_ssh: Option<String>,
+    pub description: Option<String>,
+    pub is_private: bool,
+    pub updated_at: String,
+}
+
 // ── LFS types ─────────────────────────────────────────────────────────────────
 
 /// A single pattern being tracked by git-lfs (from .gitattributes).

@@ -3,7 +3,7 @@
 
 use crate::error::AppError;
 use crate::git::repository::run_git;
-use crate::git::types::{ForgeConfig, ForgeKind, PrInfo};
+use crate::git::types::{ForgeConfig, ForgeKind, ForgeRepo, PrInfo};
 
 // ── Remote detection ─────────────────────────────────────────────────────────
 
@@ -553,4 +553,134 @@ fn gitlab_get_mr(config: &ForgeConfig, branch: &str, token: &Option<String>) -> 
         url: mr["web_url"].as_str()?.to_string(),
         state: mr["state"].as_str().unwrap_or("opened").to_string(),
     })
+}
+
+// ── Repo listing ─────────────────────────────────────────────────────────────
+
+/// List repositories the authenticated user has access to.
+///
+/// Dispatches to GitHub or GitLab based on the `host` string.
+/// Requires a valid token — returns an error if none is provided.
+pub fn list_user_repos(host: &str, token: &str) -> Result<Vec<ForgeRepo>, AppError> {
+    let kind = classify_host(host);
+    match kind {
+        ForgeKind::GitHub => github_list_repos(host, token),
+        ForgeKind::GitLab => gitlab_list_repos(host, token),
+    }
+}
+
+fn github_list_repos(host: &str, token: &str) -> Result<Vec<ForgeRepo>, AppError> {
+    let client = reqwest::blocking::Client::new();
+    let mut all_repos = Vec::new();
+    let mut page = 1u32;
+
+    loop {
+        let url = format!(
+            "https://api.{}/user/repos?sort=updated&per_page=100&page={}&type=all",
+            host, page
+        );
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "prefetch-git-client/0.1")
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .map_err(|e| AppError::Other(format!("GitHub API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!("GitHub API {status}: {body}")));
+        }
+
+        let repos: Vec<serde_json::Value> = resp
+            .json()
+            .map_err(|e| AppError::Other(format!("Failed to parse GitHub response: {e}")))?;
+
+        if repos.is_empty() {
+            break;
+        }
+
+        for repo in &repos {
+            all_repos.push(ForgeRepo {
+                name: repo["name"].as_str().unwrap_or("").to_string(),
+                full_name: repo["full_name"].as_str().unwrap_or("").to_string(),
+                clone_url_https: repo["clone_url"].as_str().unwrap_or("").to_string(),
+                clone_url_ssh: repo["ssh_url"].as_str().map(|s| s.to_string()),
+                description: repo["description"].as_str().map(|s| s.to_string()),
+                is_private: repo["private"].as_bool().unwrap_or(false),
+                updated_at: repo["updated_at"].as_str().unwrap_or("").to_string(),
+            });
+        }
+
+        if repos.len() < 100 {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok(all_repos)
+}
+
+fn gitlab_list_repos(host: &str, token: &str) -> Result<Vec<ForgeRepo>, AppError> {
+    let client = reqwest::blocking::Client::new();
+    let mut all_repos = Vec::new();
+    let mut page = 1u32;
+
+    let is_pat = token.starts_with("glpat-");
+
+    loop {
+        let url = format!(
+            "https://{}/api/v4/projects?membership=true&order_by=last_activity_at&per_page=100&page={}",
+            host, page
+        );
+        let mut req = client
+            .get(&url)
+            .header("User-Agent", "prefetch-git-client/0.1");
+        if is_pat {
+            req = req.header("PRIVATE-TOKEN", token);
+        } else {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+
+        let resp = req
+            .send()
+            .map_err(|e| AppError::Other(format!("GitLab API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!("GitLab API {status}: {body}")));
+        }
+
+        let repos: Vec<serde_json::Value> = resp
+            .json()
+            .map_err(|e| AppError::Other(format!("Failed to parse GitLab response: {e}")))?;
+
+        if repos.is_empty() {
+            break;
+        }
+
+        for repo in &repos {
+            all_repos.push(ForgeRepo {
+                name: repo["name"].as_str().unwrap_or("").to_string(),
+                full_name: repo["path_with_namespace"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
+                clone_url_https: repo["http_url_to_repo"].as_str().unwrap_or("").to_string(),
+                clone_url_ssh: repo["ssh_url_to_repo"].as_str().map(|s| s.to_string()),
+                description: repo["description"].as_str().map(|s| s.to_string()),
+                is_private: repo["visibility"].as_str() == Some("private"),
+                updated_at: repo["last_activity_at"].as_str().unwrap_or("").to_string(),
+            });
+        }
+
+        if repos.len() < 100 {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok(all_repos)
 }
