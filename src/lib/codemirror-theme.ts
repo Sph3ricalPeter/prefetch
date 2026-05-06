@@ -13,6 +13,10 @@ export function getCodemirrorTheme(cm: CodeThemeCodemirror, isDark = true) {
       ".cm-content": {
         caretColor: cm.caret,
         padding: "0",
+        lineHeight: "20px",
+      },
+      ".cm-line": {
+        padding: "0 8px",
       },
       ".cm-cursor, .cm-dropCursor": {
         borderLeftColor: cm.caret,
@@ -142,3 +146,4 @@ export function getCodemirrorTheme(cm: CodeThemeCodemirror, isDark = true) {
     { dark: isDark },
   );
 }
+
