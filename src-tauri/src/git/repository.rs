@@ -1027,7 +1027,34 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git status: {e}")))?;
 
-    let text = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!(
+            "git status exited with {}: {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+        return Err(AppError::Other(format!(
+            "git status failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    let stdout_raw = &output.stdout;
+    if stdout_raw.len() > 512_000 {
+        tracing::warn!(
+            "git status -uall output is {}KB, falling back to -unormal",
+            stdout_raw.len() / 1024
+        );
+        return get_status_fallback(path);
+    }
+
+    let text = String::from_utf8_lossy(stdout_raw);
+    tracing::debug!(
+        "git status: {} bytes, {} lines",
+        stdout_raw.len(),
+        text.lines().count()
+    );
 
     // Fast path: no changes at all → skip the 2 expensive `git diff --numstat`
     // subprocess spawns (~100ms saved on Windows). The poller hits this path
@@ -1104,6 +1131,91 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         }
 
         // Unstaged / untracked changes (worktree column)
+        if wt_status != ' ' {
+            let (additions, deletions) = unstaged_stats
+                .get(&file_path)
+                .map(|&(a, d)| (Some(a), Some(d)))
+                .unwrap_or((None, None));
+            result.push(FileStatus {
+                path: file_path,
+                status_type: if index_status == '?' {
+                    "untracked".to_string()
+                } else {
+                    porcelain_to_status_type(wt_status)
+                },
+                is_staged: false,
+                additions,
+                deletions,
+                is_conflicted: false,
+                conflict_type: None,
+            });
+        }
+    }
+
+    result.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(result)
+}
+
+/// Fallback when `-uall` output exceeds the size threshold.
+/// Uses `-unormal` which collapses untracked directories into a single entry.
+fn get_status_fallback(path: &str) -> Result<Vec<FileStatus>, AppError> {
+    let output = git_cmd()
+        .args(["status", "--porcelain=v1", "-unormal"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git status -unormal: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Other(format!(
+            "git status -unormal failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
+    let unstaged_stats = parse_numstat(path, &["diff", "--numstat"]);
+
+    let mut result: Vec<FileStatus> = Vec::new();
+    for line in text.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let index_status = line.as_bytes()[0] as char;
+        let wt_status = line.as_bytes()[1] as char;
+        let file_path = unquote_git_path(&line[3..]);
+
+        // -unormal shows untracked directories with trailing /
+        if file_path.ends_with('/') {
+            result.push(FileStatus {
+                path: file_path.trim_end_matches('/').to_string(),
+                status_type: "untracked".to_string(),
+                is_staged: false,
+                additions: None,
+                deletions: None,
+                is_conflicted: false,
+                conflict_type: None,
+            });
+            continue;
+        }
+
+        if index_status != ' ' && index_status != '?' {
+            let (additions, deletions) = staged_stats
+                .get(&file_path)
+                .map(|&(a, d)| (Some(a), Some(d)))
+                .unwrap_or((None, None));
+            result.push(FileStatus {
+                path: file_path.clone(),
+                status_type: porcelain_to_status_type(index_status),
+                is_staged: true,
+                additions,
+                deletions,
+                is_conflicted: false,
+                conflict_type: None,
+            });
+        }
+
         if wt_status != ' ' {
             let (additions, deletions) = unstaged_stats
                 .get(&file_path)
@@ -2471,5 +2583,151 @@ pub fn continue_operation(
         "cherry-pick" => run_git(path, &["cherry-pick", "--continue"], &env),
         "merge" => run_git(path, &["merge", "--continue"], &env),
         _ => Err(AppError::Other("No operation in progress".to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn init_temp_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let p = dir.path().to_str().unwrap();
+        git_cmd()
+            .args(["init"])
+            .current_dir(p)
+            .output()
+            .expect("git init");
+        git_cmd()
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(p)
+            .output()
+            .expect("config email");
+        git_cmd()
+            .args(["config", "user.name", "Test"])
+            .current_dir(p)
+            .output()
+            .expect("config name");
+        // Create an initial commit so HEAD exists
+        std::fs::write(dir.path().join(".gitkeep"), "").unwrap();
+        git_cmd()
+            .args(["add", ".gitkeep"])
+            .current_dir(p)
+            .output()
+            .expect("add");
+        git_cmd()
+            .args(["commit", "-m", "init"])
+            .current_dir(p)
+            .output()
+            .expect("commit");
+        dir
+    }
+
+    #[test]
+    fn status_shows_untracked_file() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        std::fs::write(dir.path().join("new.txt"), "hello").unwrap();
+
+        let status = get_status(p).unwrap();
+        let untracked: Vec<_> = status
+            .iter()
+            .filter(|f| f.status_type == "untracked")
+            .collect();
+        assert_eq!(untracked.len(), 1);
+        assert_eq!(untracked[0].path, "new.txt");
+        assert!(!untracked[0].is_staged);
+    }
+
+    #[test]
+    fn status_shows_staged_and_modified() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        // Create and stage a file
+        std::fs::write(dir.path().join("a.txt"), "v1").unwrap();
+        git_cmd()
+            .args(["add", "a.txt"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+
+        let status = get_status(p).unwrap();
+        let staged: Vec<_> = status
+            .iter()
+            .filter(|f| f.is_staged && f.path == "a.txt")
+            .collect();
+        assert_eq!(staged.len(), 1);
+        assert_eq!(staged[0].status_type, "added");
+
+        // Modify after staging → should appear as both staged (added) and unstaged (modified)
+        std::fs::write(dir.path().join("a.txt"), "v2").unwrap();
+        let status = get_status(p).unwrap();
+        let entries: Vec<_> = status.iter().filter(|f| f.path == "a.txt").collect();
+        assert_eq!(entries.len(), 2);
+        assert!(entries
+            .iter()
+            .any(|f| f.is_staged && f.status_type == "added"));
+        assert!(entries
+            .iter()
+            .any(|f| !f.is_staged && f.status_type == "modified"));
+    }
+
+    #[test]
+    fn status_shows_deleted_file() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        std::fs::write(dir.path().join("del.txt"), "bye").unwrap();
+        git_cmd()
+            .args(["add", "del.txt"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        git_cmd()
+            .args(["commit", "-m", "add del.txt"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+
+        std::fs::remove_file(dir.path().join("del.txt")).unwrap();
+
+        let status = get_status(p).unwrap();
+        let deleted: Vec<_> = status
+            .iter()
+            .filter(|f| f.path == "del.txt" && f.status_type == "deleted")
+            .collect();
+        assert_eq!(deleted.len(), 1);
+        assert!(!deleted[0].is_staged);
+    }
+
+    #[test]
+    fn status_shows_nested_untracked_files() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("sub/deep")).unwrap();
+        std::fs::write(dir.path().join("sub/a.txt"), "a").unwrap();
+        std::fs::write(dir.path().join("sub/deep/b.txt"), "b").unwrap();
+
+        let status = get_status(p).unwrap();
+        let untracked: Vec<_> = status
+            .iter()
+            .filter(|f| f.status_type == "untracked")
+            .collect();
+        // -uall expands directories, so we get individual files
+        assert_eq!(untracked.len(), 2);
+        assert!(untracked.iter().any(|f| f.path == "sub/a.txt"));
+        assert!(untracked.iter().any(|f| f.path == "sub/deep/b.txt"));
+    }
+
+    #[test]
+    fn status_empty_repo_returns_empty() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let status = get_status(p).unwrap();
+        assert!(status.is_empty());
     }
 }

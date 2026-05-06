@@ -1,6 +1,6 @@
 [package]
 name = "prefetch"
-version = "0.10.3"
+version = "0.10.4"
 description = "A desktop git client"
 authors = ["Sph3ricalPeter <sph3ricalpeter@gmail.com>"]
 license = "MIT"
@@ -37,3 +37,6 @@ dunce = "1"
 tracing = { version = "0.1", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt", "ansi"] }
 tracing-chrome = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
