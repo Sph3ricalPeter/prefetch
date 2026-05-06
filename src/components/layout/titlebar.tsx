@@ -20,6 +20,7 @@ import {
   ArchiveRestore,
   GitBranchPlus,
   MoreHorizontal,
+  Download,
 } from "lucide-react";
 
 /** Detect macOS — synchronous, safe to call at module level */
@@ -50,7 +51,7 @@ function getAppWindow(): TauriWindow | null {
   return _appWindow;
 }
 
-export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
+export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?: boolean; onOpenClone?: () => void }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
@@ -100,7 +101,7 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
 
       {/* Repo switcher — left-aligned after brand, hidden in settings */}
       <div className="flex items-center min-w-0" data-tauri-drag-region>
-        {!settingsOpen && <TitlebarRepoSwitcher />}
+        {!settingsOpen && <TitlebarRepoSwitcher onOpenClone={onOpenClone} />}
       </div>
 
       {/* Spacer — pushes window controls to the right */}
@@ -168,7 +169,7 @@ export function Titlebar({ settingsOpen = false }: { settingsOpen?: boolean }) {
 }
 
 /** Repo switcher in the titlebar — shows current repo + branch + commit count */
-function TitlebarRepoSwitcher() {
+function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
   const repoPath = useRepoStore((s) => s.repoPath);
   const repoName = useRepoStore((s) => s.repoName);
   const currentBranch = useRepoStore((s) => s.currentBranch);
@@ -206,13 +207,22 @@ function TitlebarRepoSwitcher() {
 
   if (!repoPath) {
     return (
-      <button
-        onClick={handleOpenRepo}
-        className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-      >
-        <FolderOpen className="h-3.5 w-3.5" />
-        <span>Open Repository</span>
-      </button>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={handleOpenRepo}
+          className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+          <span>Open</span>
+        </button>
+        <button
+          onClick={() => { onOpenClone?.(); }}
+          className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <Download className="h-3.5 w-3.5" />
+          <span>Clone</span>
+        </button>
+      </div>
     );
   }
 
@@ -261,6 +271,13 @@ function TitlebarRepoSwitcher() {
           >
             <FolderOpen className="h-3.5 w-3.5" />
             Open Repository...
+          </button>
+          <button
+            onClick={() => { setIsOpen(false); onOpenClone?.(); }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Clone Repository...
           </button>
 
           {otherRepos.length > 0 && (

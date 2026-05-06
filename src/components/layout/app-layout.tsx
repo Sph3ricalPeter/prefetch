@@ -5,6 +5,7 @@ import { SidebarPanel } from "./sidebar-panel";
 import { GraphPanel } from "./graph-panel";
 import { DetailPanel } from "./detail-panel";
 import { SettingsPage } from "@/components/ui/settings-page";
+import { CloneDialog } from "@/components/ui/clone-dialog";
 import { getUiState, setUiState } from "@/lib/database";
 
 const SIDEBAR_DEFAULT = 256; // w-64
@@ -53,6 +54,7 @@ export function AppLayout() {
   const detailRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const [detailWidth, setDetailWidth] = useState(DETAIL_DEFAULT);
 
@@ -138,7 +140,7 @@ export function AppLayout() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground select-none">
       {/* Custom titlebar — replaces native window chrome */}
-      <Titlebar settingsOpen={settingsOpen} />
+      <Titlebar settingsOpen={settingsOpen} onOpenClone={() => setCloneOpen(true)} />
 
       {/* Settings fullpage view OR three-panel repo view */}
       {settingsOpen ? (
@@ -178,6 +180,16 @@ export function AppLayout() {
             <DetailPanel />
           </div>
         </div>
+      )}
+
+      {cloneOpen && (
+        <CloneDialog
+          onClose={() => setCloneOpen(false)}
+          onOpenSettings={() => {
+            setCloneOpen(false);
+            setSettingsOpen(true);
+          }}
+        />
       )}
     </div>
   );

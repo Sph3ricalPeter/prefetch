@@ -6,7 +6,7 @@ use crate::commands::helpers::{
 use crate::error::AppError;
 use crate::events;
 use crate::git::{
-    repository,
+    forge, repository,
     types::{
         self, BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData,
         RebaseProgress, StashInfo, TagInfo, UndoAction,
@@ -72,6 +72,47 @@ pub fn open_repo(
 
     debug!(repo_name = %name, "repo opened");
     Ok(name)
+}
+
+// ── Clone ────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn clone_repo(
+    url: String,
+    target_path: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    let env = get_profile_env(&state);
+    let pid = get_profile_id(&state);
+
+    // Try to extract host from URL and load a token for authenticated clone
+    let token = extract_host_from_url(&url).and_then(|host| {
+        forge::load_token_for_profile(pid.as_deref(), &host)
+            .ok()
+            .flatten()
+    });
+
+    offload(move || {
+        repository::clone_repo(
+            &url,
+            &target_path,
+            |progress| {
+                app.emit(events::GIT_PROGRESS, progress).ok();
+            },
+            &env,
+            token.as_deref(),
+        )
+    })
+    .await
+}
+
+fn extract_host_from_url(url: &str) -> Option<String> {
+    let url = url
+        .strip_prefix("https://")
+        .or(url.strip_prefix("http://"))?;
+    let host = url.split('/').next()?;
+    Some(host.to_string())
 }
 
 // ── Read operations (all async → offloaded to thread pool) ───────────────────

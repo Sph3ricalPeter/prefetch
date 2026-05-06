@@ -5,6 +5,7 @@ import type {
   ConflictState,
   FileDiff,
   FileStatus,
+  ForgeRepo,
   ForgeStatus,
   GitIdentity,
   GraphData,
@@ -30,6 +31,10 @@ async function tracedInvoke<T>(command: string, args?: Record<string, unknown>):
 
 export async function openRepo(path: string): Promise<string> {
   return tracedInvoke<string>("open_repo", { path });
+}
+
+export async function cloneRepo(url: string, targetPath: string): Promise<string> {
+  return tracedInvoke<string>("clone_repo", { url, targetPath });
 }
 
 export async function getCommits(limit?: number): Promise<GraphData> {
@@ -338,6 +343,10 @@ export async function getPrForBranch(branch: string): Promise<PrInfo | null> {
 
 export async function clearPrCache(): Promise<void> {
   return tracedInvoke<void>("clear_pr_cache");
+}
+
+export async function listForgeRepos(host: string, profileId?: string): Promise<ForgeRepo[]> {
+  return tracedInvoke<ForgeRepo[]>("list_forge_repos", { host, profileId });
 }
 
 // ── OAuth ───────────────────────────────────────────────────────────────────

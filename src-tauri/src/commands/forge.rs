@@ -4,7 +4,7 @@ use crate::commands::helpers::{get_profile_id, offload, repo_path};
 use crate::error::AppError;
 use crate::git::{
     forge,
-    types::{ForgeConfig, PrInfo},
+    types::{ForgeConfig, ForgeRepo, PrInfo},
 };
 use crate::oauth;
 use crate::AppState;
@@ -199,6 +199,24 @@ pub fn clear_pr_cache(state: State<'_, AppState>) -> Result<(), AppError> {
         .map_err(|e| AppError::Other(e.to_string()))?;
     cache.clear();
     Ok(())
+}
+
+// ── Repo listing ─────────────────────────────────────────────────────────────
+
+/// List repositories the authenticated user can access on the given forge host.
+#[tauri::command]
+pub async fn list_forge_repos(
+    host: String,
+    profile_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ForgeRepo>, AppError> {
+    let pid = profile_id.or_else(|| get_profile_id(&state));
+    offload(move || {
+        let token = forge::load_token_for_profile(pid.as_deref(), &host)?
+            .ok_or_else(|| AppError::Other(format!("No token stored for {host}")))?;
+        forge::list_user_repos(&host, &token)
+    })
+    .await
 }
 
 // ── OAuth ────────────────────────────────────────────────────────────────────
