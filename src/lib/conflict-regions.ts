@@ -138,6 +138,7 @@ export function computeDiffRegions(
   }
 
   regions = coalesceFragments(regions);
+  regions = mergeConsecutiveUnchanged(regions);
 
   return regions;
 }
@@ -426,6 +427,39 @@ function coalesceFragments(subRegions: DiffRegion[]): DiffRegion[] {
   return regions;
 }
 
+/**
+ * Merge consecutive unchanged regions into single larger regions.
+ * After classify3Way converts many changed→unchanged, we can end up with
+ * adjacent unchanged regions that should be a single block.
+ */
+function mergeConsecutiveUnchanged(regions: DiffRegion[]): DiffRegion[] {
+  if (regions.length === 0) return regions;
+  const result: DiffRegion[] = [];
+
+  for (const region of regions) {
+    const prev = result[result.length - 1];
+    if (prev && prev.type === "unchanged" && region.type === "unchanged") {
+      const curLines =
+        region.autoSide === "theirs" ? region.bLines : region.aLines;
+      prev.aLines.push(...curLines);
+      prev.bLines.push(...curLines);
+    } else if (region.type === "unchanged") {
+      const lines =
+        region.autoSide === "theirs" ? region.bLines : region.aLines;
+      result.push({
+        ...region,
+        aLines: [...lines],
+        bLines: [...lines],
+        autoSide: undefined,
+      });
+    } else {
+      result.push(region);
+    }
+  }
+
+  return result;
+}
+
 // ── helpers for emitting lines in order ──────────────────────
 
 function emitOursLines(
@@ -480,7 +514,7 @@ export function buildOutputFromSelections(
 export function buildOutputWithSources(
   regions: DiffRegion[],
   selections: Map<number, ChunkSelection>,
-): { text: string; sources: LineSource[]; mappings: (OutputLineMapping | null)[] } {
+): { text: string; lines: string[]; sources: LineSource[]; mappings: (OutputLineMapping | null)[] } {
   const output: string[] = [];
   const sources: LineSource[] = [];
   const mappings: (OutputLineMapping | null)[] = [];
@@ -514,7 +548,7 @@ export function buildOutputWithSources(
     }
   }
 
-  return { text: output.join("\n"), sources, mappings };
+  return { text: output.join("\n"), lines: output, sources, mappings };
 }
 
 /** Create a selection with all ours lines selected. */

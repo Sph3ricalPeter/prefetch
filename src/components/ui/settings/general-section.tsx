@@ -175,30 +175,24 @@ function UpdatesSection() {
     buttonAction = checkForUpdate;
   }
 
-  let statusText: string;
+  let statusText: string | null;
   switch (status) {
     case "idle":
       statusText = availableVersion
         ? `Update available: v${availableVersion}`
         : "You’re up to date";
       break;
-    case "checking":
-      statusText = "Checking for updates…";
-      break;
     case "available":
       statusText = `v${availableVersion} is ready to download`;
-      break;
-    case "downloading":
-      statusText = `Downloading… ${downloadProgress}%`;
       break;
     case "ready":
       statusText = "Download complete — restart when ready";
       break;
-    case "restarting":
-      statusText = "Restarting…";
-      break;
     case "error":
       statusText = error ?? "Update check failed";
+      break;
+    default:
+      statusText = null;
       break;
   }
 
@@ -225,17 +219,19 @@ function UpdatesSection() {
           {isChecking && <Loader2 className="h-3 w-3 animate-spin" />}
           {buttonLabel}
         </button>
-        <span
-          className={`text-xs ${
-            status === "error"
-              ? "text-destructive"
-              : status === "available" || status === "ready"
-                ? "text-primary"
-                : "text-muted-foreground"
-          }`}
-        >
-          {statusText}
-        </span>
+        {statusText && (
+          <span
+            className={`text-xs ${
+              status === "error"
+                ? "text-destructive"
+                : status === "available" || status === "ready"
+                  ? "text-primary"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {statusText}
+          </span>
+        )}
       </div>
     </div>
   );
