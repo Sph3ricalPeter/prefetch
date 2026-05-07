@@ -8,14 +8,89 @@ import {
   DEFAULT_CODE_THEME,
 } from "@/lib/themes";
 
+// ── Font options ─────────────────────────────────────────────────────────
+
+export interface FontOption {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export const FONT_FAMILIES: FontOption[] = [
+  { id: "inter", label: "Inter", value: '"Inter", system-ui, sans-serif' },
+  { id: "geist", label: "Geist", value: '"Geist", system-ui, sans-serif' },
+  { id: "system", label: "System", value: 'system-ui, -apple-system, "Segoe UI", sans-serif' },
+];
+
+export const MONO_FONTS: FontOption[] = [
+  { id: "jetbrains", label: "JetBrains Mono", value: '"JetBrains Mono", ui-monospace, monospace' },
+  { id: "geist-mono", label: "Geist Mono", value: '"Geist Mono", ui-monospace, monospace' },
+  { id: "system-mono", label: "System", value: 'ui-monospace, "Cascadia Code", "Consolas", monospace' },
+];
+
+export const DEFAULT_MONO_FONT: Record<string, string> = {
+  inter: "jetbrains",
+  geist: "geist-mono",
+  system: "system-mono",
+};
+
+export const FONT_SCALES = [
+  { label: "90%", value: 0.9 },
+  { label: "100%", value: 1.0 },
+  { label: "110%", value: 1.1 },
+  { label: "120%", value: 1.2 },
+] as const;
+
+const BASE_TEXT_SIZES = {
+  caption: 9,
+  captionLh: 14,
+  label: 11,
+  labelLh: 16,
+  xs: 12,
+  xsLh: 16,
+  sm: 14,
+  smLh: 20,
+};
+
+function getFontOption(list: FontOption[], id: string): FontOption {
+  return list.find((f) => f.id === id) ?? list[0];
+}
+
+// ── State ────────────────────────────────────────────────────────────────
+
 interface ThemeState {
   appThemeId: string;
   codeThemeId: string;
   appTheme: AppTheme;
   codeTheme: CodeTheme;
+  fontFamilyId: string;
+  monoFontId: string;
+  fontScale: number;
   setAppTheme: (id: string) => void;
   setCodeTheme: (id: string) => void;
+  setFontFamily: (id: string) => void;
+  setMonoFont: (id: string) => void;
+  setFontScale: (scale: number) => void;
   loadThemePreferences: () => Promise<void>;
+}
+
+function applyFonts(sans: FontOption, mono: FontOption) {
+  const root = document.documentElement;
+  root.style.setProperty("--font-sans", sans.value);
+  root.style.setProperty("--font-mono", mono.value);
+}
+
+function applyFontScale(scale: number) {
+  const root = document.documentElement;
+  const s = (base: number) => `${Math.round(base * scale * 10) / 10}px`;
+  root.style.setProperty("--text-caption", s(BASE_TEXT_SIZES.caption));
+  root.style.setProperty("--text-caption--line-height", s(BASE_TEXT_SIZES.captionLh));
+  root.style.setProperty("--text-label", s(BASE_TEXT_SIZES.label));
+  root.style.setProperty("--text-label--line-height", s(BASE_TEXT_SIZES.labelLh));
+  root.style.setProperty("--text-xs", s(BASE_TEXT_SIZES.xs));
+  root.style.setProperty("--text-xs--line-height", s(BASE_TEXT_SIZES.xsLh));
+  root.style.setProperty("--text-sm", s(BASE_TEXT_SIZES.sm));
+  root.style.setProperty("--text-sm--line-height", s(BASE_TEXT_SIZES.smLh));
 }
 
 function applyAppTheme(theme: AppTheme) {
@@ -53,11 +128,14 @@ function applyCodeTheme(theme: CodeTheme) {
   root.style.setProperty("--diff-gutter-fg", theme.diff.gutterFg);
 }
 
-export const useThemeStore = create<ThemeState>((set) => ({
+export const useThemeStore = create<ThemeState>((set, get) => ({
   appThemeId: "dark",
   codeThemeId: "prefetch-dark",
   appTheme: getAppTheme("dark"),
   codeTheme: getCodeTheme("prefetch-dark"),
+  fontFamilyId: "inter",
+  monoFontId: "jetbrains",
+  fontScale: 1.0,
 
   setAppTheme: (id) => {
     const theme = getAppTheme(id);
@@ -73,28 +151,72 @@ export const useThemeStore = create<ThemeState>((set) => ({
     setUiState("code_theme", id).catch(() => {});
   },
 
+  setFontFamily: (id) => {
+    const { monoFontId, fontFamilyId } = get();
+    const sans = getFontOption(FONT_FAMILIES, id);
+
+    // Auto-follow mono if the user hasn't customized it away from the default pairing
+    const currentDefault = DEFAULT_MONO_FONT[fontFamilyId];
+    const shouldFollowMono = monoFontId === currentDefault;
+    const newMonoId = shouldFollowMono ? (DEFAULT_MONO_FONT[id] ?? monoFontId) : monoFontId;
+    const mono = getFontOption(MONO_FONTS, newMonoId);
+
+    applyFonts(sans, mono);
+    set({ fontFamilyId: id, monoFontId: newMonoId });
+    setUiState("font_family", id).catch(() => {});
+    if (shouldFollowMono) setUiState("mono_font", newMonoId).catch(() => {});
+  },
+
+  setMonoFont: (id) => {
+    const { fontFamilyId } = get();
+    const sans = getFontOption(FONT_FAMILIES, fontFamilyId);
+    const mono = getFontOption(MONO_FONTS, id);
+    applyFonts(sans, mono);
+    set({ monoFontId: id });
+    setUiState("mono_font", id).catch(() => {});
+  },
+
+  setFontScale: (scale) => {
+    applyFontScale(scale);
+    set({ fontScale: scale });
+    setUiState("font_scale", String(scale)).catch(() => {});
+  },
+
   loadThemePreferences: async () => {
     try {
-      const [appId, codeId] = await Promise.all([
+      const [appId, codeId, fontFamId, monoId, fontScaleStr] = await Promise.all([
         getUiState("app_theme"),
         getUiState("code_theme"),
+        getUiState("font_family"),
+        getUiState("mono_font"),
+        getUiState("font_scale"),
       ]);
 
       const resolvedAppId = appId ?? "dark";
       const resolvedCodeId =
         codeId ?? DEFAULT_CODE_THEME[resolvedAppId] ?? "prefetch-dark";
+      const resolvedFontFamilyId = fontFamId ?? "inter";
+      const resolvedMonoFontId = monoId ?? DEFAULT_MONO_FONT[resolvedFontFamilyId] ?? "jetbrains";
+      const resolvedFontScale = fontScaleStr ? parseFloat(fontScaleStr) : 1.0;
 
       const appTheme = getAppTheme(resolvedAppId);
       const codeTheme = getCodeTheme(resolvedCodeId);
+      const sans = getFontOption(FONT_FAMILIES, resolvedFontFamilyId);
+      const mono = getFontOption(MONO_FONTS, resolvedMonoFontId);
 
       applyAppTheme(appTheme);
       applyCodeTheme(codeTheme);
+      applyFonts(sans, mono);
+      if (resolvedFontScale !== 1.0) applyFontScale(resolvedFontScale);
 
       set({
         appThemeId: resolvedAppId,
         codeThemeId: resolvedCodeId,
         appTheme,
         codeTheme,
+        fontFamilyId: resolvedFontFamilyId,
+        monoFontId: resolvedMonoFontId,
+        fontScale: resolvedFontScale,
       });
     } catch {
       // DB not ready yet — keep defaults, they'll match the CSS

@@ -1866,7 +1866,17 @@ pub fn create_commit(
 
 /// Get the list of files changed in a specific commit.
 pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStatus>, AppError> {
-    // Get name-status for file status types
+    // Run both git commands concurrently — each spawns a subprocess, so
+    // overlapping them cuts wall time roughly in half on large commits.
+    let path2 = repo_path.to_owned();
+    let id2 = commit_id.to_owned();
+    let numstat_handle = std::thread::spawn(move || {
+        parse_numstat(
+            &path2,
+            &["diff-tree", "--no-commit-id", "-r", "--numstat", &id2],
+        )
+    });
+
     let output = git_cmd()
         .args([
             "diff-tree",
@@ -1879,11 +1889,7 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
 
-    // Get numstat for line counts
-    let numstat = parse_numstat(
-        repo_path,
-        &["diff-tree", "--no-commit-id", "-r", "--numstat", commit_id],
-    );
+    let numstat = numstat_handle.join().unwrap_or_default();
 
     let text = String::from_utf8_lossy(&output.stdout);
     let mut files = Vec::new();

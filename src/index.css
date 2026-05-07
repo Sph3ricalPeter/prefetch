@@ -9,6 +9,15 @@
   src: url("/fonts/InterVariable.woff2") format("woff2");
 }
 
+/* Geist Sans */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/GeistVariable.woff2") format("woff2");
+}
+
 /* JetBrains Mono */
 @font-face {
   font-family: "JetBrains Mono";
@@ -23,6 +32,15 @@
   font-weight: 500;
   font-display: swap;
   src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
+}
+
+/* Geist Mono */
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/GeistMonoVariable.woff2") format("woff2");
 }
 
 @layer base {
@@ -64,7 +82,7 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: "Inter", system-ui, sans-serif;
+    font-family: var(--font-sans, "Inter", system-ui, sans-serif);
     font-feature-settings: "rlig" 1, "calt" 1;
     margin: 0;
     overflow: hidden;
@@ -73,7 +91,7 @@
   code,
   pre,
   kbd {
-    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-family: var(--font-mono, "JetBrains Mono", ui-monospace, monospace);
   }
 }
 

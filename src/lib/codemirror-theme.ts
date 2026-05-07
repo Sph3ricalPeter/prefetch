@@ -8,7 +8,7 @@ export function getCodemirrorTheme(cm: CodeThemeCodemirror, isDark = true) {
         backgroundColor: cm.bg,
         color: cm.fg,
         fontSize: "12px",
-        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        fontFamily: 'var(--font-mono, "JetBrains Mono", ui-monospace, monospace)',
       },
       ".cm-content": {
         caretColor: cm.caret,
