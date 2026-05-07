@@ -80,6 +80,10 @@ function applyFonts(sans: FontOption, mono: FontOption) {
   root.style.setProperty("--font-mono", mono.value);
 }
 
+function applyMonoFont(mono: FontOption) {
+  document.documentElement.style.setProperty("--font-mono", mono.value);
+}
+
 function applyFontScale(scale: number) {
   const root = document.documentElement;
   const s = (base: number) => `${Math.round(base * scale * 10) / 10}px`;
@@ -168,10 +172,8 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   },
 
   setMonoFont: (id) => {
-    const { fontFamilyId } = get();
-    const sans = getFontOption(FONT_FAMILIES, fontFamilyId);
     const mono = getFontOption(MONO_FONTS, id);
-    applyFonts(sans, mono);
+    applyMonoFont(mono);
     set({ monoFontId: id });
     setUiState("mono_font", id).catch(() => {});
   },

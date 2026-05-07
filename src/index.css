@@ -207,6 +207,11 @@ body::before {
   to { opacity: 1; }
 }
 
+@keyframes skeleton-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* file-icons-js: scale + align icon font to match Lucide's h-3 w-3 (12px) */
 .file-icon.icon {
   display: inline-flex;

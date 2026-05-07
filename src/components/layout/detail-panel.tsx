@@ -219,7 +219,6 @@ function FileListSkeleton() {
       className="pb-3 space-y-1 px-4"
       style={{ animation: "skeleton-fade-in 0.3s ease both" }}
     >
-      <style>{`@keyframes skeleton-fade-in { from { opacity: 0 } to { opacity: 1 } }`}</style>
       {[0.92, 0.68, 0.80, 0.55, 0.74].map((w, i) => (
         <div key={i} className="flex items-center gap-1.5 py-1.5 animate-pulse">
           <div className="h-3 w-3 rounded bg-secondary shrink-0" />
