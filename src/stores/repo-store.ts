@@ -191,6 +191,7 @@ interface RepoState {
 
   // Historical commit files
   commitFiles: FileStatus[];
+  commitFilesLoading: boolean;
 
   commitMessage: string;
   commitDescription: string;
@@ -417,6 +418,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   diffLoading: false,
   largeDiffPending: null,
   commitFiles: [],
+  commitFilesLoading: false,
   commitMessage: "",
   commitDescription: "",
   amendMode: false,
@@ -463,6 +465,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       largeDiffPending: null,
       diffLoading: false,
       commitFiles: [],
+      commitFilesLoading: false,
       commitMessage: "",
       commitDescription: "",
       amendMode: false,
@@ -836,19 +839,25 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       selectedFilePath: null,
       activeDiff: null,
       commitFiles: [],
+      commitFilesLoading: !!id,
     });
     if (id) {
       try {
         const files = await getCommitFiles(id);
-        set({ commitFiles: files });
+        if (get().selectedCommitId === id) {
+          set({ commitFiles: files, commitFilesLoading: false });
+        }
       } catch (e) {
+        if (get().selectedCommitId === id) {
+          set({ commitFilesLoading: false });
+        }
         toast.error(errorMessage(e));
       }
     }
   },
 
   selectFile: async (path, staged) => {
-    set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null, commitFiles: [], largeDiffPending: null });
+    set({ selectedFilePath: path, selectedFileStaged: staged, selectedCommitId: null, commitFiles: [], commitFilesLoading: false, largeDiffPending: null });
 
     const totalChanges = isLargeDiff(get().fileStatuses, path);
     if (totalChanges) {
@@ -895,6 +904,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       activeDiff: null,
       largeDiffPending: null,
       commitFiles: [],
+      commitFilesLoading: false,
     }),
 
   loadPendingDiff: async () => {
@@ -1166,11 +1176,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       selectedFilePath: null,
       activeDiff: null,
       commitFiles: [],
+      commitFilesLoading: true,
     });
     try {
       const files = await getStashFiles(index);
-      set({ commitFiles: files });
+      if (get().selectedStashIndex === index) {
+        set({ commitFiles: files, commitFilesLoading: false });
+      }
     } catch (e) {
+      if (get().selectedStashIndex === index) {
+        set({ commitFilesLoading: false });
+      }
       toast.error(errorMessage(e));
     }
   },

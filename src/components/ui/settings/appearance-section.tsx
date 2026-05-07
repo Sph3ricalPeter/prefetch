@@ -1,4 +1,4 @@
-import { useThemeStore } from "@/stores/theme-store";
+import { useThemeStore, FONT_FAMILIES, MONO_FONTS, FONT_SCALES } from "@/stores/theme-store";
 import { APP_THEMES, CODE_THEMES, DEFAULT_CODE_THEME } from "@/lib/themes";
 
 export function AppearanceSection() {
@@ -6,6 +6,12 @@ export function AppearanceSection() {
   const codeThemeId = useThemeStore((s) => s.codeThemeId);
   const setAppTheme = useThemeStore((s) => s.setAppTheme);
   const setCodeTheme = useThemeStore((s) => s.setCodeTheme);
+  const fontFamilyId = useThemeStore((s) => s.fontFamilyId);
+  const monoFontId = useThemeStore((s) => s.monoFontId);
+  const fontScale = useThemeStore((s) => s.fontScale);
+  const setFontFamily = useThemeStore((s) => s.setFontFamily);
+  const setMonoFont = useThemeStore((s) => s.setMonoFont);
+  const setFontScale = useThemeStore((s) => s.setFontScale);
 
   const handleAppTheme = (id: string) => {
     setAppTheme(id);
@@ -22,6 +28,72 @@ export function AppearanceSection() {
         <p className="text-xs text-muted-foreground">
           Customize the look of the app and code views.
         </p>
+      </div>
+
+      {/* Font settings */}
+      <div className="space-y-4">
+        <label className="block text-xs font-medium text-foreground">
+          Font
+        </label>
+
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground w-16 shrink-0">Family</span>
+          <div className="flex gap-1.5">
+            {FONT_FAMILIES.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFontFamily(f.id)}
+                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                  fontFamilyId === f.id
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:border-muted-foreground/30 hover:bg-secondary"
+                }`}
+                style={{ fontFamily: f.value }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground w-16 shrink-0">Code</span>
+          <div className="flex gap-1.5">
+            {MONO_FONTS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setMonoFont(f.id)}
+                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                  monoFontId === f.id
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:border-muted-foreground/30 hover:bg-secondary"
+                }`}
+                style={{ fontFamily: f.value }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground w-16 shrink-0">Scale</span>
+          <div className="flex gap-1.5">
+            {FONT_SCALES.map((s) => (
+              <button
+                key={s.value}
+                onClick={() => setFontScale(s.value)}
+                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                  fontScale === s.value
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:border-muted-foreground/30 hover:bg-secondary"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* App theme */}

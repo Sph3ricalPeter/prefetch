@@ -8,7 +8,7 @@ import type {
 } from "@/types/git";
 import { gravatarUrl } from "@/lib/gravatar";
 import { searchUserAvatar } from "@/lib/commands";
-import { useThemeStore } from "@/stores/theme-store";
+import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
 
 const ROW_HEIGHT = 32;
 const LANE_WIDTH = 20;
@@ -25,10 +25,13 @@ const ROW_RADIUS = 6;            // Change 1: matches CSS rounded-md
 const GRAPH_PADDING_TOP = 6;     // top padding matching left padding
 const ROW_INSET = 2;             // vertical inset so row highlights don't touch
 
-// Type scale constants (must stay in sync with src/index.css @theme tokens)
-const FONT_SANS = '"Inter", system-ui, sans-serif';
-const SIZE_LABEL = 11;
-const SIZE_BODY = 12;
+// Mutable font config — updated from the theme store before each draw() call.
+// Module-level so standalone drawing helpers can read it without extra parameters.
+const fontCfg = {
+  sans: '"Inter", system-ui, sans-serif',
+  sizeBody: 12,
+  sizeLabel: 11,
+};
 
 // Graph colors are now provided by the active app theme via useThemeStore().
 // See AppThemeGraph in src/lib/themes.ts for the shape.
@@ -267,7 +270,7 @@ function drawPill(
   textColor: string,
   drawIcon?: (ctx: CanvasRenderingContext2D, ix: number, iy: number, color: string) => number,
 ): number {
-  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+  ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   const iconWidth = drawIcon ? drawIcon(ctx, 0, -1000, textColor) : 0; // dry-run to measure width
   const textWidth = ctx.measureText(text).width;
   const pillWidth = textWidth + iconWidth + LABEL_PAD_X * 2;
@@ -284,7 +287,7 @@ function drawPill(
   if (drawIcon) {
     drawIcon(ctx, x + LABEL_PAD_X, y, textColor);
   }
-  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+  ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   ctx.fillStyle = textColor;
   ctx.fillText(text, x + LABEL_PAD_X + iconWidth, y);
 
@@ -435,7 +438,7 @@ function drawMergedBranchPill(
   const textCol = isRemoteOnly ? dimColor : bColor;
 
   // Measure text
-  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+  ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   const textWidth = ctx.measureText(group.baseName).width;
 
   // Calculate icon widths — Change 2: was 11/10
@@ -464,7 +467,7 @@ function drawMergedBranchPill(
   }
 
   // Text
-  ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+  ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   ctx.fillStyle = textCol;
   ctx.fillText(group.baseName, x + LABEL_PAD_X + iconsWidth, y);
 
@@ -583,6 +586,8 @@ export function CommitGraphCanvas({
   onStashContextMenu,
 }: CommitGraphCanvasProps) {
   const graphColors = useThemeStore((s) => s.appTheme.graph);
+  const fontFamilyId = useThemeStore((s) => s.fontFamilyId);
+  const fontScale = useThemeStore((s) => s.fontScale);
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredRowRef = useRef<number | null>(null);
@@ -739,6 +744,12 @@ export function CommitGraphCanvas({
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    // Sync module-level font config so all drawing helpers use current settings
+    const family = FONT_FAMILIES.find((f) => f.id === fontFamilyId) ?? FONT_FAMILIES[0];
+    fontCfg.sans = family.value;
+    fontCfg.sizeBody = Math.round(12 * fontScale);
+    fontCfg.sizeLabel = Math.round(11 * fontScale);
 
     const dpr = window.devicePixelRatio || 1;
     const width = scroll.clientWidth;
@@ -930,7 +941,7 @@ export function CommitGraphCanvas({
       // File edit icon + change count
       const wipTextColor = graphColors.muted;
       const wipIconW = drawFileEditIcon(ctx, textOffset, wipY, wipTextColor);
-      ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+      ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
       ctx.fillStyle = wipTextColor;
       const changeText =
         fileStatusCount === 1 ? "1 change" : `${fileStatusCount} changes`;
@@ -1006,7 +1017,7 @@ export function CommitGraphCanvas({
           ctx.fillStyle = contrastText(avatarBg);
           const initials = authorInitials(commit.author_name);
           const fontSize = initials.length > 1 ? Math.round(NODE_RADIUS * 0.95) : Math.round(NODE_RADIUS * 1.2);
-          ctx.font = `bold ${fontSize}px ${FONT_SANS}`;
+          ctx.font = `bold ${fontSize}px ${fontCfg.sans}`;
           ctx.textAlign = "center";
           ctx.fillText(initials, x, y);
           ctx.restore();
@@ -1097,7 +1108,7 @@ export function CommitGraphCanvas({
           }
           const stashPillX = labelX + usedWidth;
           // Truncate stash message for the pill
-          ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+          ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
           const stashLabel = truncateText(ctx, stash.message, 120);
           const w = drawPill(ctx, stashPillX, y, stashLabel, "rgba(255,255,255,0.08)", graphColors.dim, drawStashIcon);
           hitAreas.push({
@@ -1118,14 +1129,14 @@ export function CommitGraphCanvas({
       }
 
       // Short SHA
-      ctx.font = `${SIZE_LABEL}px ${FONT_SANS}`;
+      ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
       ctx.fillStyle = graphColors.dim;
       ctx.fillText(commit.short_id, labelX, y);
 
       // Message + Body (Change 3: reclaimed right space, Change 6: inline body)
       const msgX = labelX + 64;
       const totalAvailWidth = width - msgX - 80; // Change 3: was -160, now -80 (time-group label area)
-      ctx.font = `${SIZE_BODY}px ${FONT_SANS}`;
+      ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
 
       const fullMsgWidth = ctx.measureText(commit.message).width;
       if (fullMsgWidth <= totalAvailWidth) {
@@ -1166,7 +1177,7 @@ export function CommitGraphCanvas({
     }
 
     // Change 3: Draw time-group separator lines
-    ctx.font = `${SIZE_LABEL}px ${FONT_SANS}`;
+    ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
     for (const [row, group] of timeGroupBoundaries) {
       if (row < firstVisibleRow || row > lastVisibleRow) continue;
       const separatorY = row * ROW_HEIGHT - scrollTop; // top edge of the first row in group
@@ -1199,7 +1210,7 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors]);
+  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);

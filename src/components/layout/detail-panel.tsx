@@ -77,6 +77,7 @@ export function DetailPanel() {
   const selectedFilePath = useRepoStore((s) => s.selectedFilePath);
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const commitFiles = useRepoStore((s) => s.commitFiles);
+  const commitFilesLoading = useRepoStore((s) => s.commitFilesLoading);
   const tags = useRepoStore((s) => s.tags);
   const selectCommitFile = useRepoStore((s) => s.selectCommitFile);
   const selectStashFile = useRepoStore((s) => s.selectStashFile);
@@ -97,6 +98,7 @@ export function DetailPanel() {
         <StashDetailView
           stash={stash}
           stashFiles={commitFiles}
+          stashFilesLoading={commitFilesLoading}
           selectedFilePath={selectedFilePath}
           onFileClick={(path) => selectStashFile(selectedStashIndex, path)}
         />
@@ -112,6 +114,7 @@ export function DetailPanel() {
         <CommitDetailView
           commit={commit}
           commitFiles={commitFiles}
+          commitFilesLoading={commitFilesLoading}
           commitTags={tags.filter((t) => commit.id.startsWith(t.commit_id))}
           selectedFilePath={selectedFilePath}
           onFileClick={(path) => selectCommitFile(selectedCommitId, path)}
@@ -210,9 +213,27 @@ export function DetailPanel() {
   );
 }
 
+function FileListSkeleton() {
+  return (
+    <div
+      className="pb-3 space-y-1 px-4"
+      style={{ animation: "skeleton-fade-in 0.3s ease both" }}
+    >
+      {[0.92, 0.68, 0.80, 0.55, 0.74].map((w, i) => (
+        <div key={i} className="flex items-center gap-1.5 py-1.5 animate-pulse">
+          <div className="h-3 w-3 rounded bg-secondary shrink-0" />
+          <div className="h-3 w-4 rounded bg-secondary shrink-0" />
+          <div className="h-3 rounded bg-secondary" style={{ width: `${w * 100}%` }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CommitDetailView({
   commit,
   commitFiles,
+  commitFilesLoading,
   commitTags,
   selectedFilePath,
   onFileClick,
@@ -229,6 +250,7 @@ function CommitDetailView({
     parent_ids: string[];
   };
   commitFiles: FileStatus[];
+  commitFilesLoading: boolean;
   commitTags: { name: string; message: string | null }[];
   selectedFilePath: string | null;
   onFileClick: (path: string) => void;
@@ -334,9 +356,9 @@ function CommitDetailView({
       </CollapsibleSection>
 
       {/* Changed files section */}
-      {commitFiles.length > 0 && (
+      {(commitFilesLoading || commitFiles.length > 0) && (
         <CollapsibleSection
-          label={`Changed Files (${commitFiles.length})`}
+          label={commitFilesLoading ? "Changed Files" : `Changed Files (${commitFiles.length})`}
           isOpen={filesOpen}
           onToggle={() => setFilesOpen(!filesOpen)}
           action={
@@ -344,7 +366,7 @@ function CommitDetailView({
               <TooltipTrigger asChild>
                 <button
                   onClick={() => setFileViewMode(viewMode === "flat" ? "tree" : "flat")}
-                  className="rounded p-0.5 text-faint hover:text-muted-foreground transition-colors"
+                  className={`rounded p-0.5 text-faint hover:text-muted-foreground transition-colors ${commitFilesLoading ? "invisible" : ""}`}
                 >
                   {viewMode === "flat" ? (
                     <FolderTree className="h-3 w-3" />
@@ -359,7 +381,9 @@ function CommitDetailView({
             </Tooltip>
           }
         >
-          {viewMode === "tree" ? (
+          {commitFilesLoading ? (
+            <FileListSkeleton />
+          ) : viewMode === "tree" ? (
             <CommitFileTreeView
               files={commitFiles}
               selectedFilePath={selectedFilePath}
@@ -386,11 +410,13 @@ function CommitDetailView({
 function StashDetailView({
   stash,
   stashFiles,
+  stashFilesLoading,
   selectedFilePath,
   onFileClick,
 }: {
   stash: { index: number; message: string };
   stashFiles: FileStatus[];
+  stashFilesLoading: boolean;
   selectedFilePath: string | null;
   onFileClick: (path: string) => void;
 }) {
@@ -421,9 +447,9 @@ function StashDetailView({
       </CollapsibleSection>
 
       {/* Changed files */}
-      {stashFiles.length > 0 && (
+      {(stashFilesLoading || stashFiles.length > 0) && (
         <CollapsibleSection
-          label={`Changed Files (${stashFiles.length})`}
+          label={stashFilesLoading ? "Changed Files" : `Changed Files (${stashFiles.length})`}
           isOpen={filesOpen}
           onToggle={() => setFilesOpen(!filesOpen)}
           action={
@@ -431,7 +457,7 @@ function StashDetailView({
               <TooltipTrigger asChild>
                 <button
                   onClick={() => setFileViewMode(viewMode === "flat" ? "tree" : "flat")}
-                  className="rounded p-0.5 text-faint hover:text-muted-foreground transition-colors"
+                  className={`rounded p-0.5 text-faint hover:text-muted-foreground transition-colors ${stashFilesLoading ? "invisible" : ""}`}
                 >
                   {viewMode === "flat" ? (
                     <FolderTree className="h-3 w-3" />
@@ -446,7 +472,9 @@ function StashDetailView({
             </Tooltip>
           }
         >
-          {viewMode === "tree" ? (
+          {stashFilesLoading ? (
+            <FileListSkeleton />
+          ) : viewMode === "tree" ? (
             <CommitFileTreeView
               files={stashFiles}
               selectedFilePath={selectedFilePath}
