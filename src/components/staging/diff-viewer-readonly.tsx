@@ -61,15 +61,14 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
   // Highlight full file for expanded context lines
   useEffect(() => {
     if (!expandCtx.fileLines || !lang || expandCtx.fileLines.length > 10000) {
-      setFileTokens(null);
-      return;
+      return () => { setFileTokens(null); };
     }
     let cancelled = false;
     const code = expandCtx.fileLines.join("\n");
     highlightLines(code, lang, shikiThemeId).then((tokens) => {
       if (!cancelled) setFileTokens(tokens);
     }).catch(() => {});
-    return () => { cancelled = true; };
+    return () => { cancelled = true; setFileTokens(null); };
   }, [expandCtx.fileLines, lang, shikiThemeId]);
 
   const wrapClass = diffWrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre";
