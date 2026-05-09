@@ -118,15 +118,14 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
   useEffect(() => {
     const fl = expandCtx?.fileLines;
     if (!fl || !lang || fl.length > 10000) {
-      setFileTokens(null);
-      return;
+      return () => { setFileTokens(null); };
     }
     let cancelled = false;
     const code = fl.join("\n");
     highlightLines(code, lang, shikiThemeId).then((tokens) => {
       if (!cancelled) setFileTokens(tokens);
     }).catch(() => {});
-    return () => { cancelled = true; };
+    return () => { cancelled = true; setFileTokens(null); };
   }, [expandCtx?.fileLines, lang, shikiThemeId]);
 
   const getLineKeyFromEvent = useCallback(
