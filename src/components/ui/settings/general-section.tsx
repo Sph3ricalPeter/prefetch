@@ -22,6 +22,7 @@ export function GeneralSection() {
   const [fetchInterval, setFetchInterval] = useState("300");
   const [fileViewMode, setFileViewMode] = useState("flat");
   const [autoReopen, setAutoReopen] = useState(false);
+  const [conflictAutoResolve, setConflictAutoResolve] = useState(false);
 
   useEffect(() => {
     getUiState("auto_fetch_interval").then((v) => {
@@ -35,6 +36,9 @@ export function GeneralSection() {
     }).catch(() => {});
     getUiState("auto_reopen_last_repo").then((v) => {
       if (v === "true") setAutoReopen(true);
+    }).catch(() => {});
+    getUiState("conflict_auto_resolve").then((v) => {
+      if (v === "true") setConflictAutoResolve(true);
     }).catch(() => {});
   }, []);
 
@@ -100,6 +104,35 @@ export function GeneralSection() {
           <span className="text-xs text-foreground select-none">
             Reopen last repository on startup
           </span>
+        </label>
+      </div>
+
+      {/* Conflict auto-resolve */}
+      <div className="space-y-2">
+        <label className="block text-xs font-medium text-foreground">
+          Conflicts
+        </label>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <Checkbox
+            checked={conflictAutoResolve}
+            onCheckedChange={(v) => {
+              const checked = v === true;
+              setConflictAutoResolve(checked);
+              setUiState("conflict_auto_resolve", checked ? "true" : "false").catch(() => {});
+            }}
+            className="mt-0.5"
+          />
+          <div className="select-none">
+            <span className="text-xs text-foreground flex items-center gap-1.5">
+              Auto-resolve files with no real conflicts
+              <span className="text-[9px] font-semibold uppercase tracking-wider text-amber-500 border border-amber-500/30 rounded px-1 py-px leading-none">
+                Experimental
+              </span>
+            </span>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              During rebase, automatically save files where all changes were made by only one side.
+            </p>
+          </div>
         </label>
       </div>
 

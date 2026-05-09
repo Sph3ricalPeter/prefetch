@@ -657,9 +657,16 @@ function CommitTreeNode({
       <div>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex w-full items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          className="relative flex w-full items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
           style={{ paddingLeft: `${16 + indent}px` }}
         >
+          {Array.from({ length: depth }, (_, i) => (
+            <div
+              key={i}
+              className="absolute top-0 bottom-0 w-px bg-border"
+              style={{ left: `${22 + i * 16}px` }}
+            />
+          ))}
           {expanded ? (
             <ChevronDown className="h-3 w-3 shrink-0" />
           ) : (
@@ -695,23 +702,30 @@ function CommitTreeNode({
   return (
     <button
       onClick={() => onFileClick(file.path)}
-      className={`flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors ${
+      className={`relative flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors ${
         isSelected
           ? "bg-accent text-accent-foreground"
           : "hover:bg-secondary"
       }`}
       style={{ paddingLeft: `${16 + indent + 16}px` }}
     >
-      <FileIcon
-        filename={node.name}
-        className="h-3 w-3 shrink-0 text-muted-foreground"
-      />
+      {Array.from({ length: depth }, (_, i) => (
+        <div
+          key={i}
+          className="absolute top-0 bottom-0 w-px bg-border"
+          style={{ left: `${22 + i * 16}px` }}
+        />
+      ))}
       <span
         className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}
       >
         {statusLabel}
       </span>
       <span className="truncate text-xs text-foreground">{node.name}</span>
+      <FileIcon
+        filename={node.name}
+        className="h-3 w-3 shrink-0 text-muted-foreground"
+      />
       <span className="ml-auto shrink-0 flex items-center gap-1 tabular-nums">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>

@@ -7,10 +7,12 @@ import {
   selectAllOurs,
   selectAllTheirs,
   type ChunkSelection,
+  isEditableRegion,
   type DiffRegion,
 } from "@/lib/conflict-regions";
 import { useRepoStore } from "@/stores/repo-store";
-import { Check, ChevronDown, ChevronRight, GitCompare, Minus, Plus, RotateCcw, Save } from "lucide-react";
+import { getUiState } from "@/lib/database";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Eye, EyeOff, FoldVertical, GitCompare, Minus, Plus, RotateCcw, Save, UnfoldVertical } from "lucide-react";
 import type { ThemedToken } from "shiki";
 
 // ── Source icons ────────────────────────────────────────────
@@ -27,10 +29,10 @@ function OursIcon({ size = 12 }: { size?: number }) {
     >
       <path
         d="M4 2.5L8 6l-4 3.5"
-        stroke="rgba(59, 130, 246, 0.8)"
         strokeWidth="1.75"
         strokeLinecap="round"
         strokeLinejoin="round"
+        style={{ stroke: "rgba(var(--conflict-ours), 0.8)" }}
       />
     </svg>
   );
@@ -48,10 +50,10 @@ function TheirsIcon({ size = 12 }: { size?: number }) {
     >
       <path
         d="M8 2.5L4 6l4 3.5"
-        stroke="rgba(168, 85, 247, 0.8)"
         strokeWidth="1.75"
         strokeLinecap="round"
         strokeLinejoin="round"
+        style={{ stroke: "rgba(var(--conflict-theirs), 0.8)" }}
       />
     </svg>
   );
@@ -82,6 +84,36 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     new Map(),
   );
   const outputScrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Synchronized expand/collapse (ours ↔ theirs) ───────────
+  const [expandedRegions, setExpandedRegions] = useState<Set<number>>(new Set());
+  const toggleRegionExpanded = useCallback((regionIndex: number) => {
+    setExpandedRegions((prev) => {
+      const next = new Set(prev);
+      if (next.has(regionIndex)) next.delete(regionIndex);
+      else next.add(regionIndex);
+      return next;
+    });
+  }, []);
+  const [expandedBases, setExpandedBases] = useState<Set<number>>(new Set());
+  const [showAutoResolved, setShowAutoResolved] = useState(false);
+  const [autoResolveEnabled, setAutoResolveEnabled] = useState(false);
+  const didAutoResolve = useRef(false);
+
+  useEffect(() => {
+    getUiState("conflict_auto_resolve").then((v) => {
+      if (v === "true") setAutoResolveEnabled(true);
+    }).catch(() => {});
+  }, []);
+
+  const toggleBaseExpanded = useCallback((regionIndex: number) => {
+    setExpandedBases((prev) => {
+      const next = new Set(prev);
+      if (next.has(regionIndex)) next.delete(regionIndex);
+      else next.add(regionIndex);
+      return next;
+    });
+  }, []);
 
   // ── Resizable split state ──────────────────────────────────
   const [hSplit, setHSplit] = useState(50); // ours/theirs horizontal %
@@ -137,12 +169,97 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     );
   }, [conflictContents]);
 
+  // Suspicious auto-resolves are treated as changed (editable) regions
+  const suspiciousIndices = useMemo(
+    () => regions.reduce<number[]>((acc, r, i) => {
+      if (r.type === "auto-resolved" && r.suspiciousGroup != null) acc.push(i);
+      return acc;
+    }, []),
+    [regions],
+  );
+
   const changedChunkIndices = useMemo(
     () =>
       regions
         .map((r, i) => ({ r, i }))
-        .filter(({ r }) => r.type === "changed")
+        .filter(({ r }) => isEditableRegion(r))
         .map(({ i }) => i),
+    [regions],
+  );
+
+  const autoResolvedCount = useMemo(
+    () => regions.filter((r) => r.type === "auto-resolved" && r.suspiciousGroup == null).length,
+    [regions],
+  );
+
+  const baseRegionIndices = useMemo(
+    () => regions.reduce<number[]>((acc, r, i) => {
+      if (isEditableRegion(r) && r.baseLines && r.baseLines.length > 0) acc.push(i);
+      return acc;
+    }, []),
+    [regions],
+  );
+
+
+  // Default selections for suspicious regions: pre-check the auto-resolved side.
+  // Computed once from regions, merged into selections at read time.
+  const suspiciousDefaults = useMemo(() => {
+    const defaults = new Map<number, ChunkSelection>();
+    for (const idx of suspiciousIndices) {
+      const region = regions[idx];
+      if (region.autoSide === "ours") {
+        defaults.set(idx, {
+          oursLines: new Set(region.aLines.map((_, i) => i)),
+          theirsLines: new Set<number>(),
+          order: "ours-first",
+        });
+      } else {
+        defaults.set(idx, {
+          oursLines: new Set<number>(),
+          theirsLines: new Set(region.bLines.map((_, i) => i)),
+          order: "theirs-first",
+        });
+      }
+    }
+    return defaults;
+  }, [suspiciousIndices, regions]);
+
+  // Effective selections: user selections override suspicious defaults
+  const effectiveSelections = useMemo(() => {
+    if (suspiciousDefaults.size === 0) return selections;
+    const merged = new Map(suspiciousDefaults);
+    for (const [k, v] of selections) merged.set(k, v);
+    return merged;
+  }, [selections, suspiciousDefaults]);
+
+  // Auto-show auto-resolved regions only when there are no real conflicts.
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional one-time sync when conflict data loads */
+  useEffect(() => {
+    if (changedChunkIndices.length === 0 && autoResolvedCount > 0) {
+      setShowAutoResolved(true);
+    } else if (changedChunkIndices.length > 0) {
+      setShowAutoResolved(false);
+    }
+  }, [changedChunkIndices.length, autoResolvedCount]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Reconstruct display texts from processed regions so syntax highlighting
+  // tokens align with the actual rendered content (3-way auto-resolution can
+  // change line counts vs the raw ours/theirs text).
+  const oursDisplayText = useMemo(
+    () => regions.flatMap((r) =>
+      r.type === "auto-resolved" && r.suspiciousGroup == null
+        ? (r.autoSide === "theirs" ? r.bLines : r.aLines)
+        : r.aLines
+    ).join("\n"),
+    [regions],
+  );
+  const theirsDisplayText = useMemo(
+    () => regions.flatMap((r) =>
+      r.type === "auto-resolved" && r.suspiciousGroup == null
+        ? (r.autoSide === "theirs" ? r.bLines : r.aLines)
+        : r.bLines
+    ).join("\n"),
     [regions],
   );
 
@@ -153,23 +270,23 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     lines: outputLines,
     sources: outputSources,
   } = useMemo(
-    () => buildOutputWithSources(regions, selections),
-    [regions, selections],
+    () => buildOutputWithSources(regions, effectiveSelections),
+    [regions, effectiveSelections],
   );
 
-  const outputRuns = useMemo(() => {
-    const runs: { source: "unchanged" | "ours" | "theirs"; startIdx: number; count: number }[] = [];
-    for (let i = 0; i < outputSources.length; i++) {
-      const src = outputSources[i];
-      const last = runs[runs.length - 1];
-      if (last && last.source === src) {
-        last.count++;
-      } else {
-        runs.push({ source: src, startIdx: i, count: 1 });
-      }
+  // Keep store in sync so file-list context menu can "Save Resolution"
+  useEffect(() => {
+    useRepoStore.setState({ conflictOutputText: outputText });
+  }, [outputText]);
+
+  // Experimental: auto-save when all conflicts are auto-resolved (skip if suspicious)
+  useEffect(() => {
+    if (didAutoResolve.current) return;
+    if (autoResolveEnabled && changedChunkIndices.length === 0 && autoResolvedCount > 0 && suspiciousIndices.length === 0 && outputText) {
+      didAutoResolve.current = true;
+      resolveConflictManual(filePath, outputText).catch(() => {});
     }
-    return runs;
-  }, [outputSources]);
+  }, [autoResolveEnabled, changedChunkIndices.length, autoResolvedCount, suspiciousIndices.length, outputText, filePath, resolveConflictManual]);
 
   // ── Syntax highlighting ────────────────────────────────────
 
@@ -186,8 +303,8 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     async function highlight() {
       try {
         const promises: Promise<ThemedToken[][]>[] = [
-          highlightLines(conflictContents!.ours, lang, shikiThemeId),
-          highlightLines(conflictContents!.theirs, lang, shikiThemeId),
+          highlightLines(oursDisplayText, lang, shikiThemeId),
+          highlightLines(theirsDisplayText, lang, shikiThemeId),
         ];
         if (conflictContents!.base) {
           promises.push(highlightLines(conflictContents!.base, lang, shikiThemeId));
@@ -206,7 +323,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     return () => {
       cancelled = true;
     };
-  }, [conflictContents, lang, shikiThemeId]);
+  }, [conflictContents, lang, shikiThemeId, oursDisplayText, theirsDisplayText]);
 
   const [outputTokens, setOutputTokens] = useState<ThemedToken[][] | null>(null);
   useEffect(() => {
@@ -231,9 +348,10 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const toggleChunkOurs = useCallback(
     (regionIndex: number) => {
       const region = regions[regionIndex];
-      if (!region || region.type !== "changed") return;
+      if (!region) return;
+      if (!isEditableRegion(region)) return;
 
-      const cur = selections.get(regionIndex);
+      const cur = effectiveSelections.get(regionIndex);
       const hasOurs = cur
         ? cur.oursLines.size === region.aLines.length
         : true;
@@ -260,15 +378,16 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
         return next;
       });
     },
-    [regions, selections],
+    [regions, effectiveSelections],
   );
 
   const toggleChunkTheirs = useCallback(
     (regionIndex: number) => {
       const region = regions[regionIndex];
-      if (!region || region.type !== "changed") return;
+      if (!region) return;
+      if (!isEditableRegion(region)) return;
 
-      const cur = selections.get(regionIndex);
+      const cur = effectiveSelections.get(regionIndex);
       const hasTheirs = cur
         ? cur.theirsLines.size === region.bLines.length
         : false;
@@ -296,15 +415,16 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
         return next;
       });
     },
-    [regions, selections],
+    [regions, effectiveSelections],
   );
 
   const toggleLine = useCallback(
     (regionIndex: number, side: "ours" | "theirs", lineIndex: number) => {
       const region = regions[regionIndex];
-      if (!region || region.type !== "changed") return;
+      if (!region) return;
+      if (!isEditableRegion(region)) return;
 
-      const cur = selections.get(regionIndex) ?? {
+      const cur = effectiveSelections.get(regionIndex) ?? {
         oursLines: new Set(region.aLines.map((_, i) => i)),
         theirsLines: new Set<number>(),
         order: "ours-first" as const,
@@ -341,14 +461,14 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
         return next;
       });
     },
-    [regions, selections],
+    [regions, effectiveSelections],
   );
 
   // Master checkbox state — derived from current selections, not stored
   const masterSide = useMemo((): "ours" | "theirs" | null => {
     if (changedChunkIndices.length === 0) return null;
     const allOurs = changedChunkIndices.every((idx) => {
-      const sel = selections.get(idx);
+      const sel = effectiveSelections.get(idx);
       const region = regions[idx];
       return (
         (!sel && region.aLines.length > 0) ||
@@ -359,7 +479,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     });
     if (allOurs) return "ours";
     const allTheirs = changedChunkIndices.every((idx) => {
-      const sel = selections.get(idx);
+      const sel = effectiveSelections.get(idx);
       const region = regions[idx];
       return (
         sel &&
@@ -369,7 +489,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     });
     if (allTheirs) return "theirs";
     return null;
-  }, [selections, changedChunkIndices, regions]);
+  }, [effectiveSelections, changedChunkIndices, regions]);
 
   const handleMasterOurs = useCallback(() => {
     const next = new Map<number, ChunkSelection>();
@@ -485,13 +605,128 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     const result: { oursStart: number; theirsStart: number }[] = [];
     let aLine = 0;
     let bLine = 0;
-    for (const region of regions) {
+    for (let i = 0; i < regions.length; i++) {
+      const region = regions[i];
       result.push({ oursStart: aLine, theirsStart: bLine });
-      aLine += region.aLines.length;
-      bLine += region.bLines.length;
+      if (!isEditableRegion(region) && region.type === "auto-resolved") {
+        const winLen = (region.autoSide === "theirs" ? region.bLines : region.aLines).length;
+        aLine += winLen;
+        bLine += winLen;
+      } else {
+        aLine += region.aLines.length;
+        bLine += region.bLines.length;
+      }
     }
     return result;
   }, [regions]);
+
+  // ── Display items (merge consecutive unchanged + hidden auto-resolved) ──
+
+  const displayItems = useMemo((): DisplayItem[] => {
+    const items: DisplayItem[] = [];
+
+    for (let ri = 0; ri < regions.length; ri++) {
+      const region = regions[ri];
+      if (isEditableRegion(region)) {
+        items.push({ type: "changed", regionIndex: ri });
+        continue;
+      }
+
+      if (region.type === "auto-resolved" && showAutoResolved) {
+        items.push({ type: "auto-resolved", regionIndex: ri });
+        continue;
+      }
+
+      const info = regionLineInfo[ri];
+      const winLines = region.type === "auto-resolved"
+        ? (region.autoSide === "theirs" ? region.bLines : region.aLines)
+        : null;
+      const oLines = winLines ?? region.aLines;
+      const tLines = winLines ?? region.bLines;
+      const oStartLine = winLines
+        ? (region.autoSide === "theirs" ? region.bStartLine : region.aStartLine)
+        : region.aStartLine;
+      const tStartLine = winLines
+        ? (region.autoSide === "theirs" ? region.bStartLine : region.aStartLine)
+        : region.bStartLine;
+
+      const prev = items[items.length - 1];
+      if (prev && prev.type === "unchanged") {
+        prev.oursLines.push(...oLines);
+        prev.theirsLines.push(...tLines);
+      } else {
+        items.push({
+          type: "unchanged",
+          expandKey: ri,
+          oursLines: [...oLines],
+          oursStartLineNo: oStartLine,
+          oursTokenStart: info.oursStart,
+          theirsLines: [...tLines],
+          theirsStartLineNo: tStartLine,
+          theirsTokenStart: info.theirsStart,
+        });
+      }
+    }
+
+    return items;
+  }, [regions, regionLineInfo, showAutoResolved]);
+
+  const unchangedExpandKeys = useMemo(
+    () => displayItems.filter((d) => d.type === "unchanged").map((d) => d.expandKey),
+    [displayItems],
+  );
+
+  const allExpanded = useMemo(() => {
+    const hasExpandable = baseRegionIndices.length > 0 || unchangedExpandKeys.length > 0;
+    if (!hasExpandable) return false;
+    return baseRegionIndices.every((i) => expandedBases.has(i))
+      && unchangedExpandKeys.every((k) => expandedRegions.has(k));
+  }, [baseRegionIndices, unchangedExpandKeys, expandedBases, expandedRegions]);
+
+  const toggleExpandAll = useCallback(() => {
+    if (allExpanded) {
+      setExpandedBases(new Set());
+      setExpandedRegions(new Set());
+    } else {
+      setExpandedBases(new Set(baseRegionIndices));
+      setExpandedRegions(new Set(unchangedExpandKeys));
+    }
+  }, [allExpanded, baseRegionIndices, unchangedExpandKeys]);
+
+  const conflictNumberMap = useMemo(() => {
+    const map = new Map<number, number>();
+    let n = 1;
+    for (const item of displayItems) {
+      if (item.type === "changed") {
+        map.set(item.regionIndex, n++);
+      }
+    }
+    return map;
+  }, [displayItems]);
+
+  const outputDisplayRanges = useMemo(() => {
+    const ranges: { startIdx: number; count: number }[] = [];
+    let idx = 0;
+    for (const item of displayItems) {
+      if (item.type === "unchanged") {
+        const count = item.oursLines.length;
+        ranges.push({ startIdx: idx, count });
+        idx += count;
+      } else if (item.type === "auto-resolved") {
+        const region = regions[item.regionIndex];
+        const count = (region.autoSide === "theirs" ? region.bLines : region.aLines).length;
+        ranges.push({ startIdx: idx, count });
+        idx += count;
+      } else {
+        const sel = effectiveSelections.get(item.regionIndex);
+        const region = regions[item.regionIndex];
+        const count = sel ? sel.oursLines.size + sel.theirsLines.size : region.aLines.length;
+        ranges.push({ startIdx: idx, count });
+        idx += count;
+      }
+    }
+    return ranges;
+  }, [displayItems, regions, effectiveSelections]);
 
   // ── Height equalization (ours ↔ theirs) ────────────────────
   // Measures actual rendered heights and forces both sides to match.
@@ -512,14 +747,18 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
       const count = Math.min(oursRegions.length, theirsRegions.length);
 
       for (let i = 0; i < count; i++) {
-        oursRegions[i].style.minHeight = "";
-        theirsRegions[i].style.minHeight = "";
+        oursRegions[i].style.minHeight = "0";
+        theirsRegions[i].style.minHeight = "0";
+      }
+
+      const heights: number[] = [];
+      for (let i = 0; i < count; i++) {
+        heights.push(Math.max(oursRegions[i].offsetHeight, theirsRegions[i].offsetHeight));
       }
 
       for (let i = 0; i < count; i++) {
-        const maxH = Math.max(oursRegions[i].offsetHeight, theirsRegions[i].offsetHeight);
-        oursRegions[i].style.minHeight = `${maxH}px`;
-        theirsRegions[i].style.minHeight = `${maxH}px`;
+        oursRegions[i].style.minHeight = `${heights[i]}px`;
+        theirsRegions[i].style.minHeight = `${heights[i]}px`;
       }
 
       requestAnimationFrame(() => { equalizing = false; });
@@ -543,7 +782,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
       observer.disconnect();
       cancelAnimationFrame(rafId);
     };
-  }, [regions]);
+  }, [regions, expandedRegions, expandedBases, showAutoResolved]);
 
   // ── Render ─────────────────────────────────────────────────
 
@@ -564,28 +803,60 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-card shrink-0">
-        <GitCompare className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-xs text-muted-foreground">
+        <GitCompare className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground shrink-0">
+          {rebaseProgress && conflictState?.operation === "rebase" && (
+            <span>Step {rebaseProgress.step}/{rebaseProgress.total} · </span>
+          )}
           {changedChunkIndices.length} conflict
           {changedChunkIndices.length !== 1 ? "s" : ""}
         </span>
-        {rebaseProgress && conflictState?.operation === "rebase" && (
-          <span className="text-xs text-muted-foreground/60">
-            · Step {rebaseProgress.step}/{rebaseProgress.total}
+        {rebaseProgress && conflictState?.operation === "rebase" && (rebaseProgress.commit_id || conflictContents?.rebase_commit_message) && (
+          <span className="text-xs text-muted-foreground/50 truncate min-w-0" title={conflictContents?.rebase_commit_message ?? undefined}>
             {rebaseProgress.commit_id && (
-              <span className="font-mono ml-1">{rebaseProgress.commit_id}</span>
+              <span className="font-mono">{rebaseProgress.commit_id}</span>
             )}
             {conflictContents?.rebase_commit_message && (
-              <span className="ml-1.5 italic truncate max-w-[300px] inline-block align-bottom" title={conflictContents.rebase_commit_message}>
-                {conflictContents.rebase_commit_message}
-              </span>
+              <span className="ml-1 italic">{conflictContents.rebase_commit_message}</span>
             )}
           </span>
         )}
-        <div className="flex items-center gap-1 ml-auto">
+        {autoResolvedCount > 0 && (
+          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1">
+            <button
+              onClick={() => setShowAutoResolved((v) => !v)}
+              title={showAutoResolved ? "Hide auto-resolved" : "Show auto-resolved"}
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-caption transition-colors ${
+                showAutoResolved
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {showAutoResolved ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+              <span>{autoResolvedCount} auto-resolved</span>
+            </button>
+          </div>
+        )}
+        {(baseRegionIndices.length > 0 || unchangedExpandKeys.length > 0) && (
+          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1">
+            <button
+              onClick={toggleExpandAll}
+              title={allExpanded ? "Collapse all context" : "Expand all context"}
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-caption transition-colors ${
+                allExpanded
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {allExpanded ? <FoldVertical className="w-3 h-3" /> : <UnfoldVertical className="w-3 h-3" />}
+              <span>{allExpanded ? "Fold" : "Expand"}</span>
+            </button>
+          </div>
+        )}
+        <div className="flex items-center gap-1 ml-auto shrink-0">
           <button
             onClick={resetSelections}
-            className="flex items-center gap-1 rounded-md bg-zinc-500/20 px-2.5 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-500/30"
+            className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:border-border-hover"
           >
             <RotateCcw className="w-3 h-3" />
             Reset
@@ -593,7 +864,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 rounded-md bg-green-500/20 px-3 py-1 text-xs font-medium text-green-400 transition-colors hover:bg-green-500/30 disabled:opacity-40"
+            className="flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-output),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-output-text)] transition-colors hover:bg-[rgba(var(--conflict-output),0.1)] hover:border-[rgba(var(--conflict-output),0.4)] disabled:opacity-40"
           >
             <Save className="w-3 h-3" />
             {saving ? "Saving..." : "Save Resolution"}
@@ -608,14 +879,14 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           {/* Ours pane */}
           <div className="flex flex-col overflow-hidden" style={{ flex: hSplit }}>
             {/* Header with master checkbox + icon + accept-all button */}
-            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-blue-500/5 flex items-center gap-1.5">
+            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-[rgba(var(--conflict-ours),0.05)] flex items-center gap-1.5">
               {/* Master checkbox */}
               <button
                 onClick={handleMasterOurs}
                 className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
                   masterSide === "ours"
-                    ? "bg-blue-500 text-white"
-                    : "border border-muted-foreground/30 hover:border-blue-400/50"
+                    ? "bg-[rgb(var(--conflict-ours))] text-white"
+                    : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-ours),0.5)]"
                 }`}
                 title="Accept all from ours"
               >
@@ -623,7 +894,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               </button>
               <OursIcon />
               <div className="flex-1 min-w-0 flex items-center">
-                <span className="text-xs font-medium text-blue-400">
+                <span className="text-xs font-medium text-[var(--conflict-ours-text)]">
                   Ours ({oursLabel})
                 </span>
                 {oursHash && (
@@ -635,7 +906,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               <button
                 onClick={handleAcceptOurs}
                 disabled={saving}
-                className="shrink-0 flex items-center gap-1.5 rounded-md bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/30 disabled:opacity-40"
+                className="shrink-0 flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-ours),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-ours-text)] transition-colors hover:bg-[rgba(var(--conflict-ours),0.1)] hover:border-[rgba(var(--conflict-ours),0.4)] disabled:opacity-40"
               >
                 <Save className="w-3 h-3" />
                 Accept Ours
@@ -647,21 +918,39 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                 onScroll={() => syncScroll("ours")}
                 className="absolute inset-0 overflow-auto text-xs font-mono leading-5"
               >
-                {regions.map((region, ri) => {
-                  const lineStart = regionLineInfo[ri].oursStart;
-                  if (region.type === "unchanged") {
+                {displayItems.map((item) => {
+                  if (item.type === "unchanged") {
                     return (
-                      <div key={ri} data-region-idx={ri}>
+                      <div key={`u-${item.expandKey}`} data-region-idx={item.expandKey}>
                         <UnchangedBlock
-                          lines={region.aLines}
+                          lines={item.oursLines}
                           tokens={oursTokens}
-                          startTokenLine={lineStart}
-                          startLineNo={region.aStartLine}
+                          startTokenLine={item.oursTokenStart}
+                          startLineNo={item.oursStartLineNo}
+                          conflictGutter
+                          expanded={expandedRegions.has(item.expandKey)}
+                          onToggleExpand={() => toggleRegionExpanded(item.expandKey)}
                         />
                       </div>
                     );
                   }
-                  const sel = selections.get(ri);
+                  if (item.type === "auto-resolved") {
+                    const ri = item.regionIndex;
+                    return (
+                      <div key={ri} data-region-idx={ri}>
+                        <AutoResolvedBlock
+                          side="ours"
+                          region={regions[ri]}
+                          tokens={oursTokens}
+                          startTokenLine={regionLineInfo[ri].oursStart}
+
+                        />
+                      </div>
+                    );
+                  }
+                  const ri = item.regionIndex;
+                  const region = regions[ri];
+                  const sel = effectiveSelections.get(ri);
                   const isChecked =
                     region.aLines.length > 0 &&
                     (sel ? sel.oursLines.size === region.aLines.length : true);
@@ -670,7 +959,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                       <ChangedBlock
                         lines={region.aLines}
                         tokens={oursTokens}
-                        startTokenLine={lineStart}
+                        startTokenLine={regionLineInfo[ri].oursStart}
                         startLineNo={region.aStartLine}
                         side="ours"
                         isChunkSelected={isChecked}
@@ -680,15 +969,19 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                         }
                         onToggleChunk={() => toggleChunkOurs(ri)}
                         onToggleLine={(li) => toggleLine(ri, "ours", li)}
+                        conflictNumber={conflictNumberMap.get(ri)}
+                        suspiciousGroup={region.suspiciousGroup}
                         baseLines={region.baseLines}
                         baseTokens={baseTokens}
                         baseStartLine={region.baseStartLine}
+                        baseExpanded={expandedBases.has(ri)}
+                        onToggleBaseExpand={() => toggleBaseExpanded(ri)}
                       />
                     </div>
                   );
                 })}
               </div>
-              <ScrollMinimap regions={regions} side="ours" />
+              <ScrollMinimap displayItems={displayItems} regions={regions} expandedRegions={expandedRegions} side="ours" />
             </div>
           </div>
 
@@ -700,13 +993,13 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
 
           {/* Theirs pane */}
           <div className="flex flex-col overflow-hidden" style={{ flex: 100 - hSplit }}>
-            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-purple-500/5 flex items-center gap-1.5">
+            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-[rgba(var(--conflict-theirs),0.05)] flex items-center gap-1.5">
               <button
                 onClick={handleMasterTheirs}
                 className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
                   masterSide === "theirs"
-                    ? "bg-purple-500 text-white"
-                    : "border border-muted-foreground/30 hover:border-purple-400/50"
+                    ? "bg-[rgb(var(--conflict-theirs))] text-white"
+                    : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-theirs),0.5)]"
                 }`}
                 title="Accept all from theirs"
               >
@@ -714,7 +1007,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               </button>
               <TheirsIcon />
               <div className="flex-1 min-w-0 flex items-center">
-                <span className="text-xs font-medium text-purple-400">
+                <span className="text-xs font-medium text-[var(--conflict-theirs-text)]">
                   Theirs ({theirsLabel})
                 </span>
                 {theirsHash && (
@@ -726,7 +1019,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               <button
                 onClick={handleAcceptTheirs}
                 disabled={saving}
-                className="shrink-0 flex items-center gap-1.5 rounded-md bg-purple-500/20 px-3 py-1 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/30 disabled:opacity-40"
+                className="shrink-0 flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-theirs),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-theirs-text)] transition-colors hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] disabled:opacity-40"
               >
                 <Save className="w-3 h-3" />
                 Accept Theirs
@@ -738,21 +1031,39 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                 onScroll={() => syncScroll("theirs")}
                 className="absolute inset-0 overflow-auto text-xs font-mono leading-5"
               >
-                {regions.map((region, ri) => {
-                  const lineStart = regionLineInfo[ri].theirsStart;
-                  if (region.type === "unchanged") {
+                {displayItems.map((item) => {
+                  if (item.type === "unchanged") {
                     return (
-                      <div key={ri} data-region-idx={ri}>
+                      <div key={`u-${item.expandKey}`} data-region-idx={item.expandKey}>
                         <UnchangedBlock
-                          lines={region.bLines}
+                          lines={item.theirsLines}
                           tokens={theirsTokens}
-                          startTokenLine={lineStart}
-                          startLineNo={region.bStartLine}
+                          startTokenLine={item.theirsTokenStart}
+                          startLineNo={item.theirsStartLineNo}
+                          conflictGutter
+                          expanded={expandedRegions.has(item.expandKey)}
+                          onToggleExpand={() => toggleRegionExpanded(item.expandKey)}
                         />
                       </div>
                     );
                   }
-                  const sel = selections.get(ri);
+                  if (item.type === "auto-resolved") {
+                    const ri = item.regionIndex;
+                    return (
+                      <div key={ri} data-region-idx={ri}>
+                        <AutoResolvedBlock
+                          side="theirs"
+                          region={regions[ri]}
+                          tokens={theirsTokens}
+                          startTokenLine={regionLineInfo[ri].theirsStart}
+
+                        />
+                      </div>
+                    );
+                  }
+                  const ri = item.regionIndex;
+                  const region = regions[ri];
+                  const sel = effectiveSelections.get(ri);
                   const isChecked =
                     region.bLines.length > 0 &&
                     (sel ? sel.theirsLines.size === region.bLines.length : false);
@@ -761,22 +1072,26 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                       <ChangedBlock
                         lines={region.bLines}
                         tokens={theirsTokens}
-                        startTokenLine={lineStart}
+                        startTokenLine={regionLineInfo[ri].theirsStart}
                         startLineNo={region.bStartLine}
                         side="theirs"
                         isChunkSelected={isChecked}
                         selectedLines={sel?.theirsLines ?? new Set<number>()}
                         onToggleChunk={() => toggleChunkTheirs(ri)}
                         onToggleLine={(li) => toggleLine(ri, "theirs", li)}
+                        conflictNumber={conflictNumberMap.get(ri)}
+                        suspiciousGroup={region.suspiciousGroup}
                         baseLines={region.baseLines}
                         baseTokens={baseTokens}
                         baseStartLine={region.baseStartLine}
+                        baseExpanded={expandedBases.has(ri)}
+                        onToggleBaseExpand={() => toggleBaseExpanded(ri)}
                       />
                     </div>
                   );
                 })}
               </div>
-              <ScrollMinimap regions={regions} side="theirs" />
+              <ScrollMinimap displayItems={displayItems} regions={regions} expandedRegions={expandedRegions} side="theirs" />
             </div>
           </div>
         </div>
@@ -792,7 +1107,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           className="flex flex-col min-h-0"
           style={{ flex: 100 - vSplit }}
         >
-          <div className="shrink-0 px-3 py-1.5 text-xs font-medium text-green-400 bg-green-500/5 border-b border-border flex items-center gap-2">
+          <div className="shrink-0 px-3 py-1.5 text-xs font-medium text-[var(--conflict-output-text)] bg-[rgba(var(--conflict-output),0.05)] border-b border-border flex items-center gap-2">
             <span>Output</span>
             <div className="flex items-center gap-3 ml-auto">
               <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60 font-normal">
@@ -811,27 +1126,35 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               onScroll={() => syncScroll("output")}
               className="absolute inset-0 overflow-auto text-xs font-mono leading-5"
             >
-              {outputRuns.map((run) =>
-                run.source === "unchanged" ? (
-                  <OutputUnchangedBlock
-                    key={run.startIdx}
-                    lines={outputLines}
-                    tokens={outputTokens}
-                    startIdx={run.startIdx}
-                    count={run.count}
-                  />
-                ) : (
-                  outputLines.slice(run.startIdx, run.startIdx + run.count).map((line, j) => (
-                    <OutputLine
-                      key={run.startIdx + j}
-                      content={line}
-                      lineNo={run.startIdx + j + 1}
-                      source={run.source}
-                      tokens={outputTokens?.[run.startIdx + j]}
+              {displayItems.map((item, di) => {
+                const range = outputDisplayRanges[di];
+                if (!range) return null;
+                const { startIdx, count } = range;
+
+                if (item.type === "unchanged") {
+                  return (
+                    <UnchangedBlock
+                      key={`ou-${item.expandKey}`}
+                      lines={outputLines.slice(startIdx, startIdx + count)}
+                      tokens={outputTokens}
+                      startTokenLine={startIdx}
+                      startLineNo={startIdx + 1}
+                      expanded={expandedRegions.has(item.expandKey)}
+                      onToggleExpand={() => toggleRegionExpanded(item.expandKey)}
                     />
-                  ))
-                ),
-              )}
+                  );
+                }
+
+                return outputLines.slice(startIdx, startIdx + count).map((line, j) => (
+                  <OutputLine
+                    key={startIdx + j}
+                    content={line}
+                    lineNo={startIdx + j + 1}
+                    source={outputSources[startIdx + j] === "auto-resolved" ? "auto-resolved" : outputSources[startIdx + j]}
+                    tokens={outputTokens?.[startIdx + j]}
+                  />
+                ));
+              })}
             </div>
           </div>
         </div>
@@ -844,27 +1167,6 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
-function OutputUnchangedBlock({
-  lines,
-  tokens,
-  startIdx,
-  count,
-}: {
-  lines: string[];
-  tokens: ThemedToken[][] | null;
-  startIdx: number;
-  count: number;
-}) {
-  return (
-    <UnchangedBlock
-      lines={lines.slice(startIdx, startIdx + count)}
-      tokens={tokens}
-      startTokenLine={startIdx}
-      startLineNo={startIdx + 1}
-    />
-  );
-}
-
 function OutputLine({
   content,
   lineNo,
@@ -873,20 +1175,22 @@ function OutputLine({
 }: {
   content: string;
   lineNo: number;
-  source: "unchanged" | "ours" | "theirs";
+  source: "unchanged" | "ours" | "theirs" | "auto-resolved";
   tokens?: ThemedToken[];
 }) {
-  const bgClass =
-    source === "ours"
-      ? "bg-blue-500/8"
-      : source === "theirs"
-        ? "bg-purple-500/8"
-        : "";
+  const BG_MAP: Record<string, string> = {
+    ours: "bg-[rgba(var(--conflict-ours),0.08)]",
+    theirs: "bg-[rgba(var(--conflict-theirs),0.08)]",
+    "auto-resolved": "bg-[rgba(var(--conflict-auto),0.08)]",
+  };
+  const bgClass = BG_MAP[source] ?? "";
   const iconEl =
     source === "ours" ? (
       <OursIcon size={10} />
     ) : source === "theirs" ? (
       <TheirsIcon size={10} />
+    ) : source === "auto-resolved" ? (
+      <Check className="w-2.5 h-2.5" style={{ color: "rgba(var(--conflict-auto), 0.4)" }} />
     ) : null;
 
   return (
@@ -919,6 +1223,9 @@ interface UnchangedBlockProps {
   tokens: ThemedToken[][] | null;
   startTokenLine: number;
   startLineNo: number;
+  conflictGutter?: boolean;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 function UnchangedBlock({
@@ -926,8 +1233,13 @@ function UnchangedBlock({
   tokens,
   startTokenLine,
   startLineNo,
+  conflictGutter,
+  expanded: controlledExpanded,
+  onToggleExpand,
 }: UnchangedBlockProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const expanded = controlledExpanded ?? localExpanded;
+  const toggleExpand = onToggleExpand ?? (() => setLocalExpanded((v) => !v));
   const shouldCollapse = lines.length > 8;
 
   if (shouldCollapse && !expanded) {
@@ -942,10 +1254,11 @@ function UnchangedBlock({
             content={line}
             lineNo={startLineNo + li}
             tokens={tokens?.[startTokenLine + li]}
+            conflictGutter={conflictGutter}
           />
         ))}
         <button
-          onClick={() => setExpanded(true)}
+          onClick={toggleExpand}
           className="w-full px-2 py-0.5 text-[10px] text-muted-foreground/50 bg-secondary/50 hover:bg-secondary transition-colors text-center"
         >
           {"⋯ "}
@@ -960,6 +1273,7 @@ function UnchangedBlock({
               content={line}
               lineNo={startLineNo + actualIdx}
               tokens={tokens?.[startTokenLine + actualIdx]}
+              conflictGutter={conflictGutter}
             />
           );
         })}
@@ -980,6 +1294,7 @@ function UnchangedBlock({
           content={line}
           lineNo={startLineNo + li}
           tokens={tokens?.[startTokenLine + li]}
+          conflictGutter={conflictGutter}
         />
       ))}
     </div>
@@ -990,14 +1305,16 @@ function UnchangedLine({
   content,
   lineNo,
   tokens,
+  conflictGutter,
 }: {
   content: string;
   lineNo: number;
   tokens?: ThemedToken[];
+  conflictGutter?: boolean;
 }) {
   return (
-    <div className="flex opacity-50">
-      <span className="w-5 shrink-0" />
+    <div className={`flex opacity-50${conflictGutter ? " border-l-2 border-transparent" : ""}`}>
+      <span className={`${conflictGutter ? "w-12" : "w-5"} shrink-0`} />
       <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
         {lineNo}
       </span>
@@ -1026,9 +1343,13 @@ interface ChangedBlockProps {
   selectedLines: Set<number>;
   onToggleChunk: () => void;
   onToggleLine: (lineIndex: number) => void;
+  conflictNumber?: number;
+  suspiciousGroup?: number;
   baseLines?: string[];
   baseTokens?: ThemedToken[][] | null;
   baseStartLine?: number;
+  baseExpanded?: boolean;
+  onToggleBaseExpand?: () => void;
 }
 
 function ChangedBlock({
@@ -1041,25 +1362,48 @@ function ChangedBlock({
   selectedLines,
   onToggleChunk,
   onToggleLine,
+  conflictNumber,
+  suspiciousGroup,
   baseLines,
   baseTokens,
   baseStartLine,
+  baseExpanded = false,
+  onToggleBaseExpand,
 }: ChangedBlockProps) {
-  const [baseExpanded, setBaseExpanded] = useState(false);
-  const borderClass =
-    side === "ours" ? "border-l-blue-500/50" : "border-l-purple-500/50";
+  const isSuspicious = suspiciousGroup != null;
+  const borderColor = isSuspicious
+    ? "rgba(var(--conflict-suspicious), 0.5)"
+    : side === "ours" ? "rgba(59, 130, 246, 0.5)" : "rgba(20, 184, 166, 0.5)";
 
   const hasBase = baseLines && baseLines.length > 0;
 
+  const numberBadge = conflictNumber != null ? (
+    <span className="text-[9px] font-medium text-muted-foreground/50 select-none">
+      #{conflictNumber}
+    </span>
+  ) : null;
+
+  const renameBadge = isSuspicious ? (
+    <span
+      className="flex items-center gap-0.5 text-[9px] font-medium select-none"
+      style={{ color: "var(--conflict-suspicious-text)" }}
+    >
+      <AlertTriangle className="w-2.5 h-2.5" />
+      Suspicious #{suspiciousGroup}
+    </span>
+  ) : null;
+
   return (
-    <div className={`border-l-2 ${borderClass}`}>
+    <div className="border-l-2" style={{ borderLeftColor: borderColor }}>
       {/* Collapsible base (ancestor) section — always rendered so both sides match */}
       {hasBase && (
         <div className="bg-zinc-500/[0.06] border-b border-border/30">
           <button
-            onClick={() => setBaseExpanded((v) => !v)}
+            onClick={onToggleBaseExpand}
             className="flex items-center gap-1 w-full px-2 py-0.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors"
           >
+            {numberBadge}
+            {renameBadge}
             {baseExpanded ? (
               <ChevronDown className="w-3 h-3 shrink-0" />
             ) : (
@@ -1075,7 +1419,7 @@ function ChangedBlock({
                 const tokenLine = baseStartLine ? baseStartLine - 1 + li : -1;
                 return (
                   <div key={li} className="flex">
-                    <span className="w-5 shrink-0" />
+                    <span className="w-12 shrink-0" />
                     <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
                       {baseStartLine ? baseStartLine + li : ""}
                     </span>
@@ -1102,58 +1446,57 @@ function ChangedBlock({
         </div>
       )}
 
+      {!hasBase && (numberBadge || renameBadge) && (
+        <div className="flex items-center gap-1 px-2 py-px text-[9px] text-muted-foreground/40 border-b border-border/20"
+          style={{ backgroundColor: side === "ours" ? "rgba(var(--conflict-ours), 0.03)" : "rgba(var(--conflict-theirs), 0.03)" }}
+        >
+          {numberBadge}
+          {renameBadge}
+        </div>
+      )}
+
       <div className="flex">
         {/* Side column: checkbox centered vertically */}
-        {lines.length > 0 ? (
+        {(() => {
+          const cv = side === "ours" ? "--conflict-ours" : "--conflict-theirs";
+          return lines.length > 0 ? (
           <div
-            className={`shrink-0 w-7 flex flex-col items-center justify-center cursor-pointer select-none transition-colors ${
-              side === "ours"
-                ? "bg-blue-500/[0.06] hover:bg-blue-500/10"
-                : "bg-purple-500/[0.06] hover:bg-purple-500/10"
-            }`}
+            className="shrink-0 w-7 flex flex-col items-center justify-center cursor-pointer select-none transition-colors"
+            style={{ backgroundColor: `rgba(var(${cv}), 0.06)` }}
             onClick={onToggleChunk}
             title={`${isChunkSelected ? "Deselect" : "Select"} all ${side} lines`}
           >
             <span
-              className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
-                isChunkSelected
-                  ? side === "ours"
-                    ? "bg-blue-500 text-white"
-                    : "bg-purple-500 text-white"
-                  : "border border-muted-foreground/30"
-              }`}
+              className="w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors"
+              style={isChunkSelected
+                ? { backgroundColor: `rgb(var(${cv}))`, color: "white" }
+                : { border: `1.5px solid rgba(var(${cv}), 0.4)` }}
             >
               {isChunkSelected && <Check className="w-2.5 h-2.5" />}
             </span>
           </div>
         ) : (
           <div className="shrink-0 w-7" />
-        )}
+        );
+        })()}
 
         {/* Lines or deleted label */}
         <div className="flex-1 min-w-0">
           {lines.length > 0 ? (
             lines.map((line, li) => {
               const isSelected = selectedLines.has(li);
+              const cv = side === "ours" ? "--conflict-ours" : "--conflict-theirs";
               return (
                 <div
                   key={li}
-                  className={`flex group/cline cursor-pointer transition-colors ${
-                    isSelected
-                      ? side === "ours"
-                        ? "bg-blue-500/10"
-                        : "bg-purple-500/10"
-                      : side === "ours"
-                        ? "bg-blue-500/[0.04]"
-                        : "bg-purple-500/[0.04]"
-                  }`}
+                  className="flex group/cline cursor-pointer transition-colors"
+                  style={{ backgroundColor: `rgba(var(${cv}), ${isSelected ? 0.1 : 0.06})` }}
                   onClick={() => onToggleLine(li)}
                 >
                   <span className="w-5 shrink-0 flex items-center justify-center select-none">
                     <span
-                      className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center opacity-0 group-hover/cline:opacity-100 transition-opacity ${
-                        side === "ours" ? "text-blue-400" : "text-purple-400"
-                      }`}
+                      className="w-3.5 h-3.5 rounded-sm flex items-center justify-center opacity-0 group-hover/cline:opacity-100 transition-opacity"
+                      style={{ color: side === "ours" ? "var(--conflict-ours-text)" : "var(--conflict-theirs-text)" }}
                     >
                       {isSelected ? (
                         <Minus className="w-2.5 h-2.5" />
@@ -1186,9 +1529,8 @@ function ChangedBlock({
           ) : (
             <div className="px-2 py-0.5">
               <span
-                className={`text-[10px] italic ${
-                  side === "ours" ? "text-blue-400/30" : "text-purple-400/30"
-                }`}
+                className="text-[10px] italic"
+                style={{ color: `rgba(var(${side === "ours" ? "--conflict-ours" : "--conflict-theirs"}), 0.3)` }}
               >
                 — deleted —
               </span>
@@ -1200,26 +1542,145 @@ function ChangedBlock({
   );
 }
 
+// ── Auto-resolved block ─────────────────────────────────────
+
+function AutoResolvedBlock({
+  side,
+  region,
+  tokens,
+  startTokenLine,
+}: {
+  side: "ours" | "theirs";
+  region: DiffRegion;
+  tokens: ThemedToken[][] | null;
+  startTokenLine: number;
+}) {
+  const isWinner = region.autoSide === side;
+  const winLines = region.autoSide === "theirs" ? region.bLines : region.aLines;
+  const loseLines = side === "ours" ? region.aLines : region.bLines;
+  const winStartLine = region.autoSide === "theirs" ? region.bStartLine : region.aStartLine;
+  const loseStartLine = side === "ours" ? region.aStartLine : region.bStartLine;
+
+  if (isWinner) {
+    return (
+      <div className="border-l-2" style={{ borderLeftColor: "rgba(var(--conflict-auto), 0.5)" }}>
+        {winLines.map((line, li) => (
+          <div key={li} className="flex" style={{ backgroundColor: "rgba(var(--conflict-auto), 0.06)" }}>
+            <span className="shrink-0 w-12 flex items-center justify-center">
+              <Check className="w-2.5 h-2.5" style={{ color: "rgba(var(--conflict-auto), 0.4)" }} />
+            </span>
+            <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+              {winStartLine + li}
+            </span>
+            <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
+              {tokens?.[startTokenLine + li]?.length ? (
+                tokens[startTokenLine + li].map((token: ThemedToken, i: number) => (
+                  <span key={i} style={{ color: token.color }}>{token.content}</span>
+                ))
+              ) : (
+                <span className="text-muted-foreground">
+                  {line || <span className="text-muted-foreground/20">{"↵"}</span>}
+                </span>
+              )}
+            </pre>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (loseLines.length === 0) {
+    return (
+      <div className="border-l-2" style={{ borderLeftColor: "rgba(var(--conflict-auto), 0.2)" }}>
+        <div className="flex items-center" style={{ backgroundColor: "rgba(var(--conflict-auto), 0.03)" }}>
+          <span className="shrink-0 w-12" />
+          <span className="w-9 shrink-0" />
+          <span className="flex-1 px-2 text-[10px] italic leading-5" style={{ color: "rgba(var(--conflict-auto), 0.3)" }}>
+            — no changes —
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-l-2 opacity-50" style={{ borderLeftColor: "rgba(var(--conflict-auto), 0.2)" }}>
+      {loseLines.map((line, li) => (
+        <div key={li} className="flex">
+          <span className="shrink-0 w-12" />
+          <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+            {loseStartLine + li}
+          </span>
+          <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
+            <span className="text-muted-foreground">
+              {line || <span className="text-muted-foreground/20">{"↵"}</span>}
+            </span>
+          </pre>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Types ──────────────────────────────────────────────────
+
+type DisplayItem =
+  | {
+      type: "unchanged";
+      expandKey: number;
+      oursLines: string[];
+      oursStartLineNo: number;
+      oursTokenStart: number;
+      theirsLines: string[];
+      theirsStartLineNo: number;
+      theirsTokenStart: number;
+    }
+  | { type: "changed"; regionIndex: number }
+  | { type: "auto-resolved"; regionIndex: number };
+
 // ── Scrollbar minimap ───────────────────────────────────────
 
 function ScrollMinimap({
+  displayItems,
   regions,
+  expandedRegions,
   side,
 }: {
+  displayItems: DisplayItem[];
   regions: DiffRegion[];
+  expandedRegions: Set<number>;
   side: "ours" | "theirs";
 }) {
   const markers = useMemo(() => {
     let totalLines = 0;
     const positions: { top: number; lines: number }[] = [];
 
-    for (const region of regions) {
-      const lines =
-        side === "ours" ? region.aLines.length : region.bLines.length;
-      if (region.type === "changed") {
-        positions.push({ top: totalLines, lines: Math.max(lines, 1) });
+    for (const item of displayItems) {
+      if (item.type === "unchanged") {
+        const lineCount = side === "ours" ? item.oursLines.length : item.theirsLines.length;
+        const shouldCollapse = lineCount > 8;
+        if (shouldCollapse && !expandedRegions.has(item.expandKey)) {
+          totalLines += 7; // 3 top + 1 collapse row + 3 bottom
+        } else {
+          totalLines += lineCount;
+        }
+      } else if (item.type === "auto-resolved") {
+        const region = regions[item.regionIndex];
+        const isWinner = region.autoSide === side;
+        if (isWinner) {
+          const winLines = region.autoSide === "theirs" ? region.bLines : region.aLines;
+          totalLines += winLines.length;
+        } else {
+          const loseLines = side === "ours" ? region.aLines : region.bLines;
+          totalLines += Math.max(loseLines.length, 1);
+        }
+      } else {
+        const region = regions[item.regionIndex];
+        const lines = side === "ours" ? region.aLines : region.bLines;
+        const visualLines = Math.max(lines.length, 1);
+        positions.push({ top: totalLines, lines: visualLines });
+        totalLines += visualLines;
       }
-      totalLines += lines;
     }
 
     if (totalLines === 0 || positions.length === 0) return [];
@@ -1228,7 +1689,7 @@ function ScrollMinimap({
       topPct: (p.top / totalLines) * 100,
       heightPct: Math.max(0.4, (p.lines / totalLines) * 100),
     }));
-  }, [regions, side]);
+  }, [displayItems, regions, expandedRegions, side]);
 
   if (markers.length === 0) return null;
 
@@ -1237,7 +1698,7 @@ function ScrollMinimap({
       {markers.map((m, i) => (
         <div
           key={i}
-          className="absolute right-[1px] w-[4px] rounded-full bg-amber-500/70"
+          className="absolute right-[1px] w-[4px] rounded-full bg-red-400/70"
           style={{
             top: `${m.topPct}%`,
             height: `${m.heightPct}%`,

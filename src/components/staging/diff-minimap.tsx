@@ -1,11 +1,19 @@
 import { useCallback, useMemo, useRef } from "react";
 import type { FileDiff, DiffHunk } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
+import type { ExpandableContext } from "@/hooks/use-expandable-context";
+
+type GapRenderFn = (hunkIndex: number) => {
+  topLines: { length: number };
+  bottomLines: { length: number };
+  remainingCount: number;
+} | null;
 
 interface DiffMinimapProps {
   diff: FileDiff;
   /** Reference to the scrollable container so we can scroll to position */
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  expandCtx?: ExpandableContext;
 }
 
 interface Region {
@@ -26,14 +34,15 @@ interface Region {
  * immediately followed by an addition block) share the same vertical rows,
  * matching the actual side-by-side diff rendering.
  */
-export function DiffMinimap({ diff, scrollRef }: DiffMinimapProps) {
+export function DiffMinimap({ diff, scrollRef, expandCtx }: DiffMinimapProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const diffViewMode = useRepoStore((s) => s.diffViewMode);
   const isSplit = diffViewMode === "side-by-side";
+  const getGapRender = expandCtx?.getGapRender;
 
   const regions = useMemo(
-    () => (isSplit ? computeSplitRegions(diff.hunks) : computeUnifiedRegions(diff.hunks)),
-    [diff.hunks, isSplit],
+    () => (isSplit ? computeSplitRegions(diff.hunks, getGapRender) : computeUnifiedRegions(diff.hunks, getGapRender)),
+    [diff.hunks, isSplit, getGapRender],
   );
 
   const handleClick = useCallback(
@@ -88,15 +97,34 @@ export function DiffMinimap({ diff, scrollRef }: DiffMinimapProps) {
 
 // ── Unified mode: sequential line positions ─────────────────────────────────
 
-function computeUnifiedRegions(hunks: DiffHunk[]): Region[] {
+function computeUnifiedRegions(hunks: DiffHunk[], getGapRender?: GapRenderFn): Region[] {
   const result: Region[] = [];
+
   let totalLines = 0;
-  for (const hunk of hunks) totalLines += hunk.lines.length + 1;
+  for (let hi = 0; hi < hunks.length; hi++) {
+    const gr = getGapRender?.(hi);
+    if (gr) {
+      totalLines += gr.topLines.length;
+      if (gr.remainingCount > 0) totalLines += 1;
+      totalLines += gr.bottomLines.length;
+    }
+    if (!gr || gr.remainingCount > 0) totalLines += 1; // header
+    totalLines += hunks[hi].lines.length;
+  }
   if (totalLines === 0) return result;
 
   let lineOffset = 0;
-  for (const hunk of hunks) {
-    lineOffset++; // hunk header
+  for (let hi = 0; hi < hunks.length; hi++) {
+    const hunk = hunks[hi];
+    const gr = getGapRender?.(hi);
+
+    if (gr) {
+      lineOffset += gr.topLines.length;
+      if (gr.remainingCount > 0) lineOffset += 1;
+      lineOffset += gr.bottomLines.length;
+    }
+    if (!gr || gr.remainingCount > 0) lineOffset += 1; // header
+
     let regionStart: number | null = null;
     let regionType: "add" | "del" | null = null;
 
@@ -136,12 +164,18 @@ function computeUnifiedRegions(hunks: DiffHunk[]): Region[] {
 // a single-line edit (1 del + 1 add) produces a red and green region at the
 // exact same vertical position instead of being stacked sequentially.
 
-function computeSplitRegions(hunks: DiffHunk[]): Region[] {
-  // First pass: count total visual rows across all hunks
+function computeSplitRegions(hunks: DiffHunk[], getGapRender?: GapRenderFn): Region[] {
+  // First pass: count total visual rows across all hunks + gaps
   let totalRows = 0;
-  for (const hunk of hunks) {
-    totalRows++; // hunk header
-    totalRows += countSideBySideRows(hunk);
+  for (let hi = 0; hi < hunks.length; hi++) {
+    const gr = getGapRender?.(hi);
+    if (gr) {
+      totalRows += gr.topLines.length;
+      if (gr.remainingCount > 0) totalRows += 1;
+      totalRows += gr.bottomLines.length;
+    }
+    if (!gr || gr.remainingCount > 0) totalRows += 1; // header
+    totalRows += countSideBySideRows(hunks[hi]);
   }
   if (totalRows === 0) return [];
 
@@ -149,8 +183,17 @@ function computeSplitRegions(hunks: DiffHunk[]): Region[] {
   const result: Region[] = [];
   let rowOffset = 0;
 
-  for (const hunk of hunks) {
-    rowOffset++; // hunk header
+  for (let hi = 0; hi < hunks.length; hi++) {
+    const hunk = hunks[hi];
+    const gr = getGapRender?.(hi);
+
+    if (gr) {
+      rowOffset += gr.topLines.length;
+      if (gr.remainingCount > 0) rowOffset += 1;
+      rowOffset += gr.bottomLines.length;
+    }
+    if (!gr || gr.remainingCount > 0) rowOffset += 1; // header
+
     const lines = hunk.lines;
     let i = 0;
 
@@ -158,22 +201,17 @@ function computeSplitRegions(hunks: DiffHunk[]): Region[] {
       const line = lines[i];
 
       if (line.origin === " ") {
-        // Context — 1 row, no region
         rowOffset++;
         i++;
       } else if (line.origin === "-") {
-        // Collect consecutive deletions
         let delCount = 0;
         while (i < lines.length && lines[i].origin === "-") { delCount++; i++; }
-        // Collect consecutive additions that follow
         let addCount = 0;
         while (i < lines.length && lines[i].origin === "+") { addCount++; i++; }
-        // Paired block occupies max(del, add) rows
         const blockRows = Math.max(delCount, addCount);
         const blockStart = rowOffset;
         rowOffset += blockRows;
 
-        // Deletion region spans the rows its lines occupy (top-aligned in block)
         if (delCount > 0) {
           result.push({
             start: blockStart / totalRows,
@@ -181,7 +219,6 @@ function computeSplitRegions(hunks: DiffHunk[]): Region[] {
             type: "del",
           });
         }
-        // Addition region at the same starting row
         if (addCount > 0) {
           result.push({
             start: blockStart / totalRows,
@@ -190,7 +227,6 @@ function computeSplitRegions(hunks: DiffHunk[]): Region[] {
           });
         }
       } else if (line.origin === "+") {
-        // Orphan addition (no preceding deletion)
         let addCount = 0;
         while (i < lines.length && lines[i].origin === "+") { addCount++; i++; }
         result.push({

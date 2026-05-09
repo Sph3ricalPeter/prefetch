@@ -94,6 +94,7 @@ import {
   deleteFileCmd,
 } from "@/lib/commands";
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
+import { computeDiffRegions, buildOutputWithSources } from "@/lib/conflict-regions";
 import { MultiStepAction } from "@/lib/multi-step";
 import {
   addRecentRepo,
@@ -130,6 +131,51 @@ function isLargeDiff(files: FileStatus[], path: string): number | false {
   return total > LARGE_DIFF_THRESHOLD ? total : false;
 }
 
+/** Auto-select the first conflicted file so the user lands in the conflict editor immediately. */
+function autoSelectFirstConflict(
+  statuses: FileStatus[],
+  get: () => RepoState,
+): void {
+  const first = statuses.find((f) => f.is_conflicted);
+  if (first && !get().selectedFilePath) {
+    get().selectFile(first.path, false);
+  }
+}
+
+/** Batch-analyze conflicted files to find which ones are fully auto-resolved. */
+async function analyzeConflictFiles(
+  files: FileStatus[],
+  set: (state: Partial<RepoState>) => void,
+): Promise<void> {
+  const conflicted = files.filter((f) => f.is_conflicted);
+  if (conflicted.length === 0) {
+    set({ conflictAutoResolvedFiles: new Map() });
+    return;
+  }
+  const results = await Promise.all(
+    conflicted.map(async (f): Promise<[string, string] | null> => {
+      try {
+        const contents = await getConflictContentsCmd(f.path);
+        const regions = computeDiffRegions(contents.ours, contents.theirs, contents.base ?? undefined);
+        const hasRealConflict = regions.some((r) => r.type === "changed");
+        const hasAutoResolved = regions.some((r) => r.type === "auto-resolved");
+        if (!hasRealConflict && hasAutoResolved) {
+          const { text } = buildOutputWithSources(regions, new Map());
+          return [f.path, text];
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const map = new Map<string, string>();
+  for (const entry of results) {
+    if (entry) map.set(entry[0], entry[1]);
+  }
+  set({ conflictAutoResolvedFiles: map });
+}
+
 /**
  * Handle a git operation that may result in conflicts (cherry-pick, rebase, merge, revert).
  * On error, checks for conflict state and refreshes the UI accordingly.
@@ -138,6 +184,7 @@ async function handleConflictError(
   e: unknown,
   operationLabel: string,
   set: (state: Partial<RepoState>) => void,
+  get: () => RepoState,
   extra?: () => Promise<void>,
 ): Promise<void> {
   set({ isLoading: false });
@@ -145,6 +192,8 @@ async function handleConflictError(
   if (conflict?.in_progress) {
     const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus().catch(() => [])]);
     set({ ...repoData, fileStatuses: statuses, conflictState: conflict });
+    analyzeConflictFiles(statuses, set).catch(() => {});
+    autoSelectFirstConflict(statuses, get);
     if (extra) await extra();
     toast.error(`${operationLabel} has conflicts — resolve them, then continue or abort`);
   } else {
@@ -212,6 +261,9 @@ interface RepoState {
   // Conflict state
   conflictState: ConflictState | null;
   conflictContents: ConflictContents | null;
+  conflictOutputText: string | null;
+  /** Auto-resolved conflict files: path → pre-computed output text for quick save */
+  conflictAutoResolvedFiles: Map<string, string>;
   rebaseProgress: RebaseProgress | null;
 
   // Dirty working tree dialog — shown when an operation needs a clean tree
@@ -428,6 +480,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   forcePushPending: false,
   conflictState: null,
   conflictContents: null,
+  conflictOutputText: null,
+  conflictAutoResolvedFiles: new Map(),
   rebaseProgress: null,
   dirtyActionPending: null,
   remoteCheckoutPending: null,
@@ -513,6 +567,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         undoInfo: undoAction,
         conflictState: conflict,
       });
+      if (conflict?.in_progress) {
+        analyzeConflictFiles(statuses, set).catch(() => {});
+        autoSelectFirstConflict(statuses, get);
+      }
 
       // Load LFS, forge, and identity info after core data (non-blocking, fire-and-forget)
       Promise.all([
@@ -1105,7 +1163,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await resolveConflictManualCmd(filePath, content);
       await get().loadStatus();
-      set({ conflictContents: null, activeDiff: null, selectedFilePath: null, isLoading: false });
+      const autoMap = new Map(get().conflictAutoResolvedFiles);
+      autoMap.delete(filePath);
+      set({ conflictContents: null, conflictOutputText: null, conflictAutoResolvedFiles: autoMap, activeDiff: null, selectedFilePath: null, isLoading: false });
       toast.success(`Resolved ${filePath.split("/").pop()}`);
     } catch (e) {
       set({ isLoading: false });
@@ -1348,12 +1408,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
+        analyzeConflictFiles(statuses, set).catch(() => {});
+        autoSelectFirstConflict(statuses, get);
         toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
       } else {
         toast.success("Cherry-pick successful");
       }
     } catch (e) {
-      await handleConflictError(e, "Cherry-pick", set);
+      await handleConflictError(e, "Cherry-pick", set, get);
     }
   },
 
@@ -1364,6 +1426,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
+        analyzeConflictFiles(statuses, set).catch(() => {});
+        autoSelectFirstConflict(statuses, get);
         if (conflict.operation === "rebase") {
           const progress = await getRebaseProgressCmd().catch(() => null);
           set({ rebaseProgress: progress });
@@ -1373,7 +1437,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success(`Rebased onto ${targetBranch}`);
       }
     } catch (e) {
-      await handleConflictError(e, "Rebase", set, async () => {
+      await handleConflictError(e, "Rebase", set, get, async () => {
         const conflict = await getConflictState().catch(() => null);
         if (conflict?.operation === "rebase") {
           const progress = await getRebaseProgressCmd().catch(() => null);
@@ -1395,6 +1459,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
+        analyzeConflictFiles(statuses, set).catch(() => {});
+        autoSelectFirstConflict(statuses, get);
         // Pre-fill commit message from MERGE_MSG
         const mergeMsg = await getMergeMessageCmd().catch(() => null);
         if (mergeMsg) set({ commitMessage: mergeMsg });
@@ -1403,7 +1469,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.success(`Merged ${target}`);
       }
     } catch (e) {
-      await handleConflictError(e, "Merge", set, async () => {
+      await handleConflictError(e, "Merge", set, get, async () => {
         const mergeMsg = await getMergeMessageCmd().catch(() => null);
         if (mergeMsg) set({ commitMessage: mergeMsg });
       });
@@ -1448,12 +1514,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
+        analyzeConflictFiles(statuses, set).catch(() => {});
+        autoSelectFirstConflict(statuses, get);
         toast.error("Revert has conflicts — resolve them, then continue or abort");
       } else {
         toast.success(`Reverted ${commitId.slice(0, 7)}`);
       }
     } catch (e) {
-      await handleConflictError(e, "Revert", set);
+      await handleConflictError(e, "Revert", set, get);
     }
   },
 
@@ -1574,7 +1642,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await abortOperationCmd();
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict, rebaseProgress: null });
+      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict, rebaseProgress: null, conflictAutoResolvedFiles: new Map() });
       toast.success("Operation aborted");
     } catch (e) {
       set({ isLoading: false });
@@ -1589,6 +1657,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
       if (conflict.in_progress) {
+        analyzeConflictFiles(statuses, set).catch(() => {});
+        autoSelectFirstConflict(statuses, get);
         // Rebase advanced to next commit — load new progress
         if (conflict.operation === "rebase") {
           const progress = await getRebaseProgressCmd().catch(() => null);
@@ -1611,9 +1681,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
           getConflictState(),
         ]);
         set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
-        if (conflict.in_progress && conflict.operation === "rebase") {
-          const progress = await getRebaseProgressCmd().catch(() => null);
-          set({ rebaseProgress: progress });
+        if (conflict.in_progress) {
+          analyzeConflictFiles(statuses as FileStatus[], set).catch(() => {});
+          autoSelectFirstConflict(statuses as FileStatus[], get);
+          if (conflict.operation === "rebase") {
+            const progress = await getRebaseProgressCmd().catch(() => null);
+            set({ rebaseProgress: progress });
+          }
         } else {
           set({ rebaseProgress: null });
         }
@@ -1733,6 +1807,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         update.undoInfo = undoAction;
       }
       set(update);
+      if (conflict.in_progress) analyzeConflictFiles(statuses, set).catch(() => {});
     } catch {
       // Silently handle — these are background refreshes from the file watcher
     }

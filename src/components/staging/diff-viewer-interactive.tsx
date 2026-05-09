@@ -4,30 +4,33 @@ import { highlightLines, detectLang } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
-import { Plus, CheckSquare } from "lucide-react";
+import { Plus, CheckSquare, ChevronDown, ChevronUp, UnfoldVertical } from "lucide-react";
+import type { ExpandableContext } from "@/hooks/use-expandable-context";
 import type { ThemedToken } from "shiki";
 
 interface DiffViewerInteractiveProps {
   diff: FileDiff;
   filePath: string;
+  expandCtx?: ExpandableContext;
 }
 
 /**
  * Wrapper that resets selection state when the diff identity changes
  * by re-keying the inner component.
  */
-export function DiffViewerInteractive({ diff, filePath }: DiffViewerInteractiveProps) {
+export function DiffViewerInteractive({ diff, filePath, expandCtx }: DiffViewerInteractiveProps) {
   const diffKey = useMemo(
     () => `${diff.path}:${diff.hunks.length}:${diff.hunks.reduce((n, h) => n + h.lines.length, 0)}`,
     [diff],
   );
 
-  return <DiffViewerInteractiveInner key={diffKey} diff={diff} filePath={filePath} />;
+  return <DiffViewerInteractiveInner key={diffKey} diff={diff} filePath={filePath} expandCtx={expandCtx} />;
 }
 
-function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractiveProps) {
+function DiffViewerInteractiveInner({ diff, filePath, expandCtx }: DiffViewerInteractiveProps) {
   const [selectedLines, setSelectedLines] = useState<Set<string>>(new Set());
   const [tokensByHunk, setTokensByHunk] = useState<Map<number, ThemedToken[][]>>(new Map());
+  const [fileTokens, setFileTokens] = useState<ThemedToken[][] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stageHunk = useRepoStore((s) => s.stageHunk);
   const stageLines = useRepoStore((s) => s.stageLines);
@@ -62,6 +65,21 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
       setTokensByHunk(new Map());
     };
   }, [diff, lang, shikiThemeId]);
+
+  // Highlight full file for expanded context lines
+  useEffect(() => {
+    const fl = expandCtx?.fileLines;
+    if (!fl || !lang || fl.length > 10000) {
+      setFileTokens(null);
+      return;
+    }
+    let cancelled = false;
+    const code = fl.join("\n");
+    highlightLines(code, lang, shikiThemeId).then((tokens) => {
+      if (!cancelled) setFileTokens(tokens);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [expandCtx?.fileLines, lang, shikiThemeId]);
 
   const toggleLine = useCallback((hunkIdx: number, lineIdx: number) => {
     setSelectedLines((prev) => {
@@ -112,22 +130,6 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
     await stageHunk(filePath, hunkIdx);
   }, [filePath, stageHunk]);
 
-  if (diff.is_binary) {
-    return (
-      <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-        Binary file — cannot display diff
-      </div>
-    );
-  }
-
-  if (diff.hunks.length === 0) {
-    return (
-      <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-        No changes
-      </div>
-    );
-  }
-
   const wrapClass = diffWrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre";
 
   return (
@@ -157,69 +159,102 @@ function DiffViewerInteractiveInner({ diff, filePath }: DiffViewerInteractivePro
               .map((line, li) => ({ key: `${hi}:${li}`, line }))
               .filter(({ line }) => line.origin === "+" || line.origin === "-");
             const allHunkSelected = hunkChangeKeys.length > 0 && hunkChangeKeys.every(({ key }) => selectedLines.has(key));
+            const gapRender = expandCtx?.getGapRender(hi);
 
             return (
-              <div
-                key={hi}
-                style={{
-                  contentVisibility: "auto",
-                  containIntrinsicSize: `auto ${hunk.lines.length * 20}px`,
-                }}
-              >
-                {/* Hunk header with stage button */}
-                <div className="sticky top-0 z-10 flex items-center bg-secondary px-1 py-0.5 backdrop-blur-sm group">
-                  <button
-                    onClick={() => handleStageHunk(hi)}
-                    title="Stage this hunk"
-                    className="flex items-center justify-center w-5 h-5 rounded text-green-400 hover:bg-green-500/20 transition-colors mr-1 shrink-0"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => toggleHunk(hi)}
-                    title={allHunkSelected ? "Deselect hunk" : "Select hunk"}
-                    className={`flex items-center justify-center w-5 h-5 rounded transition-colors mr-2 shrink-0 ${
-                      allHunkSelected
-                        ? "text-blue-400 bg-blue-500/20"
-                        : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary"
-                    }`}
-                  >
-                    <CheckSquare className="w-3 h-3" />
-                  </button>
-                  <span className="text-muted-foreground text-xs truncate">
-                    {hunk.header}
-                  </span>
-                </div>
+              <div key={hi}>
+                {/* Expandable gap before this hunk */}
+                {gapRender && (
+                  <>
+                    {gapRender.topLines.length > 0 &&
+                      (diffViewMode === "side-by-side" ? (
+                        <InteractiveSideBySideContextBlock lines={gapRender.topLines} wrapClass={wrapClass} fileTokens={fileTokens} />
+                      ) : (
+                        gapRender.topLines.map((line, i) => (
+                          <InteractiveContextLine key={`gt-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
+                        ))
+                      ))}
+                    {gapRender.remainingCount > 0 && (
+                      <InteractiveExpandSeparator
+                        remainingCount={gapRender.remainingCount}
+                        onExpandDown={gapRender.onExpandDown}
+                        onExpandUp={gapRender.onExpandUp}
+                      />
+                    )}
+                    {gapRender.bottomLines.length > 0 &&
+                      (diffViewMode === "side-by-side" ? (
+                        <InteractiveSideBySideContextBlock lines={gapRender.bottomLines} wrapClass={wrapClass} fileTokens={fileTokens} />
+                      ) : (
+                        gapRender.bottomLines.map((line, i) => (
+                          <InteractiveContextLine key={`gb-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
+                        ))
+                      ))}
+                  </>
+                )}
+
+                {/* Hunk header with stage button (hidden when gap fully expanded) */}
+                {(!gapRender || gapRender.remainingCount > 0) && (
+                  <div className="sticky top-0 z-10 flex items-center bg-secondary px-1 py-0.5 backdrop-blur-sm group">
+                    <button
+                      onClick={() => handleStageHunk(hi)}
+                      title="Stage this hunk"
+                      className="flex items-center justify-center w-5 h-5 rounded text-green-400 hover:bg-green-500/20 transition-colors mr-1 shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => toggleHunk(hi)}
+                      title={allHunkSelected ? "Deselect hunk" : "Select hunk"}
+                      className={`flex items-center justify-center w-5 h-5 rounded transition-colors mr-2 shrink-0 ${
+                        allHunkSelected
+                          ? "text-blue-400 bg-blue-500/20"
+                          : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary"
+                      }`}
+                    >
+                      <CheckSquare className="w-3 h-3" />
+                    </button>
+                    <span className="text-muted-foreground text-xs truncate">
+                      {hunk.header}
+                    </span>
+                  </div>
+                )}
 
                 {/* Lines */}
-                {diffViewMode === "side-by-side" ? (
-                  <InteractiveSideBySideHunk
-                    hunk={hunk}
-                    hunkIndex={hi}
-                    hunkTokens={hunkTokens}
-                    wrapClass={wrapClass}
-                    selectedLines={selectedLines}
-                    onToggle={toggleLine}
-                  />
-                ) : (
-                  hunk.lines.map((line, li) => (
-                    <InteractiveDiffLine
-                      key={li}
-                      line={line}
+                <div
+                  style={{
+                    contentVisibility: "auto",
+                    containIntrinsicSize: `auto ${hunk.lines.length * 20}px`,
+                  }}
+                >
+                  {diffViewMode === "side-by-side" ? (
+                    <InteractiveSideBySideHunk
+                      hunk={hunk}
                       hunkIndex={hi}
-                      lineIndex={li}
-                      tokens={hunkTokens?.[li]}
-                      isSelected={selectedLines.has(`${hi}:${li}`)}
-                      onToggle={toggleLine}
+                      hunkTokens={hunkTokens}
                       wrapClass={wrapClass}
+                      selectedLines={selectedLines}
+                      onToggle={toggleLine}
                     />
-                  ))
-                )}
+                  ) : (
+                    hunk.lines.map((line, li) => (
+                      <InteractiveDiffLine
+                        key={li}
+                        line={line}
+                        hunkIndex={hi}
+                        lineIndex={li}
+                        tokens={hunkTokens?.[li]}
+                        isSelected={selectedLines.has(`${hi}:${li}`)}
+                        onToggle={toggleLine}
+                        wrapClass={wrapClass}
+                      />
+                    ))
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
-        <DiffMinimap diff={diff} scrollRef={scrollRef} />
+        <DiffMinimap diff={diff} scrollRef={scrollRef} expandCtx={expandCtx} />
       </div>
     </div>
   );
@@ -300,7 +335,7 @@ function InteractiveDiffLine({
               key={i}
               style={{
                 color: token.color,
-                opacity: line.origin === " " ? 1 : 0.85,
+                opacity: line.origin === " " ? 1 : 0.95,
               }}
             >
               {token.content}
@@ -496,7 +531,7 @@ function SideBySideCell({
                   key={ti}
                   style={{
                     color: token.color,
-                    opacity: line.origin === " " ? 1 : 0.85,
+                    opacity: line.origin === " " ? 1 : 0.95,
                   }}
                 >
                   {token.content}
@@ -512,6 +547,130 @@ function SideBySideCell({
       ) : (
         <span className="flex-1" />
       )}
+    </div>
+  );
+}
+
+// ── Expanded context lines (unified) ───────────────────────────────────────
+
+interface InteractiveContextLineProps {
+  line: DiffLine;
+  tokens?: ThemedToken[];
+  wrapClass: string;
+}
+
+function InteractiveContextLine({ line, tokens, wrapClass }: InteractiveContextLineProps) {
+  return (
+    <div className="flex">
+      <span className="w-5 shrink-0" />
+      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-[10px]">
+        {line.old_lineno ?? ""}
+      </span>
+      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+        {line.new_lineno ?? ""}
+      </span>
+      <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />
+      <pre className={`flex-1 px-2 ${wrapClass}`}>
+        {tokens && tokens.length > 0 ? (
+          tokens.map((token, i) => (
+            <span key={i} style={{ color: token.color }}>{token.content}</span>
+          ))
+        ) : (
+          <span className="text-muted-foreground">{line.content || " "}</span>
+        )}
+      </pre>
+    </div>
+  );
+}
+
+// ── Expanded context lines (side-by-side) ──────────────────────────────────
+
+interface InteractiveSideBySideContextBlockProps {
+  lines: DiffLine[];
+  wrapClass: string;
+  fileTokens?: ThemedToken[][] | null;
+}
+
+function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: InteractiveSideBySideContextBlockProps) {
+  return (
+    <div>
+      {lines.map((line, i) => {
+        const tokens = line.new_lineno != null ? fileTokens?.[line.new_lineno - 1] : undefined;
+        return (
+          <div key={i} className="flex">
+            <div className="flex flex-1 min-w-0 overflow-hidden border-r border-border">
+              <span className="w-4 shrink-0" />
+              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                {line.old_lineno ?? ""}
+              </span>
+              <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
+              <pre className={`flex-1 px-1 ${wrapClass}`}>
+                {tokens && tokens.length > 0 ? (
+                  tokens.map((token, ti) => (
+                    <span key={ti} style={{ color: token.color }}>{token.content}</span>
+                  ))
+                ) : (
+                  <span className="text-muted-foreground">{line.content || " "}</span>
+                )}
+              </pre>
+            </div>
+            <div className="flex flex-1 min-w-0 overflow-hidden">
+              <span className="w-4 shrink-0" />
+              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                {line.new_lineno ?? ""}
+              </span>
+              <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
+              <pre className={`flex-1 px-1 ${wrapClass}`}>
+                {tokens && tokens.length > 0 ? (
+                  tokens.map((token, ti) => (
+                    <span key={ti} style={{ color: token.color }}>{token.content}</span>
+                  ))
+                ) : (
+                  <span className="text-muted-foreground">{line.content || " "}</span>
+                )}
+              </pre>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Expand separator for interactive viewer ────────────────────────────────
+
+interface InteractiveExpandSeparatorProps {
+  remainingCount: number;
+  onExpandDown: () => void;
+  onExpandUp: () => void;
+}
+
+function InteractiveExpandSeparator({ remainingCount, onExpandDown, onExpandUp }: InteractiveExpandSeparatorProps) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-0.5 bg-secondary/60 text-muted-foreground border-y border-border/50 select-none">
+      <span className="w-5 shrink-0" />
+      <button
+        onClick={onExpandDown}
+        title="Show lines above"
+        className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
+      >
+        <ChevronDown className="w-3 h-3" />
+      </button>
+      <button
+        onClick={onExpandUp}
+        title="Show lines below"
+        className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
+      >
+        <ChevronUp className="w-3 h-3" />
+      </button>
+      <button
+        onClick={() => { onExpandDown(); onExpandUp(); }}
+        title="Expand all hidden lines"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
+      >
+        <UnfoldVertical className="w-3 h-3" />
+        <span>{remainingCount} hidden lines</span>
+      </button>
     </div>
   );
 }

@@ -172,6 +172,13 @@ export async function getStashFileDiff(
   return tracedInvoke<FileDiff>("get_stash_file_diff", { index, filePath });
 }
 
+export async function getFileBlob(
+  filePath: string,
+  rev: string | null,
+): Promise<string[]> {
+  return tracedInvoke<string[]>("get_file_blob", { filePath, rev });
+}
+
 export async function getTags(): Promise<TagInfo[]> {
   return tracedInvoke<TagInfo[]>("get_tags");
 }

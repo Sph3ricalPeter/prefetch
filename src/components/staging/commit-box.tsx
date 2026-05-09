@@ -372,7 +372,11 @@ export function CommitBox() {
           <button
             onClick={handleContinue}
             disabled={!canContinue}
-            className="flex-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+            className={`flex-1 rounded-md border px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:hover:translate-y-0 ${
+              unresolvedCount > 0
+                ? "border-red-500/30 text-red-400 opacity-80"
+                : "border-[rgba(var(--conflict-output),0.3)] text-[var(--conflict-output-text)] hover:bg-[rgba(var(--conflict-output),0.1)] hover:border-[rgba(var(--conflict-output),0.4)] hover:-translate-y-px"
+            }`}
           >
             {isLoading
               ? "Continuing..."

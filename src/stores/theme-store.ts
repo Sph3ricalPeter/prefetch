@@ -130,13 +130,24 @@ function applyCodeTheme(theme: CodeTheme) {
   root.style.setProperty("--diff-hunk-header-fg", theme.diff.hunkHeaderFg);
   root.style.setProperty("--diff-gutter-bg", theme.diff.gutterBg);
   root.style.setProperty("--diff-gutter-fg", theme.diff.gutterFg);
+
+  root.style.setProperty("--conflict-ours", theme.conflict.ours);
+  root.style.setProperty("--conflict-theirs", theme.conflict.theirs);
+  root.style.setProperty("--conflict-auto", theme.conflict.auto);
+  root.style.setProperty("--conflict-suspicious", theme.conflict.suspicious);
+  root.style.setProperty("--conflict-output", theme.conflict.output);
+  root.style.setProperty("--conflict-ours-text", theme.conflict.oursText);
+  root.style.setProperty("--conflict-theirs-text", theme.conflict.theirsText);
+  root.style.setProperty("--conflict-auto-text", theme.conflict.autoText);
+  root.style.setProperty("--conflict-suspicious-text", theme.conflict.suspiciousText);
+  root.style.setProperty("--conflict-output-text", theme.conflict.outputText);
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
   appThemeId: "dark",
-  codeThemeId: "prefetch-dark",
+  codeThemeId: "vs-dark",
   appTheme: getAppTheme("dark"),
-  codeTheme: getCodeTheme("prefetch-dark"),
+  codeTheme: getCodeTheme("vs-dark"),
   fontFamilyId: "inter",
   monoFontId: "jetbrains",
   fontScale: 1.0,
@@ -196,7 +207,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
 
       const resolvedAppId = appId ?? "dark";
       const resolvedCodeId =
-        codeId ?? DEFAULT_CODE_THEME[resolvedAppId] ?? "prefetch-dark";
+        codeId ?? DEFAULT_CODE_THEME[resolvedAppId] ?? "vs-dark";
       const resolvedFontFamilyId = fontFamId ?? "inter";
       const resolvedMonoFontId = monoId ?? DEFAULT_MONO_FONT[resolvedFontFamilyId] ?? "jetbrains";
       const resolvedFontScale = fontScaleStr ? parseFloat(fontScaleStr) : 1.0;

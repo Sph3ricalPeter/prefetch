@@ -2,18 +2,19 @@ import type { FileDiff } from "@/types/git";
 import { DiffViewerReadonly } from "@/components/staging/diff-viewer-readonly";
 import { DiffViewerInteractive } from "@/components/staging/diff-viewer-interactive";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
+import { useExpandableContext, type DiffSource } from "@/hooks/use-expandable-context";
 
 interface DiffViewerProps {
   diff: FileDiff;
   filePath?: string;
   mode?: "readonly" | "interactive";
+  source?: DiffSource;
 }
 
-/**
- * Orchestrator component that renders the appropriate diff viewer
- * based on the context (readonly for commits/stashes, interactive for working tree).
- */
-export function DiffViewer({ diff, filePath, mode = "readonly" }: DiffViewerProps) {
+export function DiffViewer({ diff, filePath, mode = "readonly", source = {} }: DiffViewerProps) {
+  const resolvedPath = filePath ?? diff.path;
+  const ctx = useExpandableContext(diff.hunks, resolvedPath, source);
+
   if (diff.is_binary) {
     return (
       <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
@@ -40,15 +41,17 @@ export function DiffViewer({ diff, filePath, mode = "readonly" }: DiffViewerProp
     );
   }
 
-  const resolvedPath = filePath ?? diff.path;
-
   return (
     <div className="flex flex-col h-full">
-      <DiffToolbar />
+      <DiffToolbar
+        onExpandAll={ctx.expandAllGaps}
+        onCollapseAll={ctx.collapseAll}
+        isExpanded={ctx.isExpanded}
+      />
       {mode === "interactive" ? (
-        <DiffViewerInteractive diff={diff} filePath={resolvedPath} />
+        <DiffViewerInteractive diff={diff} filePath={resolvedPath} expandCtx={ctx} />
       ) : (
-        <DiffViewerReadonly diff={diff} filePath={resolvedPath} />
+        <DiffViewerReadonly diff={diff} filePath={resolvedPath} expandCtx={ctx} />
       )}
       {diff.is_truncated && diff.hunks.length > 0 && (
         <div className="shrink-0 border-t border-border px-4 py-2 text-center text-xs text-muted-foreground">

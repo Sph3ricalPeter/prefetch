@@ -1,11 +1,13 @@
 import { useRepoStore } from "@/stores/repo-store";
-import { Columns2, Rows3, WrapText } from "lucide-react";
+import { Columns2, Rows3, WrapText, UnfoldVertical, FoldVertical } from "lucide-react";
 
-/**
- * Toolbar rendered above the diff viewer with view-mode and wrap-lines toggles.
- * Preferences are persisted to SQLite via the repo store.
- */
-export function DiffToolbar() {
+interface DiffToolbarProps {
+  onExpandAll?: () => void;
+  onCollapseAll?: () => void;
+  isExpanded?: boolean;
+}
+
+export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded }: DiffToolbarProps) {
   const diffViewMode = useRepoStore((s) => s.diffViewMode);
   const diffWrapLines = useRepoStore((s) => s.diffWrapLines);
   const setDiffViewMode = useRepoStore((s) => s.setDiffViewMode);
@@ -56,6 +58,24 @@ export function DiffToolbar() {
           <span>Wrap</span>
         </button>
       </div>
+
+      {/* Expand/Collapse all context toggle */}
+      {onExpandAll && onCollapseAll && (
+        <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1">
+          <button
+            onClick={isExpanded ? onCollapseAll : onExpandAll}
+            title={isExpanded ? "Collapse all context" : "Expand all context"}
+            className={`flex items-center gap-1 rounded px-2 py-0.5 text-caption transition-colors ${
+              isExpanded
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {isExpanded ? <FoldVertical className="w-3 h-3" /> : <UnfoldVertical className="w-3 h-3" />}
+            <span>{isExpanded ? "Fold" : "Expand"}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
