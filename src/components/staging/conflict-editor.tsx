@@ -12,6 +12,7 @@ import {
 } from "@/lib/conflict-regions";
 import { useRepoStore } from "@/stores/repo-store";
 import { getUiState } from "@/lib/database";
+import { getDataAttrFromEvent } from "@/lib/utils";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Eye, EyeOff, FoldVertical, GitCompare, Minus, Plus, RotateCcw, Save, UnfoldVertical } from "lucide-react";
 import type { ThemedToken } from "shiki";
 
@@ -540,6 +541,97 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     setSelections(new Map());
   }, []);
 
+  // ── Line drag selection ────────────────────────────────────
+
+  const conflictDragRef = useRef<{
+    active: boolean;
+    addMode: boolean;
+    regionIndex: number;
+    side: "ours" | "theirs";
+    startLine: number;
+    lastLine: number;
+    baseSel: ChunkSelection;
+  } | null>(null);
+
+  const getConflictKeyFromEvent = useCallback((e: React.MouseEvent | MouseEvent) => {
+    const raw = getDataAttrFromEvent(e, "data-conflict-key");
+    if (!raw) return null;
+    const parts = raw.split(":");
+    return { regionIndex: parseInt(parts[0]), side: parts[1] as "ours" | "theirs", lineIndex: parseInt(parts[2]) };
+  }, []);
+
+  const handlePaneMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const info = getConflictKeyFromEvent(e);
+    if (!info) return;
+
+    const { regionIndex, side, lineIndex } = info;
+    const region = regions[regionIndex];
+    if (!region || !isEditableRegion(region)) return;
+
+    e.preventDefault();
+
+    const cur = effectiveSelections.get(regionIndex);
+    const isSelected = cur
+      ? (side === "ours" ? cur.oursLines : cur.theirsLines).has(lineIndex)
+      : side === "ours";
+    const willSelect = !isSelected;
+
+    const baseSel: ChunkSelection = cur
+      ? { oursLines: new Set(cur.oursLines), theirsLines: new Set(cur.theirsLines), order: cur.order }
+      : { oursLines: new Set(region.aLines.map((_, i) => i)), theirsLines: new Set<number>(), order: "ours-first" };
+
+    conflictDragRef.current = {
+      active: true,
+      addMode: willSelect,
+      regionIndex,
+      side,
+      startLine: lineIndex,
+      lastLine: lineIndex,
+      baseSel,
+    };
+
+    toggleLine(regionIndex, side, lineIndex);
+  }, [getConflictKeyFromEvent, regions, effectiveSelections, toggleLine]);
+
+  const handlePaneMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!conflictDragRef.current?.active) return;
+    const info = getConflictKeyFromEvent(e);
+    if (!info) return;
+
+    const { regionIndex, side, lineIndex } = info;
+    const drag = conflictDragRef.current;
+    if (regionIndex !== drag.regionIndex || side !== drag.side) return;
+    if (lineIndex === drag.lastLine) return;
+
+    drag.lastLine = lineIndex;
+
+    const start = Math.min(drag.startLine, lineIndex);
+    const end = Math.max(drag.startLine, lineIndex);
+
+    const newOurs = new Set(drag.baseSel.oursLines);
+    const newTheirs = new Set(drag.baseSel.theirsLines);
+    const target = side === "ours" ? newOurs : newTheirs;
+
+    for (let i = start; i <= end; i++) {
+      if (drag.addMode) target.add(i); else target.delete(i);
+    }
+
+    setSelections((prev) => {
+      const next = new Map(prev);
+      next.set(regionIndex, { oursLines: newOurs, theirsLines: newTheirs, order: drag.baseSel.order });
+      return next;
+    });
+  }, [getConflictKeyFromEvent]);
+
+  useEffect(() => {
+    const handleMouseUp = () => {
+      if (conflictDragRef.current?.active) conflictDragRef.current.active = false;
+    };
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, []);
+
   // ── Resize drag handlers ────────────────────────────────────
 
   const onHDragStart = useCallback((e: React.MouseEvent) => {
@@ -822,33 +914,33 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           </span>
         )}
         {autoResolvedCount > 0 && (
-          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1">
+          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1 shrink-0">
             <button
               onClick={() => setShowAutoResolved((v) => !v)}
               title={showAutoResolved ? "Hide auto-resolved" : "Show auto-resolved"}
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-caption transition-colors ${
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
                 showAutoResolved
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              {showAutoResolved ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+              {showAutoResolved ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
               <span>{autoResolvedCount} auto-resolved</span>
             </button>
           </div>
         )}
         {(baseRegionIndices.length > 0 || unchangedExpandKeys.length > 0) && (
-          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1">
+          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1 shrink-0">
             <button
               onClick={toggleExpandAll}
               title={allExpanded ? "Collapse all context" : "Expand all context"}
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-caption transition-colors ${
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
                 allExpanded
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              {allExpanded ? <FoldVertical className="w-3 h-3" /> : <UnfoldVertical className="w-3 h-3" />}
+              {allExpanded ? <FoldVertical className="w-3.5 h-3.5" /> : <UnfoldVertical className="w-3.5 h-3.5" />}
               <span>{allExpanded ? "Fold" : "Expand"}</span>
             </button>
           </div>
@@ -858,7 +950,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
             onClick={resetSelections}
             className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:border-border-hover"
           >
-            <RotateCcw className="w-3 h-3" />
+            <RotateCcw className="w-3.5 h-3.5" />
             Reset
           </button>
           <button
@@ -866,7 +958,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
             disabled={saving}
             className="flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-output),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-output-text)] transition-colors hover:bg-[rgba(var(--conflict-output),0.1)] hover:border-[rgba(var(--conflict-output),0.4)] disabled:opacity-40"
           >
-            <Save className="w-3 h-3" />
+            <Save className="w-3.5 h-3.5" />
             {saving ? "Saving..." : "Save Resolution"}
           </button>
         </div>
@@ -916,6 +1008,8 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               <div
                 ref={oursScrollRef}
                 onScroll={() => syncScroll("ours")}
+                onMouseDown={handlePaneMouseDown}
+                onMouseMove={handlePaneMouseMove}
                 className="absolute inset-0 overflow-auto text-xs font-mono leading-5"
               >
                 {displayItems.map((item) => {
@@ -962,13 +1056,13 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                         startTokenLine={regionLineInfo[ri].oursStart}
                         startLineNo={region.aStartLine}
                         side="ours"
+                        regionIndex={ri}
                         isChunkSelected={isChecked}
                         selectedLines={
                           sel?.oursLines ??
                           new Set(region.aLines.map((_, i) => i))
                         }
                         onToggleChunk={() => toggleChunkOurs(ri)}
-                        onToggleLine={(li) => toggleLine(ri, "ours", li)}
                         conflictNumber={conflictNumberMap.get(ri)}
                         suspiciousGroup={region.suspiciousGroup}
                         baseLines={region.baseLines}
@@ -1029,6 +1123,8 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               <div
                 ref={theirsScrollRef}
                 onScroll={() => syncScroll("theirs")}
+                onMouseDown={handlePaneMouseDown}
+                onMouseMove={handlePaneMouseMove}
                 className="absolute inset-0 overflow-auto text-xs font-mono leading-5"
               >
                 {displayItems.map((item) => {
@@ -1075,10 +1171,10 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                         startTokenLine={regionLineInfo[ri].theirsStart}
                         startLineNo={region.bStartLine}
                         side="theirs"
+                        regionIndex={ri}
                         isChunkSelected={isChecked}
                         selectedLines={sel?.theirsLines ?? new Set<number>()}
                         onToggleChunk={() => toggleChunkTheirs(ri)}
-                        onToggleLine={(li) => toggleLine(ri, "theirs", li)}
                         conflictNumber={conflictNumberMap.get(ri)}
                         suspiciousGroup={region.suspiciousGroup}
                         baseLines={region.baseLines}
@@ -1339,10 +1435,10 @@ interface ChangedBlockProps {
   startTokenLine: number;
   startLineNo: number;
   side: "ours" | "theirs";
+  regionIndex: number;
   isChunkSelected: boolean;
   selectedLines: Set<number>;
   onToggleChunk: () => void;
-  onToggleLine: (lineIndex: number) => void;
   conflictNumber?: number;
   suspiciousGroup?: number;
   baseLines?: string[];
@@ -1358,10 +1454,10 @@ function ChangedBlock({
   startTokenLine,
   startLineNo,
   side,
+  regionIndex,
   isChunkSelected,
   selectedLines,
   onToggleChunk,
-  onToggleLine,
   conflictNumber,
   suspiciousGroup,
   baseLines,
@@ -1491,7 +1587,7 @@ function ChangedBlock({
                   key={li}
                   className="flex group/cline cursor-pointer transition-colors"
                   style={{ backgroundColor: `rgba(var(${cv}), ${isSelected ? 0.1 : 0.06})` }}
-                  onClick={() => onToggleLine(li)}
+                  data-conflict-key={`${regionIndex}:${side}:${li}`}
                 >
                   <span className="w-5 shrink-0 flex items-center justify-center select-none">
                     <span

@@ -256,8 +256,8 @@ export function GraphPanel() {
 
   return (
     <div className="relative flex h-full flex-col bg-background">
-      {/* Toolbar — only shown for diff breadcrumb, Change 5: buttons moved to titlebar */}
-      {(showDiff || showLargeDiffGuard || (diffLoading && selectedFilePath)) && (
+      {/* File path bar — only for large diff guard or diff loading (DiffViewer has its own) */}
+      {!showDiff && (showLargeDiffGuard || (diffLoading && selectedFilePath)) && (
         <div className="shrink-0">
           <div className="flex min-h-9 items-center px-3 py-1">
             <button
@@ -323,7 +323,7 @@ export function GraphPanel() {
               diff={activeDiff}
               filePath={selectedFilePath ?? activeDiff.path}
               mode={
-                selectedCommitId || selectedStashIndex != null || selectedFileStaged
+                selectedCommitId || selectedStashIndex != null
                   ? "readonly"
                   : "interactive"
               }
@@ -332,6 +332,8 @@ export function GraphPanel() {
                 stashIndex: selectedStashIndex,
                 staged: selectedFileStaged,
               }}
+              staged={selectedFileStaged}
+              onBack={clearDiff}
             />
           </div>
         ) : (
