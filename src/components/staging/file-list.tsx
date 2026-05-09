@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
   ChevronRight,
   Plus,
@@ -41,6 +42,9 @@ export function FileList() {
   const discard = useRepoStore((s) => s.discard);
   const resolveOurs = useRepoStore((s) => s.resolveOurs);
   const resolveTheirs = useRepoStore((s) => s.resolveTheirs);
+  const resolveConflictManual = useRepoStore((s) => s.resolveConflictManual);
+  const conflictOutputText = useRepoStore((s) => s.conflictOutputText);
+  const conflictAutoResolvedFiles = useRepoStore((s) => s.conflictAutoResolvedFiles);
   const selectFile = useRepoStore((s) => s.selectFile);
   const isLoading = useRepoStore((s) => s.isLoading);
   const stashFiles = useRepoStore((s) => s.stashFiles);
@@ -87,6 +91,11 @@ export function FileList() {
   const [batchContextMenu, setBatchContextMenu] = useState<{
     paths: string[];
     isStaged: boolean;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [conflictContextMenu, setConflictContextMenu] = useState<{
+    file: FileStatus;
     x: number;
     y: number;
   } | null>(null);
@@ -200,17 +209,46 @@ export function FileList() {
           actionDisabled={true}
           labelClassName="text-red-400 hover:text-red-300"
         >
-          {conflicted.map((file) => (
-            <ConflictRow
-              key={`conflict-${file.path}`}
-              file={file}
-              isSelected={selectedFilePath === file.path}
-              onSelect={() => selectFile(file.path, false)}
-              onResolveOurs={() => resolveOurs(file.path)}
-              onResolveTheirs={() => resolveTheirs(file.path)}
+          {viewMode === "tree" ? (
+            <ConflictTreeView
+              files={conflicted}
+              selectedFilePath={selectedFilePath}
+              isAutoResolved={(path) => conflictAutoResolvedFiles.has(path)}
+              onSelect={(path) => selectFile(path, false)}
+              onResolveOurs={resolveOurs}
+              onResolveTheirs={resolveTheirs}
+              onSave={(path) => {
+                const text = conflictAutoResolvedFiles.get(path);
+                if (text != null) resolveConflictManual(path, text);
+              }}
+              onFileContextMenu={(e, file) => {
+                e.preventDefault();
+                setConflictContextMenu({ file, x: e.clientX, y: e.clientY });
+              }}
               disabled={isLoading}
             />
-          ))}
+          ) : (
+            conflicted.map((file) => (
+              <ConflictRow
+                key={`conflict-${file.path}`}
+                file={file}
+                isSelected={selectedFilePath === file.path}
+                isAutoResolved={conflictAutoResolvedFiles.has(file.path)}
+                onSelect={() => selectFile(file.path, false)}
+                onResolveOurs={() => resolveOurs(file.path)}
+                onResolveTheirs={() => resolveTheirs(file.path)}
+                onSave={() => {
+                  const text = conflictAutoResolvedFiles.get(file.path);
+                  if (text != null) resolveConflictManual(file.path, text);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setConflictContextMenu({ file, x: e.clientX, y: e.clientY });
+                }}
+                disabled={isLoading}
+              />
+            ))
+          )}
         </FileSection>
       )}
 
@@ -388,6 +426,24 @@ export function FileList() {
           onClose={() => setBatchContextMenu(null)}
         />
       )}
+
+      {/* Conflict context menu */}
+      {conflictContextMenu && (
+        <ContextMenu
+          x={conflictContextMenu.x}
+          y={conflictContextMenu.y}
+          items={buildConflictContextMenuItems(
+            conflictContextMenu.file,
+            resolveOurs,
+            resolveTheirs,
+            selectedFilePath === conflictContextMenu.file.path ? resolveConflictManual : null,
+            selectedFilePath === conflictContextMenu.file.path ? conflictOutputText : null,
+            openInEditor,
+            showInFolder,
+          )}
+          onClose={() => setConflictContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -511,6 +567,208 @@ function FileTreeView({
   );
 }
 
+// --- Conflict tree view ---
+
+function ConflictTreeView({
+  files,
+  selectedFilePath,
+  isAutoResolved,
+  onSelect,
+  onResolveOurs,
+  onResolveTheirs,
+  onSave,
+  onFileContextMenu,
+  disabled,
+}: {
+  files: FileStatus[];
+  selectedFilePath: string | null;
+  isAutoResolved: (path: string) => boolean;
+  onSelect: (path: string) => void;
+  onResolveOurs: (path: string) => void;
+  onResolveTheirs: (path: string) => void;
+  onSave?: (path: string) => void;
+  onFileContextMenu: (e: React.MouseEvent, file: FileStatus) => void;
+  disabled: boolean;
+}) {
+  const tree = useMemo(() => buildFileTree(files), [files]);
+
+  return (
+    <div>
+      {tree.map((node) => (
+        <ConflictTreeNodeView
+          key={node.path}
+          node={node}
+          depth={0}
+          selectedFilePath={selectedFilePath}
+          isAutoResolved={isAutoResolved}
+          onSelect={onSelect}
+          onResolveOurs={onResolveOurs}
+          onResolveTheirs={onResolveTheirs}
+          onSave={onSave}
+          onFileContextMenu={onFileContextMenu}
+          disabled={disabled}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ConflictTreeNodeView({
+  node,
+  depth,
+  selectedFilePath,
+  isAutoResolved,
+  onSelect,
+  onResolveOurs,
+  onResolveTheirs,
+  onSave,
+  onFileContextMenu,
+  disabled,
+}: {
+  node: FileTreeNode;
+  depth: number;
+  selectedFilePath: string | null;
+  isAutoResolved: (path: string) => boolean;
+  onSelect: (path: string) => void;
+  onResolveOurs: (path: string) => void;
+  onResolveTheirs: (path: string) => void;
+  onSave?: (path: string) => void;
+  onFileContextMenu: (e: React.MouseEvent, file: FileStatus) => void;
+  disabled: boolean;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const indent = depth * 16;
+
+  if (node.type === "directory") {
+    const fileCount = collectFilePaths(node).length;
+    return (
+      <div>
+        <div
+          className="group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
+          style={{ paddingLeft: `${12 + indent}px` }}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {Array.from({ length: depth }, (_, i) => (
+            <div
+              key={i}
+              className="absolute top-0 bottom-0 w-px bg-border"
+              style={{ left: `${18 + i * 16}px` }}
+            />
+          ))}
+          {expanded ? (
+            <ChevronDown className="h-3 w-3 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          )}
+          {expanded ? (
+            <FolderOpen className="h-3 w-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <Folder className="h-3 w-3 shrink-0 text-muted-foreground" />
+          )}
+          <span className="truncate">{node.name}</span>
+          <span className="text-faint">{fileCount}</span>
+        </div>
+        {expanded && node.children.map((child) => (
+          <ConflictTreeNodeView
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            selectedFilePath={selectedFilePath}
+            isAutoResolved={isAutoResolved}
+            onSelect={onSelect}
+            onResolveOurs={onResolveOurs}
+            onResolveTheirs={onResolveTheirs}
+            onSave={onSave}
+            onFileContextMenu={onFileContextMenu}
+            disabled={disabled}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const file = node.file!;
+  const isSelected = selectedFilePath === file.path;
+  const fileAutoResolved = isAutoResolved(file.path);
+
+  return (
+    <div
+      className={`group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
+        isSelected
+          ? "bg-accent text-accent-foreground"
+          : "hover:bg-secondary"
+      }`}
+      style={{ paddingLeft: `${12 + indent + 16}px` }}
+      onClick={() => onSelect(file.path)}
+      onContextMenu={(e) => onFileContextMenu(e, file)}
+    >
+      {Array.from({ length: depth }, (_, i) => (
+        <div
+          key={i}
+          className="absolute top-0 bottom-0 w-px bg-border"
+          style={{ left: `${18 + i * 16}px` }}
+        />
+      ))}
+      <span className={`w-4 shrink-0 text-center text-xs font-medium ${fileAutoResolved ? "text-purple-400" : "text-red-400"}`}>
+        {fileAutoResolved
+          ? <Check className="h-3 w-3 inline-block" />
+          : <AlertTriangle className="h-3 w-3 inline-block" />}
+      </span>
+      <span className="truncate text-xs text-foreground">{node.name}</span>
+      <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span className="ml-auto shrink-0 flex items-center gap-1 tabular-nums text-right">
+        {file.additions != null && (
+          <span className="text-xs text-green-400">+{file.additions}</span>
+        )}
+        {file.deletions != null && file.deletions > 0 && (
+          <span className="text-xs text-red-400">-{file.deletions}</span>
+        )}
+      </span>
+      {fileAutoResolved && onSave ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSave(file.path); }}
+              disabled={disabled}
+              className="shrink-0 rounded border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
+            >
+              Save
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Save auto-resolved output</TooltipContent>
+        </Tooltip>
+      ) : (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => { e.stopPropagation(); onResolveOurs(file.path); }}
+                disabled={disabled}
+                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
+              >
+                Ours
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Keep your version</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => { e.stopPropagation(); onResolveTheirs(file.path); }}
+                disabled={disabled}
+                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
+              >
+                Theirs
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Keep their version</TooltipContent>
+          </Tooltip>
+        </>
+      )}
+    </div>
+  );
+}
+
 function TreeNodeView({
   node,
   depth,
@@ -552,7 +810,7 @@ function TreeNodeView({
     return (
       <div>
         <div
-          className="group flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
+          className="group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
           style={{ paddingLeft: `${12 + indent}px` }}
           onClick={() => setExpanded(!expanded)}
           onContextMenu={(e) => {
@@ -561,6 +819,13 @@ function TreeNodeView({
             onFolderContextMenu?.(collectFilePaths(node), node.path, e.clientX, e.clientY);
           }}
         >
+          {Array.from({ length: depth }, (_, i) => (
+            <div
+              key={i}
+              className="absolute top-0 bottom-0 w-px bg-border"
+              style={{ left: `${18 + i * 16}px` }}
+            />
+          ))}
           {expanded ? (
             <ChevronDown className="h-3 w-3 shrink-0" />
           ) : (
@@ -640,7 +905,7 @@ function TreeNodeView({
 
   return (
     <div
-      className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
+      className={`group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
         isMulti
           ? "bg-primary/15 text-accent-foreground"
           : isSelected
@@ -655,11 +920,18 @@ function TreeNodeView({
         onFileContextMenu?.(file, e.clientX, e.clientY, e);
       }}
     >
-      <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
+      {Array.from({ length: depth }, (_, i) => (
+        <div
+          key={i}
+          className="absolute top-0 bottom-0 w-px bg-border"
+          style={{ left: `${18 + i * 16}px` }}
+        />
+      ))}
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
         {statusLabel}
       </span>
       <span className="truncate text-xs text-foreground">{node.name}</span>
+      <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
       {isLfs && (
         <span className="shrink-0 rounded px-1 py-px text-caption font-medium leading-none bg-blue-500/20 text-blue-400">
           LFS
@@ -813,36 +1085,28 @@ function FileRow({
 function ConflictRow({
   file,
   isSelected,
+  isAutoResolved,
   onSelect,
   onResolveOurs,
   onResolveTheirs,
+  onSave,
+  onContextMenu,
   disabled,
 }: {
   file: FileStatus;
   isSelected: boolean;
+  isAutoResolved: boolean;
   onSelect: () => void;
   onResolveOurs: () => void;
   onResolveTheirs: () => void;
+  onSave?: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
   disabled: boolean;
 }) {
   const fileName = file.path.split("/").pop() ?? file.path;
   const dirPath = file.path.includes("/")
     ? file.path.slice(0, file.path.lastIndexOf("/"))
     : "";
-
-  // Only show a conflict label for non-obvious types (both_modified is the
-  // common case and redundant — if there's a conflict both sides changed).
-  const conflictLabel = (() => {
-    switch (file.conflict_type) {
-      case "both_added": return "Both added";
-      case "both_deleted": return "Both deleted";
-      case "added_by_us": return "We added";
-      case "added_by_them": return "They added";
-      case "deleted_by_us": return "We deleted";
-      case "deleted_by_them": return "They deleted";
-      default: return null;
-    }
-  })();
 
   return (
     <div
@@ -852,46 +1116,71 @@ function ConflictRow({
           : "hover:bg-secondary"
       }`}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
     >
-      <AlertTriangle className="h-3 w-3 shrink-0 text-red-400" />
-      <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span className={`w-4 shrink-0 text-center text-xs font-medium ${isAutoResolved ? "text-purple-400" : "text-red-400"}`}>
+        {isAutoResolved
+          ? <Check className="h-3 w-3 inline-block" />
+          : <AlertTriangle className="h-3 w-3 inline-block" />}
+      </span>
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
+        <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
         {dirPath && (
           <span className="truncate text-xs text-faint">
             {dirPath}
           </span>
         )}
       </div>
-      {conflictLabel && (
-        <span className="shrink-0 text-xs text-red-400">
-          {conflictLabel}
-        </span>
+      <span className="shrink-0 flex items-center gap-1 tabular-nums text-right min-w-[4rem] justify-end">
+        {file.additions != null && (
+          <span className="text-xs text-green-400">+{file.additions}</span>
+        )}
+        {file.deletions != null && file.deletions > 0 && (
+          <span className="text-xs text-red-400">-{file.deletions}</span>
+        )}
+      </span>
+      {isAutoResolved && onSave ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSave(); }}
+              disabled={disabled}
+              className="shrink-0 rounded border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
+            >
+              Save
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Save auto-resolved output</TooltipContent>
+        </Tooltip>
+      ) : (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => { e.stopPropagation(); onResolveOurs(); }}
+                disabled={disabled}
+                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
+              >
+                Ours
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Keep your version</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => { e.stopPropagation(); onResolveTheirs(); }}
+                disabled={disabled}
+                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
+              >
+                Theirs
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Keep their version</TooltipContent>
+          </Tooltip>
+        </>
       )}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={(e) => { e.stopPropagation(); onResolveOurs(); }}
-            disabled={disabled}
-            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
-          >
-            Ours
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>Keep your version</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={(e) => { e.stopPropagation(); onResolveTheirs(); }}
-            disabled={disabled}
-            className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
-          >
-            Theirs
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>Keep their version</TooltipContent>
-      </Tooltip>
     </div>
   );
 }
@@ -1060,6 +1349,42 @@ function buildBatchContextMenuItems(
     label: `Discard ${count} files`,
     onClick: () => discard(paths),
     destructive: true,
+  });
+
+  return items;
+}
+
+function buildConflictContextMenuItems(
+  file: FileStatus,
+  resolveOurs: (path: string) => void,
+  resolveTheirs: (path: string) => void,
+  resolveManual: ((path: string, content: string) => Promise<void>) | null,
+  outputText: string | null,
+  openInEditor: (path: string) => void,
+  showInFolder: (path: string) => void,
+): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+
+  items.push({ label: "Accept Ours", onClick: () => resolveOurs(file.path) });
+  items.push({ label: "Accept Theirs", onClick: () => resolveTheirs(file.path) });
+
+  if (resolveManual && outputText != null) {
+    items.push({
+      label: "Save Resolution",
+      onClick: () => resolveManual(file.path, outputText),
+    });
+  }
+
+  items.push({ separator: true });
+
+  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path) });
+  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path) });
+
+  items.push({ separator: true });
+
+  items.push({
+    label: "Copy file path",
+    onClick: () => navigator.clipboard.writeText(file.path),
   });
 
   return items;

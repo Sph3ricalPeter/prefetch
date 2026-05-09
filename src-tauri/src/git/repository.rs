@@ -2226,6 +2226,46 @@ pub fn get_stash_file_diff(
     }))
 }
 
+/// Read the full file content as lines for context expansion in diffs.
+///
+/// - `rev = None` → read from working directory (disk)
+/// - `rev = Some("")` → read from the git index (staged version)
+/// - `rev = Some("abc123")` → read from a specific commit/ref via `git show`
+pub fn get_file_blob(
+    repo_path: &str,
+    file_path: &str,
+    rev: Option<&str>,
+) -> Result<Vec<String>, AppError> {
+    match rev {
+        None => {
+            let abs = Path::new(repo_path).join(file_path);
+            let content = std::fs::read_to_string(&abs)
+                .map_err(|e| AppError::Other(format!("Failed to read file: {e}")))?;
+            Ok(content.lines().map(String::from).collect())
+        }
+        Some(r) => {
+            let spec = if r.is_empty() {
+                format!(":{file_path}")
+            } else {
+                format!("{r}:{file_path}")
+            };
+            let output = git_cmd()
+                .args(["show", &spec])
+                .current_dir(repo_path)
+                .output()
+                .map_err(|e| AppError::Other(format!("Failed to run git show: {e}")))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(AppError::Other(format!("git show failed: {stderr}")));
+            }
+
+            let content = String::from_utf8_lossy(&output.stdout);
+            Ok(content.lines().map(String::from).collect())
+        }
+    }
+}
+
 /// Get the last undoable action from the reflog.
 pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
     let output = git_cmd()

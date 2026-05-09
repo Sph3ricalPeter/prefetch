@@ -5,7 +5,7 @@ import { Chunk } from "@codemirror/merge";
  * A region of text that is either unchanged between ours/theirs or changed.
  */
 export interface DiffRegion {
-  type: "unchanged" | "changed";
+  type: "unchanged" | "changed" | "auto-resolved";
   /** Lines from document A (ours) */
   aLines: string[];
   /** Lines from document B (theirs) */
@@ -24,6 +24,8 @@ export interface DiffRegion {
   baseLines?: string[];
   /** 1-based starting line number in the base document. */
   baseStartLine?: number;
+  /** Shared group ID when heuristics detect related auto-resolves (e.g. rename). */
+  suspiciousGroup?: number;
 }
 
 /**
@@ -37,8 +39,13 @@ export interface ChunkSelection {
   order: "ours-first" | "theirs-first";
 }
 
+/** A region that requires user action (true conflict or suspicious auto-resolve). */
+export function isEditableRegion(r: DiffRegion): boolean {
+  return r.type === "changed" || (r.type === "auto-resolved" && r.suspiciousGroup != null);
+}
+
 /** Identifies the source of each line in the assembled output. */
-export type LineSource = "unchanged" | "ours" | "theirs";
+export type LineSource = "unchanged" | "ours" | "theirs" | "auto-resolved";
 
 /** Reverse mapping from an output line back to its origin in a diff region. */
 export interface OutputLineMapping {
@@ -140,6 +147,8 @@ export function computeDiffRegions(
   regions = coalesceFragments(regions);
   regions = mergeConsecutiveUnchanged(regions);
 
+  flagSuspiciousAutoResolves(regions);
+
   return regions;
 }
 
@@ -164,18 +173,18 @@ function classify3Way(
     }
 
     if (region.aLines.length === 0 && region.bLines.length > 0) {
-      result.push({ ...region, type: "unchanged", autoSide: "theirs" });
+      result.push({ ...region, type: "auto-resolved", autoSide: "theirs" });
     } else if (region.bLines.length === 0 && region.aLines.length > 0) {
-      result.push({ ...region, type: "unchanged", autoSide: "ours" });
+      result.push({ ...region, type: "auto-resolved", autoSide: "ours" });
     } else if (region.baseLines) {
       const baseContent = region.baseLines.join("\n");
       const oursContent = region.aLines.join("\n");
       const theirsContent = region.bLines.join("\n");
 
       if (baseContent === oursContent) {
-        result.push({ ...region, type: "unchanged", autoSide: "theirs" });
+        result.push({ ...region, type: "auto-resolved", autoSide: "theirs" });
       } else if (baseContent === theirsContent) {
-        result.push({ ...region, type: "unchanged", autoSide: "ours" });
+        result.push({ ...region, type: "auto-resolved", autoSide: "ours" });
       } else {
         result.push(region);
       }
@@ -439,25 +448,69 @@ function mergeConsecutiveUnchanged(regions: DiffRegion[]): DiffRegion[] {
   for (const region of regions) {
     const prev = result[result.length - 1];
     if (prev && prev.type === "unchanged" && region.type === "unchanged") {
-      const curLines =
-        region.autoSide === "theirs" ? region.bLines : region.aLines;
-      prev.aLines.push(...curLines);
-      prev.bLines.push(...curLines);
-    } else if (region.type === "unchanged") {
-      const lines =
-        region.autoSide === "theirs" ? region.bLines : region.aLines;
-      result.push({
-        ...region,
-        aLines: [...lines],
-        bLines: [...lines],
-        autoSide: undefined,
-      });
+      prev.aLines.push(...region.aLines);
+      prev.bLines.push(...region.bLines);
     } else {
       result.push(region);
     }
   }
 
   return result;
+}
+
+// ── suspicious auto-resolve detection ───────────────────────
+
+const IDENT_RE = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+const COMMON_PREFIXES = /^[sm]_|^_/;
+
+function extractIdentifiers(lines: string[]): Set<string> {
+  const ids = new Set<string>();
+  for (const line of lines) {
+    for (const m of line.matchAll(IDENT_RE)) {
+      if (m[0].length >= 4) ids.add(m[0]);
+    }
+  }
+  return ids;
+}
+
+function normalizeIdent(id: string): string {
+  return id.replace(COMMON_PREFIXES, "").toLowerCase();
+}
+
+function flagSuspiciousAutoResolves(regions: DiffRegion[]): void {
+  const autoRegions: { idx: number; region: DiffRegion }[] = [];
+  for (let i = 0; i < regions.length; i++) {
+    if (regions[i].type === "auto-resolved") {
+      autoRegions.push({ idx: i, region: regions[i] });
+    }
+  }
+
+  if (autoRegions.length < 2) return;
+
+  const oursAutos = autoRegions.filter((a) => a.region.autoSide === "ours");
+  const theirsAutos = autoRegions.filter((a) => a.region.autoSide === "theirs");
+  let nextGroup = 1;
+
+  for (const ours of oursAutos) {
+    const oursIds = extractIdentifiers(ours.region.aLines);
+    const oursNorm = new Map<string, string>();
+    for (const id of oursIds) oursNorm.set(normalizeIdent(id), id);
+
+    for (const theirs of theirsAutos) {
+      const theirsIds = extractIdentifiers(theirs.region.bLines);
+
+      for (const tid of theirsIds) {
+        const tNorm = normalizeIdent(tid);
+        const match = oursNorm.get(tNorm);
+        if (match && match !== tid) {
+          const group = ours.region.suspiciousGroup ?? theirs.region.suspiciousGroup ?? nextGroup++;
+          ours.region.suspiciousGroup = group;
+          theirs.region.suspiciousGroup = group;
+          break;
+        }
+      }
+    }
+  }
 }
 
 // ── helpers for emitting lines in order ──────────────────────
@@ -510,6 +563,7 @@ export function buildOutputFromSelections(
 /**
  * Build output text AND a per-line source map for coloring the output pane.
  * Also returns a reverse mapping from each output line to its origin.
+ * Regions with a selection entry are treated as "changed" even if auto-resolved.
  */
 export function buildOutputWithSources(
   regions: DiffRegion[],
@@ -522,11 +576,16 @@ export function buildOutputWithSources(
   for (let i = 0; i < regions.length; i++) {
     const region = regions[i];
     if (region.type === "unchanged") {
-      // For auto-resolved regions, use the correct side's content
+      for (const line of region.aLines) {
+        output.push(line);
+        sources.push("unchanged");
+        mappings.push(null);
+      }
+    } else if (region.type === "auto-resolved" && !selections.has(i)) {
       const lines = region.autoSide === "theirs" ? region.bLines : region.aLines;
       for (const line of lines) {
         output.push(line);
-        sources.push("unchanged");
+        sources.push("auto-resolved");
         mappings.push(null);
       }
     } else {

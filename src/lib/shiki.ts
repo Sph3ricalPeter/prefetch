@@ -82,7 +82,7 @@ export async function highlightLines(
   const hl = await getHighlighter();
 
   const resolvedLang = lang ?? "text";
-  const resolvedTheme = themeId ?? "prefetch-dark";
+  const resolvedTheme = themeId ?? "vs-dark";
 
   // Dynamically load language if not preloaded
   const loadedLangs = hl.getLoadedLanguages();

@@ -274,8 +274,8 @@ export function GraphPanel() {
         </div>
       )}
 
-      {/* Conflict banner — status info only; Continue/Abort live in CommitBox */}
-      {conflictState?.in_progress && (() => {
+      {/* Conflict banner — hidden when conflict editor is active (it has its own toolbar) */}
+      {conflictState?.in_progress && !showConflictEditor && (() => {
         const conflictedFiles = fileStatuses.filter((f) => f.is_conflicted);
         const unresolvedCount = conflictedFiles.length;
         return (
@@ -291,7 +291,7 @@ export function GraphPanel() {
                   if (first) selectFile(first.path, false);
                 }}
                 title="Go to first conflict"
-                className="rounded-md bg-yellow-500/20 px-3 py-1 text-xs font-medium text-yellow-100 transition-colors hover:bg-yellow-500/30"
+                className="rounded-md border border-yellow-500/30 px-3 py-1 text-xs font-medium text-yellow-100 transition-colors hover:bg-yellow-500/10 hover:border-yellow-500/40"
               >
                 {unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""} to resolve
               </button>
@@ -327,6 +327,11 @@ export function GraphPanel() {
                   ? "readonly"
                   : "interactive"
               }
+              source={{
+                commitId: selectedCommitId,
+                stashIndex: selectedStashIndex,
+                staged: selectedFileStaged,
+              }}
             />
           </div>
         ) : (

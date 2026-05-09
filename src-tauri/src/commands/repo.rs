@@ -199,6 +199,17 @@ pub async fn get_stash_file_diff(
     offload(move || repository::get_stash_file_diff(&path, index, &file_path)).await
 }
 
+#[tauri::command]
+pub async fn get_file_blob(
+    file_path: String,
+    rev: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, AppError> {
+    let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
+    offload(move || repository::get_file_blob(&path, &file_path, rev.as_deref())).await
+}
+
 #[instrument(skip(state))]
 #[tauri::command]
 pub async fn get_tags(state: State<'_, AppState>) -> Result<Vec<TagInfo>, AppError> {
