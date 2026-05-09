@@ -9,9 +9,11 @@ interface DiffViewerProps {
   filePath?: string;
   mode?: "readonly" | "interactive";
   source?: DiffSource;
+  staged?: boolean;
+  onBack?: () => void;
 }
 
-export function DiffViewer({ diff, filePath, mode = "readonly", source = {} }: DiffViewerProps) {
+export function DiffViewer({ diff, filePath, mode = "readonly", source = {}, staged = false, onBack }: DiffViewerProps) {
   const resolvedPath = filePath ?? diff.path;
   const ctx = useExpandableContext(diff.hunks, resolvedPath, source);
 
@@ -41,17 +43,23 @@ export function DiffViewer({ diff, filePath, mode = "readonly", source = {} }: D
     );
   }
 
+  const toolbarProps = {
+    onExpandAll: ctx.expandAllGaps,
+    onCollapseAll: ctx.collapseAll,
+    isExpanded: ctx.isExpanded,
+    filePath: resolvedPath,
+    onBack,
+  };
+
   return (
     <div className="flex flex-col h-full">
-      <DiffToolbar
-        onExpandAll={ctx.expandAllGaps}
-        onCollapseAll={ctx.collapseAll}
-        isExpanded={ctx.isExpanded}
-      />
       {mode === "interactive" ? (
-        <DiffViewerInteractive diff={diff} filePath={resolvedPath} expandCtx={ctx} />
+        <DiffViewerInteractive diff={diff} filePath={resolvedPath} expandCtx={ctx} staged={staged} toolbarProps={toolbarProps} />
       ) : (
-        <DiffViewerReadonly diff={diff} filePath={resolvedPath} expandCtx={ctx} />
+        <>
+          <DiffToolbar {...toolbarProps} />
+          <DiffViewerReadonly diff={diff} filePath={resolvedPath} expandCtx={ctx} />
+        </>
       )}
       {diff.is_truncated && diff.hunks.length > 0 && (
         <div className="shrink-0 border-t border-border px-4 py-2 text-center text-xs text-muted-foreground">
