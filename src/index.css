@@ -224,6 +224,16 @@ body::before {
   to { opacity: 1; }
 }
 
+/* Cross-pane hover highlight in the conflict editor. Lines that correspond
+   across ours/theirs/output (unchanged blocks, auto-resolved winner side,
+   matched conflict lines) all get this outline when any one of them is
+   hovered. Outline rather than background tint so it doesn't fight with the
+   per-side coloring already on those lines. */
+.conflict-line-hover {
+  outline: 1px solid rgba(160, 160, 170, 0.35);
+  outline-offset: -1px;
+}
+
 /* file-icons-js: scale + align icon font to match Lucide's h-3 w-3 (12px) */
 .file-icon.icon {
   display: inline-flex;

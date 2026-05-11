@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import type { FileDiff, DiffHunk, DiffLine } from "@/types/git";
 import { highlightLines, detectLang, yieldToMacrotask } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
@@ -10,6 +10,9 @@ import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import type { ExpandableContext } from "@/hooks/use-expandable-context";
 import type { ThemedToken } from "shiki";
+import { computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
+import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
+import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 
 interface ToolbarProps {
   onExpandAll?: () => void;
@@ -58,6 +61,11 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
   const lang = useMemo(() => detectLang(filePath), [filePath]);
   const hasDeletions = useMemo(
     () => diff.hunks.some((h) => h.lines.some((l) => l.origin === "-")),
+    [diff],
+  );
+  // Character-level diff per paired -/+ line, for dim/highlight rendering.
+  const intraLineRangesByHunk = useMemo(
+    () => diff.hunks.map(computeHunkIntraLineRanges),
     [diff],
   );
 
@@ -365,12 +373,14 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
         <div
           ref={scrollRef}
           className={`overflow-auto flex-1 text-xs font-mono leading-5 select-none ${isLoading ? "pointer-events-none" : ""}`}
+          style={SCROLL_CONTAINER_STYLE}
           onMouseDown={handleContainerMouseDown}
           onMouseMove={handleContainerMouseMove}
           onContextMenu={handleContextMenu}
         >
           {diff.hunks.map((hunk, hi) => {
             const hunkTokens = tokensByHunk.get(hi);
+            const intraLineRanges = intraLineRangesByHunk[hi];
             const hunkChangeKeys = hunk.lines
               .map((line, li) => ({ key: `${hi}:${li}`, line }))
               .filter(({ line }) => line.origin === "+" || line.origin === "-");
@@ -464,6 +474,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                       selectedLines={selectedLines}
                       fileTokens={fileTokens}
                       oldFileTokens={oldFileTokens}
+                      intraLineRanges={intraLineRanges}
                     />
                   ) : (
                     hunk.lines.map((line, li) => (
@@ -473,6 +484,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                         hunkIndex={hi}
                         lineIndex={li}
                         tokens={resolveLineTokens(line, li, hunkTokens, fileTokens, oldFileTokens)}
+                        ranges={intraLineRanges.get(li)}
                         isSelected={selectedLines.has(`${hi}:${li}`)}
                         wrapClass={wrapClass}
                       />
@@ -523,15 +535,19 @@ interface InteractiveDiffLineProps {
   hunkIndex: number;
   lineIndex: number;
   tokens?: ThemedToken[];
+  ranges?: CharRange[];
   isSelected: boolean;
   wrapClass: string;
 }
 
-function InteractiveDiffLine({
+const InteractiveDiffLine = memo(InteractiveDiffLineImpl);
+
+function InteractiveDiffLineImpl({
   line,
   hunkIndex,
   lineIndex,
   tokens,
+  ranges,
   isSelected,
   wrapClass,
 }: InteractiveDiffLineProps) {
@@ -555,6 +571,7 @@ function InteractiveDiffLine({
   return (
     <div
       className={`flex ${bgClass} group/line cursor-default`}
+      style={LINE_CONTAINMENT}
       data-line-key={isChangeLine ? `${hunkIndex}:${lineIndex}` : undefined}
     >
       {/* Selection checkbox */}
@@ -585,23 +602,7 @@ function InteractiveDiffLine({
       </span>
       {/* Content with syntax highlighting */}
       <pre className={`flex-1 px-2 ${wrapClass}`}>
-        {tokens && tokens.length > 0 ? (
-          tokens.map((token, i) => (
-            <span
-              key={i}
-              style={{
-                color: token.color,
-                opacity: line.origin === " " ? 1 : 0.95,
-              }}
-            >
-              {token.content}
-            </span>
-          ))
-        ) : (
-          <span className={line.origin === "+" ? "text-green-400" : line.origin === "-" ? "text-red-400" : "text-muted-foreground"}>
-            {line.content || " "}
-          </span>
-        )}
+        <HighlightedLineContent tokens={tokens} line={line} ranges={ranges} />
       </pre>
     </div>
   );
@@ -617,6 +618,7 @@ interface InteractiveSideBySideHunkProps {
   selectedLines: Set<string>;
   fileTokens?: ThemedToken[][] | null;
   oldFileTokens?: ThemedToken[][] | null;
+  intraLineRanges: Map<number, CharRange[]>;
 }
 
 interface SideBySidePair {
@@ -676,6 +678,7 @@ function InteractiveSideBySideHunk({
   selectedLines,
   fileTokens,
   oldFileTokens,
+  intraLineRanges,
 }: InteractiveSideBySideHunkProps) {
   const pairs = useMemo(() => buildSideBySidePairs(hunk), [hunk]);
 
@@ -692,15 +695,18 @@ function InteractiveSideBySideHunk({
         const rightTokens = fileTokens && pair.right?.new_lineno != null
           ? fileTokens[pair.right.new_lineno - 1]
           : (pair.rightIdx !== null ? hunkTokens?.[pair.rightIdx] : undefined);
+        const leftRanges = pair.leftIdx !== null ? intraLineRanges.get(pair.leftIdx) : undefined;
+        const rightRanges = pair.rightIdx !== null ? intraLineRanges.get(pair.rightIdx) : undefined;
 
         return (
-          <div key={i} className="flex">
+          <div key={i} className="flex group/diffpair">
             {/* Left (old) side */}
             <SideBySideCell
               line={pair.left}
               lineIdx={pair.leftIdx}
               hunkIndex={hunkIndex}
               tokens={leftTokens}
+              ranges={leftRanges}
               wrapClass={wrapClass}
               isSelected={pair.leftIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.leftIdx}`) : false}
               side="left"
@@ -712,6 +718,7 @@ function InteractiveSideBySideHunk({
               lineIdx={pair.rightIdx}
               hunkIndex={hunkIndex}
               tokens={rightTokens}
+              ranges={rightRanges}
               wrapClass={wrapClass}
               isSelected={pair.rightIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.rightIdx}`) : false}
               side="right"
@@ -729,17 +736,21 @@ interface SideBySideCellProps {
   lineIdx: number | null;
   hunkIndex: number;
   tokens?: ThemedToken[];
+  ranges?: CharRange[];
   wrapClass: string;
   isSelected: boolean;
   side: "left" | "right";
   oppositeLine: DiffLine | null;
 }
 
-function SideBySideCell({
+const SideBySideCell = memo(SideBySideCellImpl);
+
+function SideBySideCellImpl({
   line,
   lineIdx,
   hunkIndex,
   tokens,
+  ranges,
   wrapClass,
   isSelected,
   side,
@@ -763,6 +774,7 @@ function SideBySideCell({
   return (
     <div
       className={`flex flex-1 min-w-0 overflow-hidden ${side === "left" ? "border-r border-border" : ""} ${bgClass} group/line cursor-default`}
+      style={LINE_CONTAINMENT}
       data-line-key={isChangeLine && lineIdx !== null ? `${hunkIndex}:${lineIdx}` : undefined}
     >
       {line ? (
@@ -783,7 +795,7 @@ function SideBySideCell({
           )}
           {!isChangeLine && <span className="w-5 shrink-0" />}
           {/* Line number */}
-          <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+          <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-[10px]">
             {side === "left" ? (line.old_lineno ?? "") : (line.new_lineno ?? "")}
           </span>
           {/* Origin */}
@@ -794,23 +806,7 @@ function SideBySideCell({
           </span>
           {/* Content */}
           <pre className={`flex-1 px-1 ${wrapClass}`}>
-            {tokens && tokens.length > 0 ? (
-              tokens.map((token, ti) => (
-                <span
-                  key={ti}
-                  style={{
-                    color: token.color,
-                    opacity: line.origin === " " ? 1 : 0.95,
-                  }}
-                >
-                  {token.content}
-                </span>
-              ))
-            ) : (
-              <span className={line.origin === "+" ? "text-green-400" : line.origin === "-" ? "text-red-400" : "text-muted-foreground"}>
-                {line.content || " "}
-              </span>
-            )}
+            <HighlightedLineContent tokens={tokens} line={line} ranges={ranges} />
           </pre>
         </>
       ) : (
