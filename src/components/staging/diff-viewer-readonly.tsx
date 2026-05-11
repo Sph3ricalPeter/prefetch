@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import type { FileDiff, DiffHunk, DiffLine } from "@/types/git";
-import { highlightLines, detectLang } from "@/lib/shiki";
+import { highlightLines, detectLang, yieldToMacrotask } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
@@ -21,14 +21,21 @@ interface DiffViewerReadonlyProps {
 export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerReadonlyProps) {
   const [tokensByHunk, setTokensByHunk] = useState<Map<number, ThemedToken[][]>>(new Map());
   const [fileTokens, setFileTokens] = useState<ThemedToken[][] | null>(null);
+  const [oldFileTokens, setOldFileTokens] = useState<ThemedToken[][] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const diffViewMode = useRepoStore((s) => s.diffViewMode);
   const diffWrapLines = useRepoStore((s) => s.diffWrapLines);
   const shikiThemeId = useThemeStore((s) => s.codeTheme.shikiTheme.name);
 
   const lang = useMemo(() => detectLang(filePath), [filePath]);
+  const hasDeletions = useMemo(
+    () => diff.hunks.some((h) => h.lines.some((l) => l.origin === "-")),
+    [diff],
+  );
 
-  // Highlight hunks progressively — render each as it finishes
+  // Highlight hunks progressively — render each as it finishes.
+  // Yields to the macrotask queue between hunks so click/render/paint stay responsive
+  // while a large diff is being tokenized.
   useEffect(() => {
     let cancelled = false;
     const tokenMap = new Map<number, Awaited<ReturnType<typeof highlightLines>>>();
@@ -48,6 +55,7 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
         } catch {
           // Fallback: no highlighting for this hunk
         }
+        await yieldToMacrotask();
       }
     }
 
@@ -58,18 +66,54 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
     };
   }, [diff, lang, shikiThemeId]);
 
-  // Highlight full file for expanded context lines
+  // Highlight full file for expanded context lines. Deferred behind a macrotask
+  // so the click → render → paint cycle gets priority; the heavy synchronous
+  // tokenization shouldn't run while the user is still waiting for the spinner.
   useEffect(() => {
-    if (!expandCtx.fileLines || !lang || expandCtx.fileLines.length > 10000) {
+    if (!expandCtx.fileLines || !lang || expandCtx.fileLines.length > 5000) {
       return () => { setFileTokens(null); };
     }
     let cancelled = false;
-    const code = expandCtx.fileLines.join("\n");
-    highlightLines(code, lang, shikiThemeId).then((tokens) => {
-      if (!cancelled) setFileTokens(tokens);
-    }).catch(() => {});
+    const fileLines = expandCtx.fileLines;
+    (async () => {
+      await yieldToMacrotask();
+      if (cancelled) return;
+      try {
+        const tokens = await highlightLines(fileLines.join("\n"), lang, shikiThemeId);
+        if (!cancelled) setFileTokens(tokens);
+      } catch { /* fallback: no highlighting */ }
+    })();
     return () => { cancelled = true; setFileTokens(null); };
   }, [expandCtx.fileLines, lang, shikiThemeId]);
+
+  // Eagerly fetch file content for full-context syntax highlighting.
+  // Old-file fetch is skipped when the diff has no deletions — saves one
+  // Tauri IPC call + one full-file Shiki pass per file view.
+  const fetchFileLines = expandCtx.fetchFileLines;
+  const fetchOldFileLines = expandCtx.fetchOldFileLines;
+  useEffect(() => {
+    if (!lang) return;
+    fetchFileLines();
+    if (hasDeletions) fetchOldFileLines();
+  }, [lang, hasDeletions, fetchFileLines, fetchOldFileLines]);
+
+  // Highlight old file (for deletion line tokens). Same deferral as new-file.
+  useEffect(() => {
+    if (!expandCtx.oldFileLines || !lang || expandCtx.oldFileLines.length > 5000) {
+      return () => { setOldFileTokens(null); };
+    }
+    let cancelled = false;
+    const oldFileLines = expandCtx.oldFileLines;
+    (async () => {
+      await yieldToMacrotask();
+      if (cancelled) return;
+      try {
+        const tokens = await highlightLines(oldFileLines.join("\n"), lang, shikiThemeId);
+        if (!cancelled) setOldFileTokens(tokens);
+      } catch { /* fallback: no highlighting */ }
+    })();
+    return () => { cancelled = true; setOldFileTokens(null); };
+  }, [expandCtx.oldFileLines, lang, shikiThemeId]);
 
   const wrapClass = diffWrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre";
 
@@ -126,13 +170,13 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
                 }}
               >
                 {diffViewMode === "side-by-side" ? (
-                  <SideBySideHunk hunk={hunk} hunkTokens={hunkTokens} wrapClass={wrapClass} />
+                  <SideBySideHunk hunk={hunk} hunkTokens={hunkTokens} wrapClass={wrapClass} fileTokens={fileTokens} oldFileTokens={oldFileTokens} />
                 ) : (
                   hunk.lines.map((line, li) => (
                     <UnifiedDiffLine
                       key={li}
                       line={line}
-                      tokens={hunkTokens?.[li]}
+                      tokens={resolveLineTokens(line, li, hunkTokens, fileTokens, oldFileTokens)}
                       wrapClass={wrapClass}
                     />
                   ))
@@ -145,6 +189,24 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
       <DiffMinimap diff={diff} scrollRef={scrollRef} expandCtx={expandCtx} />
     </div>
   );
+}
+
+/**
+ * Pick the best available token source for a diff line.
+ * - Lines present in the new file (additions + context): use new-file tokens.
+ * - Lines only in the old file (deletions): use old-file tokens.
+ * - Fall back to per-hunk tokens while full-file highlights are loading.
+ */
+function resolveLineTokens(
+  line: DiffLine,
+  hunkLineIndex: number,
+  hunkTokens: ThemedToken[][] | undefined,
+  fileTokens: ThemedToken[][] | null,
+  oldFileTokens: ThemedToken[][] | null,
+): ThemedToken[] | undefined {
+  if (fileTokens && line.new_lineno != null) return fileTokens[line.new_lineno - 1];
+  if (oldFileTokens && line.old_lineno != null) return oldFileTokens[line.old_lineno - 1];
+  return hunkTokens?.[hunkLineIndex];
 }
 
 // ── Unified (single-pane) line ──────────────────────────────────────────────
@@ -200,82 +262,97 @@ interface SideBySideHunkProps {
   hunk: DiffHunk;
   hunkTokens?: ThemedToken[][];
   wrapClass: string;
+  fileTokens?: ThemedToken[][] | null;
+  oldFileTokens?: ThemedToken[][] | null;
 }
 
 /**
  * Renders a hunk in side-by-side layout by pairing deletions on the left
  * with additions on the right. Context lines appear on both sides.
  */
-function SideBySideHunk({ hunk, hunkTokens, wrapClass }: SideBySideHunkProps) {
+function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens }: SideBySideHunkProps) {
   const pairs = useMemo(() => buildSideBySidePairs(hunk, hunkTokens), [hunk, hunkTokens]);
 
   return (
     <div>
-      {pairs.map((pair, i) => (
-        <div key={i} className="flex">
-          {/* Left (old) */}
-          <div className={`flex flex-1 min-w-0 overflow-hidden border-r border-border ${
-            pair.left
-              ? pair.left.origin === "-" ? "bg-[var(--diff-removed-bg)]" : ""
-              : pair.right?.origin === "+" ? "bg-secondary/30" : ""
-          }`}>
-            {pair.left ? (
-              <>
-                <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
-                  {pair.left.old_lineno ?? ""}
-                </span>
-                <span className={`w-5 shrink-0 text-center select-none ${
-                  pair.left.origin === "-" ? "text-red-400" : "text-muted-foreground/50"
-                }`}>
-                  {pair.left.origin === " " ? "" : pair.left.origin}
-                </span>
-                <pre className={`flex-1 px-2 ${wrapClass}`}>
-                  {pair.leftTokens ? (
-                    <HighlightedContent tokens={pair.leftTokens} line={pair.left} />
-                  ) : (
-                    <span className={pair.left.origin === "-" ? "text-red-400" : "text-muted-foreground"}>
-                      {pair.left.content || " "}
-                    </span>
-                  )}
-                </pre>
-              </>
-            ) : (
-              <span className="flex-1" />
-            )}
-          </div>
+      {pairs.map((pair, i) => {
+        // Left (old) side: prefer old-file tokens mapped by old_lineno; fall back to new-file tokens for context lines, then per-hunk.
+        const leftTokens = oldFileTokens && pair.left?.old_lineno != null
+          ? oldFileTokens[pair.left.old_lineno - 1]
+          : fileTokens && pair.left?.new_lineno != null
+            ? fileTokens[pair.left.new_lineno - 1]
+            : pair.leftTokens;
+        // Right (new) side: prefer new-file tokens mapped by new_lineno; fall back to per-hunk.
+        const rightTokens = fileTokens && pair.right?.new_lineno != null
+          ? fileTokens[pair.right.new_lineno - 1]
+          : pair.rightTokens;
 
-          {/* Right (new) */}
-          <div className={`flex flex-1 min-w-0 overflow-hidden ${
-            pair.right
-              ? pair.right.origin === "+" ? "bg-[var(--diff-added-bg)]" : ""
-              : pair.left?.origin === "-" ? "bg-secondary/30" : ""
-          }`}>
-            {pair.right ? (
-              <>
-                <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
-                  {pair.right.new_lineno ?? ""}
-                </span>
-                <span className={`w-5 shrink-0 text-center select-none ${
-                  pair.right.origin === "+" ? "text-green-400" : "text-muted-foreground/50"
-                }`}>
-                  {pair.right.origin === " " ? "" : pair.right.origin}
-                </span>
-                <pre className={`flex-1 px-2 ${wrapClass}`}>
-                  {pair.rightTokens ? (
-                    <HighlightedContent tokens={pair.rightTokens} line={pair.right} />
-                  ) : (
-                    <span className={pair.right.origin === "+" ? "text-green-400" : "text-muted-foreground"}>
-                      {pair.right.content || " "}
-                    </span>
-                  )}
-                </pre>
-              </>
-            ) : (
-              <span className="flex-1" />
-            )}
+        return (
+          <div key={i} className="flex">
+            {/* Left (old) */}
+            <div className={`flex flex-1 min-w-0 overflow-hidden border-r border-border ${
+              pair.left
+                ? pair.left.origin === "-" ? "bg-[var(--diff-removed-bg)]" : ""
+                : pair.right?.origin === "+" ? "bg-secondary/30" : ""
+            }`}>
+              {pair.left ? (
+                <>
+                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                    {pair.left.old_lineno ?? ""}
+                  </span>
+                  <span className={`w-5 shrink-0 text-center select-none ${
+                    pair.left.origin === "-" ? "text-red-400" : "text-muted-foreground/50"
+                  }`}>
+                    {pair.left.origin === " " ? "" : pair.left.origin}
+                  </span>
+                  <pre className={`flex-1 px-2 ${wrapClass}`}>
+                    {leftTokens ? (
+                      <HighlightedContent tokens={leftTokens} line={pair.left} />
+                    ) : (
+                      <span className={pair.left.origin === "-" ? "text-red-400" : "text-muted-foreground"}>
+                        {pair.left.content || " "}
+                      </span>
+                    )}
+                  </pre>
+                </>
+              ) : (
+                <span className="flex-1" />
+              )}
+            </div>
+
+            {/* Right (new) */}
+            <div className={`flex flex-1 min-w-0 overflow-hidden ${
+              pair.right
+                ? pair.right.origin === "+" ? "bg-[var(--diff-added-bg)]" : ""
+                : pair.left?.origin === "-" ? "bg-secondary/30" : ""
+            }`}>
+              {pair.right ? (
+                <>
+                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                    {pair.right.new_lineno ?? ""}
+                  </span>
+                  <span className={`w-5 shrink-0 text-center select-none ${
+                    pair.right.origin === "+" ? "text-green-400" : "text-muted-foreground/50"
+                  }`}>
+                    {pair.right.origin === " " ? "" : pair.right.origin}
+                  </span>
+                  <pre className={`flex-1 px-2 ${wrapClass}`}>
+                    {rightTokens ? (
+                      <HighlightedContent tokens={rightTokens} line={pair.right} />
+                    ) : (
+                      <span className={pair.right.origin === "+" ? "text-green-400" : "text-muted-foreground"}>
+                        {pair.right.content || " "}
+                      </span>
+                    )}
+                  </pre>
+                </>
+              ) : (
+                <span className="flex-1" />
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

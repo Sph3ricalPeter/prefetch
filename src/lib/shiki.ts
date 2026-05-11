@@ -74,6 +74,16 @@ export function detectLang(filePath: string): string | undefined {
   return LANG_MAP[ext];
 }
 
+/**
+ * Yields control to the browser's macrotask queue (so click/render/paint can run).
+ * Plain `await Promise.resolve()` only drains microtasks — clicks won't get a turn.
+ * Use this between heavy synchronous calls (e.g. Shiki tokenization) so the UI
+ * stays responsive while a large diff is being highlighted.
+ */
+export function yieldToMacrotask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 export async function highlightLines(
   code: string,
   lang: string | undefined,
