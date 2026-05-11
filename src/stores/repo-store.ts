@@ -792,8 +792,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     });
     try {
       await fetchRepo();
-      const repoData = await fetchRepoData();
-      set({ ...repoData, isLoading: false, prCache: {} }); // invalidate PR cache after fetch
+      const [repoData, tagList] = await Promise.all([fetchRepoData(), getTags()]);
+      set({ ...repoData, tags: tagList, isLoading: false, prCache: {} }); // invalidate PR cache after fetch
       clearPrCacheCmd().catch(() => {});
       toast.success("Fetch complete", { id: toastId });
     } catch (e) {
@@ -1777,10 +1777,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   reloadRefs: async () => {
     if (!get().repoPath) return;
     try {
-      // Refs changed (fetch, push, remote branch update) — only commits and
-      // branches need refreshing. Working tree / status is unaffected.
-      const repoData = await fetchRepoData();
-      set(repoData);
+      const [repoData, tagList] = await Promise.all([fetchRepoData(), getTags()]);
+      set({ ...repoData, tags: tagList });
     } catch {
       // Silently handle — background refresh
     }
