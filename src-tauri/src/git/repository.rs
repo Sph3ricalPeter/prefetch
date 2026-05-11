@@ -521,7 +521,7 @@ pub fn fetch_all<F: Fn(&str)>(
     } else {
         run_git_with_progress(
             path,
-            &["fetch", "--all", "--prune", "--progress"],
+            &["fetch", "--all", "--prune", "--tags", "--force", "--progress"],
             &on_progress,
             extra_env,
         )
