@@ -12,9 +12,7 @@ import type { ExpandableContext } from "@/hooks/use-expandable-context";
 import type { ThemedToken } from "shiki";
 import { computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
 import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
-
-// CSS containment per line — see diff-viewer-readonly.tsx for the full rationale.
-const LINE_CONTAINMENT: React.CSSProperties = { contain: "content" };
+import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 
 interface ToolbarProps {
   onExpandAll?: () => void;
@@ -375,7 +373,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
         <div
           ref={scrollRef}
           className={`overflow-auto flex-1 text-xs font-mono leading-5 select-none ${isLoading ? "pointer-events-none" : ""}`}
-          style={{ willChange: "scroll-position" }}
+          style={SCROLL_CONTAINER_STYLE}
           onMouseDown={handleContainerMouseDown}
           onMouseMove={handleContainerMouseMove}
           onContextMenu={handleContextMenu}

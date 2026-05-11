@@ -9,11 +9,7 @@ import type { ExpandableContext } from "@/hooks/use-expandable-context";
 import type { ThemedToken } from "shiki";
 import { computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
 import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
-
-// CSS containment per line: tells the browser that layout/paint changes inside
-// a line can't affect anything outside, so the browser can skip recomputing
-// neighbors during scroll and partial repaints. Big help for long diffs.
-const LINE_CONTAINMENT: React.CSSProperties = { contain: "content" };
+import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 
 interface DiffViewerReadonlyProps {
   diff: FileDiff;
@@ -132,7 +128,7 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
 
   return (
     <div className="flex flex-1 min-h-0">
-      <div ref={scrollRef} className="overflow-auto flex-1 text-xs font-mono leading-5" style={{ willChange: "scroll-position" }}>
+      <div ref={scrollRef} className="overflow-auto flex-1 text-xs font-mono leading-5" style={SCROLL_CONTAINER_STYLE}>
         {diff.hunks.map((hunk, hi) => {
           const hunkTokens = tokensByHunk.get(hi);
           const gapRender = expandCtx.getGapRender(hi);

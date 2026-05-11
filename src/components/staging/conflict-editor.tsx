@@ -15,11 +15,7 @@ import { getUiState } from "@/lib/database";
 import { getDataAttrFromEvent } from "@/lib/utils";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Eye, EyeOff, FoldVertical, GitCompare, Minus, Plus, RotateCcw, Save, UnfoldVertical } from "lucide-react";
 import type { ThemedToken } from "shiki";
-
-// CSS containment per line: layout/paint changes inside one line can't escape,
-// so the browser keeps paint local during scroll instead of recomputing siblings.
-const LINE_CONTAINMENT: React.CSSProperties = { contain: "content" };
-const SCROLL_CONTAINER_STYLE: React.CSSProperties = { willChange: "scroll-position" };
+import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 
 // ── Source icons ────────────────────────────────────────────
 
@@ -890,21 +886,22 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   useEffect(() => {
     const root = contentRef.current;
     if (!root) return;
+    let highlighted: Element[] = [];
     let lastKey: string | null = null;
     const clear = () => {
-      if (!lastKey) return;
-      const escaped = (window.CSS && CSS.escape) ? CSS.escape(lastKey) : lastKey.replace(/"/g, '\\"');
-      root.querySelectorAll(`[data-hover-key="${escaped}"]`).forEach((el) => el.classList.remove("conflict-line-hover"));
+      for (const el of highlighted) el.classList.remove("conflict-line-hover");
+      highlighted = [];
       lastKey = null;
     };
     const onOver = (e: MouseEvent) => {
-      const target = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-hover-key]");
-      const key = target?.getAttribute("data-hover-key") ?? null;
+      const key = getDataAttrFromEvent(e, "data-hover-key", root);
       if (key === lastKey) return;
       clear();
       if (!key) return;
       const escaped = (window.CSS && CSS.escape) ? CSS.escape(key) : key.replace(/"/g, '\\"');
-      root.querySelectorAll(`[data-hover-key="${escaped}"]`).forEach((el) => el.classList.add("conflict-line-hover"));
+      const nodes = root.querySelectorAll(`[data-hover-key="${escaped}"]`);
+      for (const el of nodes) el.classList.add("conflict-line-hover");
+      highlighted = Array.from(nodes);
       lastKey = key;
     };
     root.addEventListener("mouseover", onOver);
@@ -1065,7 +1062,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                           conflictGutter
                           expanded={expandedRegions.has(item.expandKey)}
                           onToggleExpand={() => toggleRegionExpanded(item.expandKey)}
-                          hoverKeyPrefix={String(item.expandKey)}
+                          hoverKeyPrefix={item.expandKey}
                         />
                       </div>
                     );
@@ -1079,7 +1076,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                           region={regions[ri]}
                           tokens={oursTokens}
                           startTokenLine={regionLineInfo[ri].oursStart}
-                          regionIndex={ri}
+                          hoverKeyPrefix={ri}
                         />
                       </div>
                     );
@@ -1182,7 +1179,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                           conflictGutter
                           expanded={expandedRegions.has(item.expandKey)}
                           onToggleExpand={() => toggleRegionExpanded(item.expandKey)}
-                          hoverKeyPrefix={String(item.expandKey)}
+                          hoverKeyPrefix={item.expandKey}
                         />
                       </div>
                     );
@@ -1196,7 +1193,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                           region={regions[ri]}
                           tokens={theirsTokens}
                           startTokenLine={regionLineInfo[ri].theirsStart}
-                          regionIndex={ri}
+                          hoverKeyPrefix={ri}
                         />
                       </div>
                     );
@@ -1281,7 +1278,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                       startTokenLine={startIdx}
                       startLineNo={startIdx + 1}
                       expanded={expandedRegions.has(item.expandKey)}
-                      hoverKeyPrefix={String(item.expandKey)}
+                      hoverKeyPrefix={item.expandKey}
                       onToggleExpand={() => toggleRegionExpanded(item.expandKey)}
                     />
                   );
@@ -1315,6 +1312,12 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
+const OUTPUT_LINE_BG: Record<string, string> = {
+  ours: "bg-[rgba(var(--conflict-ours),0.08)]",
+  theirs: "bg-[rgba(var(--conflict-theirs),0.08)]",
+  "auto-resolved": "bg-[rgba(var(--conflict-auto),0.08)]",
+};
+
 const OutputLine = memo(OutputLineImpl);
 
 function OutputLineImpl({
@@ -1330,12 +1333,7 @@ function OutputLineImpl({
   tokens?: ThemedToken[];
   hoverKey?: string;
 }) {
-  const BG_MAP: Record<string, string> = {
-    ours: "bg-[rgba(var(--conflict-ours),0.08)]",
-    theirs: "bg-[rgba(var(--conflict-theirs),0.08)]",
-    "auto-resolved": "bg-[rgba(var(--conflict-auto),0.08)]",
-  };
-  const bgClass = BG_MAP[source] ?? "";
+  const bgClass = OUTPUT_LINE_BG[source] ?? "";
   const iconEl =
     source === "ours" ? (
       <OursIcon size={10} />
@@ -1385,7 +1383,7 @@ interface UnchangedBlockProps {
   /** Stable key prefix for cross-pane hover correspondence — same value in
    *  every pane that renders this unchanged block, combined with the local
    *  row index to produce `u:{prefix}:{rowIdx}`. Omit to disable hover. */
-  hoverKeyPrefix?: string;
+  hoverKeyPrefix?: string | number;
 }
 
 function UnchangedBlock({
@@ -1724,13 +1722,13 @@ function AutoResolvedBlock({
   region,
   tokens,
   startTokenLine,
-  regionIndex,
+  hoverKeyPrefix,
 }: {
   side: "ours" | "theirs";
   region: DiffRegion;
   tokens: ThemedToken[][] | null;
   startTokenLine: number;
-  regionIndex: number;
+  hoverKeyPrefix: string | number;
 }) {
   const isWinner = region.autoSide === side;
   const winLines = region.autoSide === "theirs" ? region.bLines : region.aLines;
@@ -1746,7 +1744,7 @@ function AutoResolvedBlock({
             key={li}
             className="flex"
             style={{ backgroundColor: "rgba(var(--conflict-auto), 0.06)", contain: "content" }}
-            data-hover-key={`a:${regionIndex}:${li}`}
+            data-hover-key={`a:${hoverKeyPrefix}:${li}`}
           >
             <span className="shrink-0 w-12 flex items-center justify-center">
               <Check className="w-2.5 h-2.5" style={{ color: "rgba(var(--conflict-auto), 0.4)" }} />

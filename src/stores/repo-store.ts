@@ -135,12 +135,26 @@ function isLargeDiff(files: FileStatus[], path: string): number | false {
  * Builds a content signature for a diff so we can skip re-renders when polling
  * returns identical content. Includes line origin + content so we catch
  * in-place edits that don't change line counts (e.g. a one-character typo fix).
+ *
+ * The signature is cached by reference to the diff object — a 10k-line diff
+ * serializes to a multi-MB string, and the polled-but-unchanged case (the
+ * common one) would otherwise pay that cost twice every 5 seconds.
  */
+const diffSignatureCache = new WeakMap<FileDiff, string>();
 function diffSignature(diff: FileDiff): string {
-  return diff.hunks
+  const cached = diffSignatureCache.get(diff);
+  if (cached !== undefined) return cached;
+  const sig = diff.hunks
     .map((h) => `${h.header}\n${h.lines.map((l) => l.origin + l.content).join("\n")}`)
     .join("\n");
+  diffSignatureCache.set(diff, sig);
+  return sig;
 }
+
+// Module-level in-flight guard for refreshActiveDiff. Without it, a slow
+// `getFileDiff` IPC under a 5-second poll cadence could let multiple fetches
+// stack up; we skip new attempts while one is already running.
+let refreshDiffInFlight = false;
 
 /** Auto-select the first conflicted file so the user lands in the conflict editor immediately. */
 function autoSelectFirstConflict(
@@ -652,11 +666,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       diffLoading,
       largeDiffPending,
     } = get();
-    // No active file, or a fresh diff fetch is already in flight, or we're
-    // viewing immutable history (commits/stashes don't change), or the user
-    // hasn't loaded a large diff yet — nothing to refresh.
+    // No active file, fresh diff fetch already in flight, viewing immutable
+    // history (commits/stashes don't change), or large-diff guard not loaded —
+    // nothing to refresh.
+    if (refreshDiffInFlight) return;
     if (!selectedFilePath || diffLoading || largeDiffPending) return;
     if (selectedCommitId || selectedStashIndex != null) return;
+    refreshDiffInFlight = true;
     try {
       const newDiff = await getFileDiff(selectedFilePath, selectedFileStaged);
       // Guard against the user switching files mid-fetch — don't clobber a
@@ -676,6 +692,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch {
       // File may no longer exist or no longer be modified — leave the
       // current diff in place rather than flashing an error toast every 5s.
+    } finally {
+      refreshDiffInFlight = false;
     }
   },
 
