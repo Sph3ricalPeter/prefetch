@@ -131,6 +131,17 @@ function isLargeDiff(files: FileStatus[], path: string): number | false {
   return total > LARGE_DIFF_THRESHOLD ? total : false;
 }
 
+/**
+ * Builds a content signature for a diff so we can skip re-renders when polling
+ * returns identical content. Includes line origin + content so we catch
+ * in-place edits that don't change line counts (e.g. a one-character typo fix).
+ */
+function diffSignature(diff: FileDiff): string {
+  return diff.hunks
+    .map((h) => `${h.header}\n${h.lines.map((l) => l.origin + l.content).join("\n")}`)
+    .join("\n");
+}
+
 /** Auto-select the first conflicted file so the user lands in the conflict editor immediately. */
 function autoSelectFirstConflict(
   statuses: FileStatus[],
@@ -313,6 +324,7 @@ interface RepoState {
   removeFromRecentRepos: (path: string) => Promise<void>;
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
+  refreshActiveDiff: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
   stashAndProceed: () => Promise<void>;
   discardAndProceed: () => Promise<void>;
@@ -604,6 +616,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   loadStatus: async () => {
     try {
       const statuses = await getFileStatus();
+      // Refresh the active diff even when the file list hasn't changed — an
+      // in-place edit (typo fix etc.) leaves additions/deletions unchanged but
+      // still mutates content, and the diff viewer needs to reflect it.
+      get().refreshActiveDiff();
       // Skip state update if nothing changed — avoids an unnecessary React
       // re-render on every 5-second poll when no files have been modified.
       const current = get().fileStatuses;
@@ -623,6 +639,43 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ fileStatuses: statuses });
     } catch (e) {
       toast.error(errorMessage(e));
+    }
+  },
+
+  refreshActiveDiff: async () => {
+    const {
+      selectedFilePath,
+      selectedFileStaged,
+      selectedCommitId,
+      selectedStashIndex,
+      activeDiff,
+      diffLoading,
+      largeDiffPending,
+    } = get();
+    // No active file, or a fresh diff fetch is already in flight, or we're
+    // viewing immutable history (commits/stashes don't change), or the user
+    // hasn't loaded a large diff yet — nothing to refresh.
+    if (!selectedFilePath || diffLoading || largeDiffPending) return;
+    if (selectedCommitId || selectedStashIndex != null) return;
+    try {
+      const newDiff = await getFileDiff(selectedFilePath, selectedFileStaged);
+      // Guard against the user switching files mid-fetch — don't clobber a
+      // newer selection with stale poll results.
+      const after = get();
+      if (
+        after.selectedFilePath !== selectedFilePath ||
+        after.selectedFileStaged !== selectedFileStaged ||
+        after.selectedCommitId != null ||
+        after.selectedStashIndex != null
+      ) {
+        return;
+      }
+      if (!activeDiff || diffSignature(newDiff) !== diffSignature(activeDiff)) {
+        set({ activeDiff: newDiff });
+      }
+    } catch {
+      // File may no longer exist or no longer be modified — leave the
+      // current diff in place rather than flashing an error toast every 5s.
     }
   },
 

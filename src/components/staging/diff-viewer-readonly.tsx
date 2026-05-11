@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, memo } from "react";
 import type { FileDiff, DiffHunk, DiffLine } from "@/types/git";
 import { highlightLines, detectLang, yieldToMacrotask } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
@@ -7,6 +7,13 @@ import { DiffMinimap } from "@/components/staging/diff-minimap";
 import { ChevronDown, ChevronUp, UnfoldVertical } from "lucide-react";
 import type { ExpandableContext } from "@/hooks/use-expandable-context";
 import type { ThemedToken } from "shiki";
+import { computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
+import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
+
+// CSS containment per line: tells the browser that layout/paint changes inside
+// a line can't affect anything outside, so the browser can skip recomputing
+// neighbors during scroll and partial repaints. Big help for long diffs.
+const LINE_CONTAINMENT: React.CSSProperties = { contain: "content" };
 
 interface DiffViewerReadonlyProps {
   diff: FileDiff;
@@ -30,6 +37,12 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
   const lang = useMemo(() => detectLang(filePath), [filePath]);
   const hasDeletions = useMemo(
     () => diff.hunks.some((h) => h.lines.some((l) => l.origin === "-")),
+    [diff],
+  );
+  // Character-level diff per paired -/+ line, for dim/highlight rendering.
+  // Computed once per diff (cheap — Myers diff is microseconds per line pair).
+  const intraLineRangesByHunk = useMemo(
+    () => diff.hunks.map(computeHunkIntraLineRanges),
     [diff],
   );
 
@@ -119,10 +132,11 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
 
   return (
     <div className="flex flex-1 min-h-0">
-      <div ref={scrollRef} className="overflow-auto flex-1 text-xs font-mono leading-5">
+      <div ref={scrollRef} className="overflow-auto flex-1 text-xs font-mono leading-5" style={{ willChange: "scroll-position" }}>
         {diff.hunks.map((hunk, hi) => {
           const hunkTokens = tokensByHunk.get(hi);
           const gapRender = expandCtx.getGapRender(hi);
+          const intraLineRanges = intraLineRangesByHunk[hi];
 
           return (
             <div key={hi}>
@@ -170,13 +184,14 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
                 }}
               >
                 {diffViewMode === "side-by-side" ? (
-                  <SideBySideHunk hunk={hunk} hunkTokens={hunkTokens} wrapClass={wrapClass} fileTokens={fileTokens} oldFileTokens={oldFileTokens} />
+                  <SideBySideHunk hunk={hunk} hunkTokens={hunkTokens} wrapClass={wrapClass} fileTokens={fileTokens} oldFileTokens={oldFileTokens} intraLineRanges={intraLineRanges} />
                 ) : (
                   hunk.lines.map((line, li) => (
                     <UnifiedDiffLine
                       key={li}
                       line={line}
                       tokens={resolveLineTokens(line, li, hunkTokens, fileTokens, oldFileTokens)}
+                      ranges={intraLineRanges.get(li)}
                       wrapClass={wrapClass}
                     />
                   ))
@@ -214,10 +229,13 @@ function resolveLineTokens(
 interface UnifiedDiffLineProps {
   line: DiffLine;
   tokens?: ThemedToken[];
+  ranges?: CharRange[];
   wrapClass: string;
 }
 
-function UnifiedDiffLine({ line, tokens, wrapClass }: UnifiedDiffLineProps) {
+const UnifiedDiffLine = memo(UnifiedDiffLineImpl);
+
+function UnifiedDiffLineImpl({ line, tokens, ranges, wrapClass }: UnifiedDiffLineProps) {
   const bgClass =
     line.origin === "+"
       ? "bg-[var(--diff-added-bg)]"
@@ -233,7 +251,7 @@ function UnifiedDiffLine({ line, tokens, wrapClass }: UnifiedDiffLineProps) {
         : "text-muted-foreground/50";
 
   return (
-    <div className={`flex ${bgClass} group`}>
+    <div className={`flex ${bgClass} group`} style={LINE_CONTAINMENT}>
       <span className="w-10 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-[10px]">
         {line.old_lineno ?? ""}
       </span>
@@ -245,7 +263,7 @@ function UnifiedDiffLine({ line, tokens, wrapClass }: UnifiedDiffLineProps) {
       </span>
       <pre className={`flex-1 px-2 ${wrapClass}`}>
         {tokens ? (
-          <HighlightedContent tokens={tokens} line={line} />
+          <HighlightedLineContent tokens={tokens} line={line} ranges={ranges} />
         ) : (
           <span className={line.origin === "+" ? "text-green-400" : line.origin === "-" ? "text-red-400" : "text-muted-foreground"}>
             {line.content || " "}
@@ -264,13 +282,14 @@ interface SideBySideHunkProps {
   wrapClass: string;
   fileTokens?: ThemedToken[][] | null;
   oldFileTokens?: ThemedToken[][] | null;
+  intraLineRanges: Map<number, CharRange[]>;
 }
 
 /**
  * Renders a hunk in side-by-side layout by pairing deletions on the left
  * with additions on the right. Context lines appear on both sides.
  */
-function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens }: SideBySideHunkProps) {
+function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens, intraLineRanges }: SideBySideHunkProps) {
   const pairs = useMemo(() => buildSideBySidePairs(hunk, hunkTokens), [hunk, hunkTokens]);
 
   return (
@@ -286,9 +305,11 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
         const rightTokens = fileTokens && pair.right?.new_lineno != null
           ? fileTokens[pair.right.new_lineno - 1]
           : pair.rightTokens;
+        const leftRanges = pair.leftIdx != null ? intraLineRanges.get(pair.leftIdx) : undefined;
+        const rightRanges = pair.rightIdx != null ? intraLineRanges.get(pair.rightIdx) : undefined;
 
         return (
-          <div key={i} className="flex">
+          <div key={i} className="flex group/diffpair" style={LINE_CONTAINMENT}>
             {/* Left (old) */}
             <div className={`flex flex-1 min-w-0 overflow-hidden border-r border-border ${
               pair.left
@@ -297,7 +318,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
             }`}>
               {pair.left ? (
                 <>
-                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-[10px]">
                     {pair.left.old_lineno ?? ""}
                   </span>
                   <span className={`w-5 shrink-0 text-center select-none ${
@@ -307,7 +328,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
                   </span>
                   <pre className={`flex-1 px-2 ${wrapClass}`}>
                     {leftTokens ? (
-                      <HighlightedContent tokens={leftTokens} line={pair.left} />
+                      <HighlightedLineContent tokens={leftTokens} line={pair.left} ranges={leftRanges} />
                     ) : (
                       <span className={pair.left.origin === "-" ? "text-red-400" : "text-muted-foreground"}>
                         {pair.left.content || " "}
@@ -328,7 +349,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
             }`}>
               {pair.right ? (
                 <>
-                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-[10px]">
                     {pair.right.new_lineno ?? ""}
                   </span>
                   <span className={`w-5 shrink-0 text-center select-none ${
@@ -338,7 +359,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
                   </span>
                   <pre className={`flex-1 px-2 ${wrapClass}`}>
                     {rightTokens ? (
-                      <HighlightedContent tokens={rightTokens} line={pair.right} />
+                      <HighlightedLineContent tokens={rightTokens} line={pair.right} ranges={rightRanges} />
                     ) : (
                       <span className={pair.right.origin === "+" ? "text-green-400" : "text-muted-foreground"}>
                         {pair.right.content || " "}
@@ -360,6 +381,8 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
 interface SideBySidePair {
   left: DiffLine | null;
   right: DiffLine | null;
+  leftIdx: number | null;
+  rightIdx: number | null;
   leftTokens?: ThemedToken[];
   rightTokens?: ThemedToken[];
 }
@@ -379,7 +402,7 @@ function buildSideBySidePairs(hunk: DiffHunk, hunkTokens?: ThemedToken[][]): Sid
     const line = lines[i];
 
     if (line.origin === " ") {
-      pairs.push({ left: line, right: line, leftTokens: hunkTokens?.[i], rightTokens: hunkTokens?.[i] });
+      pairs.push({ left: line, right: line, leftIdx: i, rightIdx: i, leftTokens: hunkTokens?.[i], rightTokens: hunkTokens?.[i] });
       i++;
     } else if (line.origin === "-") {
       const dels: number[] = [];
@@ -397,12 +420,14 @@ function buildSideBySidePairs(hunk: DiffHunk, hunkTokens?: ThemedToken[][]): Sid
         pairs.push({
           left: j < dels.length ? lines[dels[j]] : null,
           right: j < adds.length ? lines[adds[j]] : null,
+          leftIdx: j < dels.length ? dels[j] : null,
+          rightIdx: j < adds.length ? adds[j] : null,
           leftTokens: j < dels.length ? hunkTokens?.[dels[j]] : undefined,
           rightTokens: j < adds.length ? hunkTokens?.[adds[j]] : undefined,
         });
       }
     } else if (line.origin === "+") {
-      pairs.push({ left: null, right: line, rightTokens: hunkTokens?.[i] });
+      pairs.push({ left: null, right: line, leftIdx: null, rightIdx: i, rightTokens: hunkTokens?.[i] });
       i++;
     } else {
       i++;
@@ -471,7 +496,7 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
               <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />
               <pre className={`flex-1 px-2 ${wrapClass}`}>
                 {tokens ? (
-                  <HighlightedContent tokens={tokens} line={line} />
+                  <HighlightedLineContent tokens={tokens} line={line} />
                 ) : (
                   <span className="text-muted-foreground">{line.content || " "}</span>
                 )}
@@ -484,7 +509,7 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
               <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />
               <pre className={`flex-1 px-2 ${wrapClass}`}>
                 {tokens ? (
-                  <HighlightedContent tokens={tokens} line={line} />
+                  <HighlightedLineContent tokens={tokens} line={line} />
                 ) : (
                   <span className="text-muted-foreground">{line.content || " "}</span>
                 )}
@@ -497,39 +522,3 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
   );
 }
 
-// ── Shared highlighting ─────────────────────────────────────────────────────
-
-interface HighlightedContentProps {
-  tokens: ThemedToken[];
-  line: DiffLine;
-}
-
-function HighlightedContent({ tokens, line }: HighlightedContentProps) {
-  if (!tokens || tokens.length === 0) {
-    const fallbackClass =
-      line.origin === "+"
-        ? "text-green-400"
-        : line.origin === "-"
-          ? "text-red-400"
-          : "text-muted-foreground";
-    return <span className={fallbackClass}>{line.content || " "}</span>;
-  }
-
-  const opacityMod = line.origin === " " ? 1 : 0.95;
-
-  return (
-    <>
-      {tokens.map((token, i) => (
-        <span
-          key={i}
-          style={{
-            color: token.color,
-            opacity: opacityMod,
-          }}
-        >
-          {token.content}
-        </span>
-      ))}
-    </>
-  );
-}
