@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileDiff, DiffHunk, DiffLine } from "@/types/git";
-import { highlightLines, detectLang } from "@/lib/shiki";
+import { highlightLines, detectLang, yieldToMacrotask } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { getDataAttrFromEvent } from "@/lib/utils";
@@ -44,6 +44,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
   const [selectedLines, setSelectedLines] = useState<Set<string>>(new Set());
   const [tokensByHunk, setTokensByHunk] = useState<Map<number, ThemedToken[][]>>(new Map());
   const [fileTokens, setFileTokens] = useState<ThemedToken[][] | null>(null);
+  const [oldFileTokens, setOldFileTokens] = useState<ThemedToken[][] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stageHunk = useRepoStore((s) => s.stageHunk);
   const unstageHunk = useRepoStore((s) => s.unstageHunk);
@@ -55,6 +56,10 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
   const shikiThemeId = useThemeStore((s) => s.codeTheme.shikiTheme.name);
 
   const lang = useMemo(() => detectLang(filePath), [filePath]);
+  const hasDeletions = useMemo(
+    () => diff.hunks.some((h) => h.lines.some((l) => l.origin === "-")),
+    [diff],
+  );
 
   // Ordered list of all changeable line keys for range calculations
   const changeableKeys = useMemo(() => {
@@ -88,7 +93,8 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
   } | null>(null);
   const anchorRef = useRef<string | null>(null);
 
-  // Highlight hunks progressively — render each as it finishes
+  // Highlight hunks progressively — render each as it finishes.
+  // Yields between hunks so clicks/renders can interrupt long highlighting runs.
   useEffect(() => {
     let cancelled = false;
     const tokenMap = new Map<number, Awaited<ReturnType<typeof highlightLines>>>();
@@ -105,6 +111,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
             setTokensByHunk(new Map(tokenMap));
           }
         } catch { /* fallback: no highlighting */ }
+        await yieldToMacrotask();
       }
     }
     highlight();
@@ -114,19 +121,52 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
     };
   }, [diff, lang, shikiThemeId]);
 
-  // Highlight full file for expanded context lines
+  // Highlight full file for expanded context lines.
+  // Deferred behind a macrotask so the click→render→paint cycle gets priority.
   useEffect(() => {
     const fl = expandCtx?.fileLines;
-    if (!fl || !lang || fl.length > 10000) {
+    if (!fl || !lang || fl.length > 5000) {
       return () => { setFileTokens(null); };
     }
     let cancelled = false;
-    const code = fl.join("\n");
-    highlightLines(code, lang, shikiThemeId).then((tokens) => {
-      if (!cancelled) setFileTokens(tokens);
-    }).catch(() => {});
+    (async () => {
+      await yieldToMacrotask();
+      if (cancelled) return;
+      try {
+        const tokens = await highlightLines(fl.join("\n"), lang, shikiThemeId);
+        if (!cancelled) setFileTokens(tokens);
+      } catch { /* fallback: no highlighting */ }
+    })();
     return () => { cancelled = true; setFileTokens(null); };
   }, [expandCtx?.fileLines, lang, shikiThemeId]);
+
+  // Eagerly fetch file content for full-context syntax highlighting.
+  // Old-file fetch is skipped when the diff has no deletions.
+  const fetchFileLines = expandCtx?.fetchFileLines;
+  const fetchOldFileLines = expandCtx?.fetchOldFileLines;
+  useEffect(() => {
+    if (!lang) return;
+    fetchFileLines?.();
+    if (hasDeletions) fetchOldFileLines?.();
+  }, [lang, hasDeletions, fetchFileLines, fetchOldFileLines]);
+
+  // Highlight old file (for deletion line tokens). Same deferral as new-file.
+  useEffect(() => {
+    const ofl = expandCtx?.oldFileLines;
+    if (!ofl || !lang || ofl.length > 5000) {
+      return () => { setOldFileTokens(null); };
+    }
+    let cancelled = false;
+    (async () => {
+      await yieldToMacrotask();
+      if (cancelled) return;
+      try {
+        const tokens = await highlightLines(ofl.join("\n"), lang, shikiThemeId);
+        if (!cancelled) setOldFileTokens(tokens);
+      } catch { /* fallback: no highlighting */ }
+    })();
+    return () => { cancelled = true; setOldFileTokens(null); };
+  }, [expandCtx?.oldFileLines, lang, shikiThemeId]);
 
   const getLineKeyFromEvent = useCallback(
     (e: React.MouseEvent | MouseEvent) => getDataAttrFromEvent(e, "data-line-key", scrollRef.current),
@@ -422,6 +462,8 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                       hunkTokens={hunkTokens}
                       wrapClass={wrapClass}
                       selectedLines={selectedLines}
+                      fileTokens={fileTokens}
+                      oldFileTokens={oldFileTokens}
                     />
                   ) : (
                     hunk.lines.map((line, li) => (
@@ -430,7 +472,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                         line={line}
                         hunkIndex={hi}
                         lineIndex={li}
-                        tokens={hunkTokens?.[li]}
+                        tokens={resolveLineTokens(line, li, hunkTokens, fileTokens, oldFileTokens)}
                         isSelected={selectedLines.has(`${hi}:${li}`)}
                         wrapClass={wrapClass}
                       />
@@ -454,6 +496,24 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
       )}
     </div>
   );
+}
+
+/**
+ * Pick the best available token source for a diff line.
+ * - Lines present in the new file (additions + context): use new-file tokens.
+ * - Lines only in the old file (deletions): use old-file tokens.
+ * - Fall back to per-hunk tokens while full-file highlights are loading.
+ */
+function resolveLineTokens(
+  line: DiffLine,
+  hunkLineIndex: number,
+  hunkTokens: ThemedToken[][] | undefined,
+  fileTokens: ThemedToken[][] | null,
+  oldFileTokens: ThemedToken[][] | null,
+): ThemedToken[] | undefined {
+  if (fileTokens && line.new_lineno != null) return fileTokens[line.new_lineno - 1];
+  if (oldFileTokens && line.old_lineno != null) return oldFileTokens[line.old_lineno - 1];
+  return hunkTokens?.[hunkLineIndex];
 }
 
 // ── Unified interactive line ────────────────────────────────────────────────
@@ -555,6 +615,8 @@ interface InteractiveSideBySideHunkProps {
   hunkTokens?: ThemedToken[][];
   wrapClass: string;
   selectedLines: Set<string>;
+  fileTokens?: ThemedToken[][] | null;
+  oldFileTokens?: ThemedToken[][] | null;
 }
 
 interface SideBySidePair {
@@ -612,37 +674,52 @@ function InteractiveSideBySideHunk({
   hunkTokens,
   wrapClass,
   selectedLines,
+  fileTokens,
+  oldFileTokens,
 }: InteractiveSideBySideHunkProps) {
   const pairs = useMemo(() => buildSideBySidePairs(hunk), [hunk]);
 
   return (
     <div>
-      {pairs.map((pair, i) => (
-        <div key={i} className="flex">
-          {/* Left (old) side */}
-          <SideBySideCell
-            line={pair.left}
-            lineIdx={pair.leftIdx}
-            hunkIndex={hunkIndex}
-            tokens={pair.leftIdx !== null ? hunkTokens?.[pair.leftIdx] : undefined}
-            wrapClass={wrapClass}
-            isSelected={pair.leftIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.leftIdx}`) : false}
-            side="left"
-            oppositeLine={pair.right}
-          />
-          {/* Right (new) side */}
-          <SideBySideCell
-            line={pair.right}
-            lineIdx={pair.rightIdx}
-            hunkIndex={hunkIndex}
-            tokens={pair.rightIdx !== null ? hunkTokens?.[pair.rightIdx] : undefined}
-            wrapClass={wrapClass}
-            isSelected={pair.rightIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.rightIdx}`) : false}
-            side="right"
-            oppositeLine={pair.left}
-          />
-        </div>
-      ))}
+      {pairs.map((pair, i) => {
+        // Left (old) side: prefer old-file tokens; fall back to new-file tokens for context, then per-hunk.
+        const leftTokens = oldFileTokens && pair.left?.old_lineno != null
+          ? oldFileTokens[pair.left.old_lineno - 1]
+          : fileTokens && pair.left?.new_lineno != null
+            ? fileTokens[pair.left.new_lineno - 1]
+            : (pair.leftIdx !== null ? hunkTokens?.[pair.leftIdx] : undefined);
+        // Right (new) side: prefer new-file tokens; fall back to per-hunk.
+        const rightTokens = fileTokens && pair.right?.new_lineno != null
+          ? fileTokens[pair.right.new_lineno - 1]
+          : (pair.rightIdx !== null ? hunkTokens?.[pair.rightIdx] : undefined);
+
+        return (
+          <div key={i} className="flex">
+            {/* Left (old) side */}
+            <SideBySideCell
+              line={pair.left}
+              lineIdx={pair.leftIdx}
+              hunkIndex={hunkIndex}
+              tokens={leftTokens}
+              wrapClass={wrapClass}
+              isSelected={pair.leftIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.leftIdx}`) : false}
+              side="left"
+              oppositeLine={pair.right}
+            />
+            {/* Right (new) side */}
+            <SideBySideCell
+              line={pair.right}
+              lineIdx={pair.rightIdx}
+              hunkIndex={hunkIndex}
+              tokens={rightTokens}
+              wrapClass={wrapClass}
+              isSelected={pair.rightIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.rightIdx}`) : false}
+              side="right"
+              oppositeLine={pair.left}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

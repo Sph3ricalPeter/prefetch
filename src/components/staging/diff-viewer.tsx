@@ -15,7 +15,12 @@ interface DiffViewerProps {
 
 export function DiffViewer({ diff, filePath, mode = "readonly", source = {}, staged = false, onBack }: DiffViewerProps) {
   const resolvedPath = filePath ?? diff.path;
-  const ctx = useExpandableContext(diff.hunks, resolvedPath, source);
+  // Key the hook to diff.path (the actually-rendered diff) rather than filePath
+  // (the user's current selection). During a click → loading transition, filePath
+  // updates immediately but activeDiff lags behind the IPC; tying the hook to
+  // diff.path keeps state stable across that window so the spinner can paint
+  // without an extra re-render of the (heavy) diff subtree.
+  const ctx = useExpandableContext(diff.hunks, diff.path, source);
 
   if (diff.is_binary) {
     return (
