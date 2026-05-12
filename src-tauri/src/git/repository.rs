@@ -1367,7 +1367,7 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
         }
     }
 
-    if diff_text.contains("Binary files") {
+    if has_binary_marker(&diff_text) {
         return Ok(FileDiff {
             path: file_path.to_string(),
             hunks: vec![],
@@ -1384,6 +1384,18 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
         is_truncated: false,
         total_lines: 0,
     }))
+}
+
+/// Detect git's "binary file differs" marker.
+///
+/// Git emits a line like `Binary files a/foo and b/foo differ` at column 0,
+/// outside any hunk. Hunk content lines always start with ` `, `+`, `-`, or
+/// `\`, so anchoring to line-start avoids false positives when a text file's
+/// own content happens to contain the phrase "Binary files".
+fn has_binary_marker(diff_text: &str) -> bool {
+    diff_text
+        .lines()
+        .any(|l| l.starts_with("Binary files ") && l.ends_with(" differ"))
 }
 
 fn parse_unified_diff(diff_text: &str) -> Vec<DiffHunk> {
@@ -2025,7 +2037,7 @@ pub fn get_commit_file_diff(
 
     let diff_text = String::from_utf8_lossy(&output.stdout);
 
-    if diff_text.contains("Binary files") {
+    if has_binary_marker(&diff_text) {
         return Ok(FileDiff {
             path: file_path.to_string(),
             hunks: vec![],
@@ -2266,7 +2278,7 @@ pub fn get_stash_file_diff(
 
     let diff_text = String::from_utf8_lossy(&output.stdout);
 
-    if diff_text.contains("Binary files") {
+    if has_binary_marker(&diff_text) {
         return Ok(FileDiff {
             path: file_path.to_string(),
             hunks: vec![],
