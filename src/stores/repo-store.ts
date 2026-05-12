@@ -38,6 +38,7 @@ import {
   stageFiles as stageFilesCmd,
   unstageFiles as unstageFilesCmd,
   createCommit,
+  rewordHeadCommit as rewordHeadCommitCmd,
   getCommitFiles,
   getCommitFileDiff,
   getStashes,
@@ -369,6 +370,7 @@ interface RepoState {
   loadConflictContents: (filePath: string) => Promise<void>;
   resolveConflictManual: (filePath: string, content: string) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
+  rewordHeadCommit: (message: string) => Promise<void>;
   setCommitMessage: (msg: string) => void;
   setCommitDescription: (desc: string) => void;
   setAmendMode: (on: boolean) => void;
@@ -1275,6 +1277,23 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       } else {
         toast.error(message);
       }
+    }
+  },
+
+  rewordHeadCommit: async (message) => {
+    if (!message.trim()) {
+      toast.error("Commit message cannot be empty");
+      return;
+    }
+    set({ isLoading: true });
+    try {
+      await rewordHeadCommitCmd(message.trim());
+      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      set({ ...repoData, fileStatuses: statuses, isLoading: false });
+      toast.success("Commit message updated");
+    } catch (e) {
+      set({ isLoading: false });
+      toast.error(errorMessage(e));
     }
   },
 

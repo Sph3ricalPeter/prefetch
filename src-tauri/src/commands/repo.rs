@@ -451,6 +451,16 @@ pub async fn create_commit(
 }
 
 #[tauri::command]
+pub async fn reword_head_commit(
+    message: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    offload(move || repository::reword_head_commit(&path, &message, &env)).await
+}
+
+#[tauri::command]
 pub async fn stash_save(
     message: Option<String>,
     state: State<'_, AppState>,

@@ -130,6 +130,10 @@ export async function createCommit(
   return tracedInvoke<string>("create_commit", { message, amend });
 }
 
+export async function rewordHeadCommit(message: string): Promise<string> {
+  return tracedInvoke<string>("reword_head_commit", { message });
+}
+
 export async function getCommitFiles(commitId: string): Promise<FileStatus[]> {
   return tracedInvoke<FileStatus[]>("get_commit_files", { commitId });
 }
