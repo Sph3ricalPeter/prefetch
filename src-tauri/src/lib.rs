@@ -97,6 +97,7 @@ pub fn run() {
             commands::repo::get_conflict_contents,
             commands::repo::resolve_conflict_manual,
             commands::repo::create_commit,
+            commands::repo::reword_head_commit,
             commands::repo::get_commit_files,
             commands::repo::get_commit_file_diff,
             commands::repo::get_stashes,

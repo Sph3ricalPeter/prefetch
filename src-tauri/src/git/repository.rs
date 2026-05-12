@@ -1871,6 +1871,58 @@ pub fn create_commit(
     }
 }
 
+/// Reword the HEAD commit's message without touching the index.
+///
+/// Creates a new commit object via `git commit-tree` with HEAD's tree and
+/// parents but a new message, then moves HEAD via `update-ref`. Unlike
+/// `git commit --amend -m ...`, staged changes are NOT folded in.
+pub fn reword_head_commit(
+    path: &str,
+    message: &str,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    let tree = run_git(path, &["rev-parse", "HEAD^{tree}"], &[])?;
+    let tree = tree.trim().to_string();
+
+    let parents_raw = run_git(path, &["rev-list", "--parents", "-n", "1", "HEAD"], &[])?;
+    let parents: Vec<String> = parents_raw
+        .split_whitespace()
+        .skip(1)
+        .map(|s| s.to_string())
+        .collect();
+
+    let mut args: Vec<String> = vec!["commit-tree".into(), tree];
+    for p in &parents {
+        args.push("-p".into());
+        args.push(p.clone());
+    }
+    args.push("-m".into());
+    args.push(message.into());
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    let mut cmd = git_cmd();
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let output = cmd
+        .args(&arg_refs)
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git commit-tree: {e}")))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::Git(format!("commit-tree failed: {err}")));
+    }
+    let new_sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if new_sha.is_empty() {
+        return Err(AppError::Git("commit-tree returned empty SHA".into()));
+    }
+
+    run_git(path, &["update-ref", "HEAD", &new_sha], &[])?;
+
+    Ok(new_sha)
+}
+
 /// Get the list of files changed in a specific commit.
 pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStatus>, AppError> {
     // Run both git commands concurrently — each spawns a subprocess, so

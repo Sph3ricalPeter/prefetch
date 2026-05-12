@@ -79,7 +79,7 @@ export function GraphPanel() {
   const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
-  const setAmendMode = useRepoStore((s) => s.setAmendMode);
+  const rewordHeadCommit = useRepoStore((s) => s.rewordHeadCommit);
   const selectStash = useRepoStore((s) => s.selectStash);
   const applyStash = useRepoStore((s) => s.applyStash);
   const popStash = useRepoStore((s) => s.popStash);
@@ -108,6 +108,9 @@ export function GraphPanel() {
   const [renameDialog, setRenameDialog] = useState<{ branch: string } | null>(null);
   const [upstreamDialog, setUpstreamDialog] = useState<{ branch: string } | null>(null);
   const [dialogInput, setDialogInput] = useState("");
+  const [editMessageDialog, setEditMessageDialog] = useState<{ commitId: string } | null>(null);
+  const [editMsgSubject, setEditMsgSubject] = useState("");
+  const [editMsgBody, setEditMsgBody] = useState("");
 
   // Ctrl+Z undo shortcut (global)
   useEffect(() => {
@@ -404,7 +407,13 @@ export function GraphPanel() {
             (name) => { setDialogInput(name); setRenameDialog({ branch: name }); },
             (name) => { setDialogInput(""); setUpstreamDialog({ branch: name }); },
             headCommitId,
-            setAmendMode,
+            (commitId) => {
+              const c = commits.find((x) => x.id === commitId);
+              if (!c) return;
+              setEditMsgSubject(c.message);
+              setEditMsgBody(c.body);
+              setEditMessageDialog({ commitId });
+            },
             forgeStatus,
           )}
           onClose={() => setCommitContextMenu(null)}
@@ -689,6 +698,60 @@ export function GraphPanel() {
         </div>
       )}
 
+      {/* Edit (reword) HEAD commit message dialog */}
+      {editMessageDialog && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg w-full max-w-md">
+            <p className="text-sm text-foreground mb-1">Edit commit message</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Rewrites HEAD ({editMessageDialog.commitId.slice(0, 7)}). If already pushed, you'll need to force push.
+            </p>
+            <input
+              autoFocus
+              value={editMsgSubject}
+              onChange={(e) => setEditMsgSubject(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setEditMessageDialog(null);
+              }}
+              placeholder="Subject"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-2"
+            />
+            <textarea
+              value={editMsgBody}
+              onChange={(e) => setEditMsgBody(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setEditMessageDialog(null);
+              }}
+              placeholder="Optional extended description…"
+              rows={5}
+              className="w-full resize-y rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3 font-mono"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setEditMessageDialog(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const subject = editMsgSubject.trim();
+                  if (!subject) return;
+                  const body = editMsgBody.trim();
+                  const full = body ? `${subject}\n\n${body}` : subject;
+                  rewordHeadCommit(full);
+                  setEditMessageDialog(null);
+                }}
+                disabled={!editMsgSubject.trim()}
+                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Rename branch dialog (from graph badge) */}
       {renameDialog && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -852,7 +915,7 @@ function buildCommitContextMenuItems(
   renameBranch: (name: string) => void,
   setUpstream: (name: string) => void,
   headCommitId: string | null,
-  setAmendMode: (on: boolean) => void,
+  openRewordDialog: (commitId: string) => void,
   forgeStatus: ForgeStatus | null,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -971,8 +1034,8 @@ function buildCommitContextMenuItems(
   // Modify
   if (commitId === headCommitId) {
     items.push({
-      label: "Edit commit message",
-      onClick: () => setAmendMode(true),
+      label: "Edit commit message…",
+      onClick: () => openRewordDialog(commitId),
     });
   }
   items.push({
