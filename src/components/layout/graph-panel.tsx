@@ -15,7 +15,7 @@ import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
-import type { BranchInfo, ForgeKind, ForgeStatus } from "@/types/git";
+import type { BranchInfo, ForgeKind, ForgeStatus, TagInfo } from "@/types/git";
 import { ForgeIcon } from "@/components/ui/forge-icons";
 import {
   Tooltip,
@@ -70,6 +70,7 @@ export function GraphPanel() {
   const checkoutDetached = useRepoStore((s) => s.checkoutDetached);
   const createBranchAtAction = useRepoStore((s) => s.createBranchAt);
   const createNewTag = useRepoStore((s) => s.createNewTag);
+  const deleteExistingTag = useRepoStore((s) => s.deleteExistingTag);
   const deleteBranch = useRepoStore((s) => s.deleteBranch);
   const deleteRemoteBranch = useRepoStore((s) => s.deleteRemoteBranch);
   const renameBranch = useRepoStore((s) => s.renameBranch);
@@ -95,6 +96,7 @@ export function GraphPanel() {
     x: number;
     y: number;
   } | null>(null);
+  const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
   const [confirmResetHard, setConfirmResetHard] = useState<string | null>(null);
   const [confirmDeleteBranch, setConfirmDeleteBranch] = useState<{
     branchName: string;
@@ -384,6 +386,7 @@ export function GraphPanel() {
             commitContextMenu.commitId,
             currentBranch,
             branches,
+            tags,
             cherryPick,
             (id, mode) => {
               if (mode === "hard") {
@@ -414,6 +417,7 @@ export function GraphPanel() {
               setEditMsgBody(c.body);
               setEditMessageDialog({ commitId });
             },
+            (tagName) => setConfirmDeleteTag(tagName),
             forgeStatus,
           )}
           onClose={() => setCommitContextMenu(null)}
@@ -619,6 +623,35 @@ export function GraphPanel() {
                 className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
               >
                 Drop
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete tag confirmation */}
+      {confirmDeleteTag != null && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Delete tag?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              This will delete the local tag "{confirmDeleteTag}". If it has been pushed, the remote tag is not affected.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteTag(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  deleteExistingTag(confirmDeleteTag);
+                  setConfirmDeleteTag(null);
+                }}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Delete
               </button>
             </div>
           </div>
@@ -900,6 +933,7 @@ function buildCommitContextMenuItems(
   commitId: string,
   currentBranch: string | null,
   branches: BranchInfo[],
+  tags: TagInfo[],
   cherryPick: (id: string) => void,
   resetTo: (id: string, mode: "soft" | "hard") => void,
   rebaseOnto: (target: string) => void,
@@ -916,6 +950,7 @@ function buildCommitContextMenuItems(
   setUpstream: (name: string) => void,
   headCommitId: string | null,
   openRewordDialog: (commitId: string) => void,
+  confirmDeleteTag: (name: string) => void,
   forgeStatus: ForgeStatus | null,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -1028,6 +1063,20 @@ function buildCommitContextMenuItems(
     label: `Create tag at ${shortSha}…`,
     onClick: () => createTagHere(commitId),
   });
+
+  // Per-tag actions for tags already pointing at this commit
+  const tagsOnCommit = tags.filter((t) => t.commit_id && commitId.startsWith(t.commit_id));
+  for (const tag of tagsOnCommit) {
+    items.push({
+      label: `Copy tag name: ${tag.name}`,
+      onClick: () => navigator.clipboard.writeText(tag.name),
+    });
+    items.push({
+      label: `Delete tag ${tag.name}…`,
+      onClick: () => confirmDeleteTag(tag.name),
+      destructive: true,
+    });
+  }
 
   items.push({ separator: true });
 
