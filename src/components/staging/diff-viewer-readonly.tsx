@@ -4,10 +4,10 @@ import { highlightLines, detectLang, yieldToMacrotask } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
-import { ChevronDown, ChevronUp, UnfoldVertical } from "lucide-react";
+import { UnfoldVertical } from "lucide-react";
 import type { ExpandableContext } from "@/hooks/use-expandable-context";
 import type { ThemedToken } from "shiki";
-import { computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
+import { alignBlock, computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
 import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
 import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 
@@ -150,8 +150,7 @@ export function DiffViewerReadonly({ diff, filePath, expandCtx }: DiffViewerRead
                   {gapRender.remainingCount > 0 && (
                     <DiffExpandSeparator
                       remainingCount={gapRender.remainingCount}
-                      onExpandDown={gapRender.onExpandDown}
-                      onExpandUp={gapRender.onExpandUp}
+                      onExpandAll={gapRender.onExpandAll}
                     />
                   )}
                   {gapRender.bottomLines.length > 0 &&
@@ -232,6 +231,7 @@ interface UnifiedDiffLineProps {
 const UnifiedDiffLine = memo(UnifiedDiffLineImpl);
 
 function UnifiedDiffLineImpl({ line, tokens, ranges, wrapClass }: UnifiedDiffLineProps) {
+  const isContext = line.origin === " ";
   const bgClass =
     line.origin === "+"
       ? "bg-[var(--diff-added-bg)]"
@@ -247,7 +247,7 @@ function UnifiedDiffLineImpl({ line, tokens, ranges, wrapClass }: UnifiedDiffLin
         : "text-muted-foreground/50";
 
   return (
-    <div className={`flex ${bgClass} group`} style={LINE_CONTAINMENT}>
+    <div className={`flex ${bgClass} ${isContext ? "opacity-80" : ""} group`} style={LINE_CONTAINMENT}>
       <span className="w-10 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-[10px]">
         {line.old_lineno ?? ""}
       </span>
@@ -309,7 +309,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
             {/* Left (old) */}
             <div className={`flex flex-1 min-w-0 overflow-hidden border-r border-border ${
               pair.left
-                ? pair.left.origin === "-" ? "bg-[var(--diff-removed-bg)]" : ""
+                ? pair.left.origin === "-" ? "bg-[var(--diff-removed-bg)]" : pair.left.origin === " " ? "opacity-80" : ""
                 : pair.right?.origin === "+" ? "bg-secondary/30" : ""
             }`}>
               {pair.left ? (
@@ -340,7 +340,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
             {/* Right (new) */}
             <div className={`flex flex-1 min-w-0 overflow-hidden ${
               pair.right
-                ? pair.right.origin === "+" ? "bg-[var(--diff-added-bg)]" : ""
+                ? pair.right.origin === "+" ? "bg-[var(--diff-added-bg)]" : pair.right.origin === " " ? "opacity-80" : ""
                 : pair.left?.origin === "-" ? "bg-secondary/30" : ""
             }`}>
               {pair.right ? (
@@ -411,16 +411,32 @@ function buildSideBySidePairs(hunk: DiffHunk, hunkTokens?: ThemedToken[][]): Sid
         adds.push(i);
         i++;
       }
-      const maxLen = Math.max(dels.length, adds.length);
-      for (let j = 0; j < maxLen; j++) {
+      const matched = alignBlock(dels, adds, lines);
+      let di = 0, ai = 0;
+      for (const [matchDel, matchAdd] of matched) {
+        while (dels[di] !== matchDel) {
+          pairs.push({ left: lines[dels[di]], right: null, leftIdx: dels[di], rightIdx: null, leftTokens: hunkTokens?.[dels[di]] });
+          di++;
+        }
+        while (adds[ai] !== matchAdd) {
+          pairs.push({ left: null, right: lines[adds[ai]], leftIdx: null, rightIdx: adds[ai], rightTokens: hunkTokens?.[adds[ai]] });
+          ai++;
+        }
         pairs.push({
-          left: j < dels.length ? lines[dels[j]] : null,
-          right: j < adds.length ? lines[adds[j]] : null,
-          leftIdx: j < dels.length ? dels[j] : null,
-          rightIdx: j < adds.length ? adds[j] : null,
-          leftTokens: j < dels.length ? hunkTokens?.[dels[j]] : undefined,
-          rightTokens: j < adds.length ? hunkTokens?.[adds[j]] : undefined,
+          left: lines[dels[di]], right: lines[adds[ai]],
+          leftIdx: dels[di], rightIdx: adds[ai],
+          leftTokens: hunkTokens?.[dels[di]], rightTokens: hunkTokens?.[adds[ai]],
         });
+        di++;
+        ai++;
+      }
+      while (di < dels.length) {
+        pairs.push({ left: lines[dels[di]], right: null, leftIdx: dels[di], rightIdx: null, leftTokens: hunkTokens?.[dels[di]] });
+        di++;
+      }
+      while (ai < adds.length) {
+        pairs.push({ left: null, right: lines[adds[ai]], leftIdx: null, rightIdx: adds[ai], rightTokens: hunkTokens?.[adds[ai]] });
+        ai++;
       }
     } else if (line.origin === "+") {
       pairs.push({ left: null, right: line, leftIdx: null, rightIdx: i, rightTokens: hunkTokens?.[i] });
@@ -437,29 +453,14 @@ function buildSideBySidePairs(hunk: DiffHunk, hunkTokens?: ThemedToken[][]): Sid
 
 interface DiffExpandSeparatorProps {
   remainingCount: number;
-  onExpandDown: () => void;
-  onExpandUp: () => void;
+  onExpandAll: () => void;
 }
 
-function DiffExpandSeparator({ remainingCount, onExpandDown, onExpandUp }: DiffExpandSeparatorProps) {
+function DiffExpandSeparator({ remainingCount, onExpandAll }: DiffExpandSeparatorProps) {
   return (
     <div className="flex items-center gap-2 px-3 py-0.5 bg-secondary/60 text-muted-foreground border-y border-border/50 select-none">
       <button
-        onClick={onExpandDown}
-        title="Show lines above"
-        className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
-      >
-        <ChevronDown className="w-3 h-3" />
-      </button>
-      <button
-        onClick={onExpandUp}
-        title="Show lines below"
-        className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
-      >
-        <ChevronUp className="w-3 h-3" />
-      </button>
-      <button
-        onClick={() => { onExpandDown(); onExpandUp(); }}
+        onClick={onExpandAll}
         title="Expand all hidden lines"
         className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
       >
@@ -484,7 +485,7 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
       {lines.map((line, i) => {
         const tokens = line.new_lineno != null ? fileTokens?.[line.new_lineno - 1] : undefined;
         return (
-          <div key={i} className="flex">
+          <div key={i} className="flex opacity-80">
             <div className="flex flex-1 min-w-0 overflow-hidden border-r border-border">
               <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
                 {line.old_lineno ?? ""}

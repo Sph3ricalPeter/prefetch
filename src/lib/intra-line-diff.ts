@@ -33,7 +33,99 @@ type DiffOp = [number, string];
  * gets used as a common anchor — fragmenting an otherwise clean highlight.
  */
 function tokenize(line: string): string[] {
-  return line.match(/\s+|[A-Za-z_$][\w$]*|[^\s\w]/g) ?? [];
+  return line.match(/\s+|[A-Za-z$][A-Za-z0-9$]*|_+|\d+|[^\s\w]/g) ?? [];
+}
+
+// ── Block alignment (smart line pairing) ────────────────────────────────────
+
+const MIN_MATCH_SIMILARITY = 0.4;
+const MAX_BLOCK_PRODUCT = 900;
+
+function lineSimilarity(a: string, b: string): number {
+  const sa = a.trimStart();
+  const sb = b.trimStart();
+  if (sa === sb) return 1;
+  if (sa.length === 0 && sb.length === 0) return 1;
+  if (sa.length === 0 || sb.length === 0) return 0;
+
+  const freq = new Map<string, number>();
+  for (const ch of sb) freq.set(ch, (freq.get(ch) ?? 0) + 1);
+
+  let common = 0;
+  for (const ch of sa) {
+    const count = freq.get(ch) ?? 0;
+    if (count > 0) {
+      common++;
+      freq.set(ch, count - 1);
+    }
+  }
+  return (2 * common) / (sa.length + sb.length);
+}
+
+/**
+ * Given arrays of deletion and addition hunk-indices, finds a non-crossing
+ * matching that maximises total line similarity (weighted LCS). Returns
+ * `[delHunkIdx, addHunkIdx][]` sorted in order. Lines below the similarity
+ * threshold stay unpaired.
+ */
+export function alignBlock(
+  dels: number[],
+  adds: number[],
+  lines: { content: string }[],
+): [number, number][] {
+  const n = dels.length;
+  const m = adds.length;
+  if (n === 0 || m === 0) return [];
+
+  if (n * m > MAX_BLOCK_PRODUCT) {
+    const pairLen = Math.min(n, m);
+    return Array.from({ length: pairLen }, (_, j) => [dels[j], adds[j]] as [number, number]);
+  }
+
+  const sim: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    sim[i] = [];
+    for (let j = 0; j < m; j++) {
+      sim[i][j] = lineSimilarity(lines[dels[i]].content, lines[adds[j]].content);
+    }
+  }
+
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  const choice: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = dp[i - 1][j];
+      choice[i][j] = 0;
+
+      if (dp[i][j - 1] > dp[i][j]) {
+        dp[i][j] = dp[i][j - 1];
+        choice[i][j] = 1;
+      }
+
+      const s = sim[i - 1][j - 1];
+      if (s >= MIN_MATCH_SIMILARITY && dp[i - 1][j - 1] + s > dp[i][j]) {
+        dp[i][j] = dp[i - 1][j - 1] + s;
+        choice[i][j] = 2;
+      }
+    }
+  }
+
+  const pairs: [number, number][] = [];
+  let ci = n, cj = m;
+  while (ci > 0 && cj > 0) {
+    if (choice[ci][cj] === 2) {
+      pairs.push([dels[ci - 1], adds[cj - 1]]);
+      ci--;
+      cj--;
+    } else if (choice[ci][cj] === 0) {
+      ci--;
+    } else {
+      cj--;
+    }
+  }
+  pairs.reverse();
+  return pairs;
 }
 
 function rangesFor(oldLine: string, newLine: string): { oldRanges: CharRange[]; newRanges: CharRange[] } | null {
@@ -145,12 +237,12 @@ export function computeHunkIntraLineRanges(hunk: DiffHunk): Map<number, CharRang
       adds.push(i);
       i++;
     }
-    const pairLen = Math.min(dels.length, adds.length);
-    for (let j = 0; j < pairLen; j++) {
-      const ranges = rangesFor(lines[dels[j]].content, lines[adds[j]].content);
+    const matched = alignBlock(dels, adds, lines);
+    for (const [delIdx, addIdx] of matched) {
+      const ranges = rangesFor(lines[delIdx].content, lines[addIdx].content);
       if (ranges) {
-        result.set(dels[j], ranges.oldRanges);
-        result.set(adds[j], ranges.newRanges);
+        result.set(delIdx, ranges.oldRanges);
+        result.set(addIdx, ranges.newRanges);
       }
     }
   }

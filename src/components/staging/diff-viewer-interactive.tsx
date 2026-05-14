@@ -5,12 +5,12 @@ import { useRepoStore } from "@/stores/repo-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { getDataAttrFromEvent } from "@/lib/utils";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
-import { Plus, Check, Minus, ChevronDown, ChevronUp, UnfoldVertical, RotateCcw } from "lucide-react";
+import { Plus, Check, Minus, UnfoldVertical, RotateCcw } from "lucide-react";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import type { ExpandableContext } from "@/hooks/use-expandable-context";
 import type { ThemedToken } from "shiki";
-import { computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
+import { alignBlock, computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
 import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
 import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 
@@ -405,8 +405,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                     {gapRender.remainingCount > 0 && (
                       <InteractiveExpandSeparator
                         remainingCount={gapRender.remainingCount}
-                        onExpandDown={gapRender.onExpandDown}
-                        onExpandUp={gapRender.onExpandUp}
+                        onExpandAll={gapRender.onExpandAll}
                       />
                     )}
                     {gapRender.bottomLines.length > 0 &&
@@ -552,6 +551,7 @@ function InteractiveDiffLineImpl({
   wrapClass,
 }: InteractiveDiffLineProps) {
   const isChangeLine = line.origin === "+" || line.origin === "-";
+  const isContext = line.origin === " ";
 
   const bgClass = isSelected
     ? "bg-blue-500/15"
@@ -570,7 +570,7 @@ function InteractiveDiffLineImpl({
 
   return (
     <div
-      className={`flex ${bgClass} group/line cursor-default`}
+      className={`flex ${bgClass} ${isContext ? "opacity-80" : ""} group/line cursor-default`}
       style={LINE_CONTAINMENT}
       data-line-key={isChangeLine ? `${hunkIndex}:${lineIndex}` : undefined}
     >
@@ -650,14 +650,28 @@ function buildSideBySidePairs(hunk: DiffHunk): SideBySidePair[] {
         adds.push(i);
         i++;
       }
-      const maxLen = Math.max(dels.length, adds.length);
-      for (let j = 0; j < maxLen; j++) {
-        pairs.push({
-          left: j < dels.length ? lines[dels[j]] : null,
-          right: j < adds.length ? lines[adds[j]] : null,
-          leftIdx: j < dels.length ? dels[j] : null,
-          rightIdx: j < adds.length ? adds[j] : null,
-        });
+      const matched = alignBlock(dels, adds, lines);
+      let di = 0, ai = 0;
+      for (const [matchDel, matchAdd] of matched) {
+        while (dels[di] !== matchDel) {
+          pairs.push({ left: lines[dels[di]], right: null, leftIdx: dels[di], rightIdx: null });
+          di++;
+        }
+        while (adds[ai] !== matchAdd) {
+          pairs.push({ left: null, right: lines[adds[ai]], leftIdx: null, rightIdx: adds[ai] });
+          ai++;
+        }
+        pairs.push({ left: lines[dels[di]], right: lines[adds[ai]], leftIdx: dels[di], rightIdx: adds[ai] });
+        di++;
+        ai++;
+      }
+      while (di < dels.length) {
+        pairs.push({ left: lines[dels[di]], right: null, leftIdx: dels[di], rightIdx: null });
+        di++;
+      }
+      while (ai < adds.length) {
+        pairs.push({ left: null, right: lines[adds[ai]], leftIdx: null, rightIdx: adds[ai] });
+        ai++;
       }
     } else if (line.origin === "+") {
       pairs.push({ left: null, right: line, leftIdx: null, rightIdx: i });
@@ -757,6 +771,7 @@ function SideBySideCellImpl({
   oppositeLine,
 }: SideBySideCellProps) {
   const isChangeLine = line !== null && (line.origin === "+" || line.origin === "-");
+  const isContext = line !== null && line.origin === " ";
   const isEmpty = line === null;
 
   const bgClass = isEmpty
@@ -773,7 +788,7 @@ function SideBySideCellImpl({
 
   return (
     <div
-      className={`flex flex-1 min-w-0 overflow-hidden ${side === "left" ? "border-r border-border" : ""} ${bgClass} group/line cursor-default`}
+      className={`flex flex-1 min-w-0 overflow-hidden ${side === "left" ? "border-r border-border" : ""} ${bgClass} ${isContext ? "opacity-80" : ""} group/line cursor-default`}
       style={LINE_CONTAINMENT}
       data-line-key={isChangeLine && lineIdx !== null ? `${hunkIndex}:${lineIdx}` : undefined}
     >
@@ -826,7 +841,7 @@ interface InteractiveContextLineProps {
 
 function InteractiveContextLine({ line, tokens, wrapClass }: InteractiveContextLineProps) {
   return (
-    <div className="flex">
+    <div className="flex opacity-80">
       <span className="w-5 shrink-0" />
       <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-[10px]">
         {line.old_lineno ?? ""}
@@ -862,7 +877,7 @@ function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: Int
       {lines.map((line, i) => {
         const tokens = line.new_lineno != null ? fileTokens?.[line.new_lineno - 1] : undefined;
         return (
-          <div key={i} className="flex">
+          <div key={i} className="flex opacity-80">
             <div className="flex flex-1 min-w-0 overflow-hidden border-r border-border">
               <span className="w-5 shrink-0" />
               <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
@@ -906,30 +921,15 @@ function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: Int
 
 interface InteractiveExpandSeparatorProps {
   remainingCount: number;
-  onExpandDown: () => void;
-  onExpandUp: () => void;
+  onExpandAll: () => void;
 }
 
-function InteractiveExpandSeparator({ remainingCount, onExpandDown, onExpandUp }: InteractiveExpandSeparatorProps) {
+function InteractiveExpandSeparator({ remainingCount, onExpandAll }: InteractiveExpandSeparatorProps) {
   return (
     <div className="flex items-center gap-2 px-3 py-0.5 bg-secondary/60 text-muted-foreground border-y border-border/50 select-none">
       <span className="w-5 shrink-0" />
       <button
-        onClick={onExpandDown}
-        title="Show lines above"
-        className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
-      >
-        <ChevronDown className="w-3 h-3" />
-      </button>
-      <button
-        onClick={onExpandUp}
-        title="Show lines below"
-        className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
-      >
-        <ChevronUp className="w-3 h-3" />
-      </button>
-      <button
-        onClick={() => { onExpandDown(); onExpandUp(); }}
+        onClick={onExpandAll}
         title="Expand all hidden lines"
         className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
       >
