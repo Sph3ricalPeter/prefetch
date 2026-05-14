@@ -1345,7 +1345,7 @@ function OutputLineImpl({
 
   return (
     <div
-      className={`flex ${bgClass} ${source === "unchanged" ? "opacity-50" : ""}`}
+      className={`flex ${bgClass} ${source === "unchanged" ? "opacity-80" : ""}`}
       style={LINE_CONTAINMENT}
       data-hover-key={hoverKey}
     >

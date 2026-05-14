@@ -48,8 +48,7 @@ function HighlightedLineContentImpl({ tokens, line, ranges }: Props) {
   }
 
   const isAdded = line.origin === "+";
-  const dimOpacity = 0.45;
-  const changedBg = isAdded ? "rgba(34, 197, 94, 0.35)" : "rgba(239, 68, 68, 0.35)";
+  const changedBg = isAdded ? "rgba(34, 197, 94, 0.2)" : "rgba(239, 68, 68, 0.2)";
 
   const spans: React.ReactNode[] = [];
   let tokenPos = 0;
@@ -63,7 +62,7 @@ function HighlightedLineContentImpl({ tokens, line, ranges }: Props) {
       }
       if (rangeIdx >= ranges.length) {
         spans.push(
-          <span key={key++} style={{ color: token.color, opacity: dimOpacity }}>
+          <span key={key++} style={{ color: token.color, opacity: baseOpacity }}>
             {token.content.substring(chunkStart)}
           </span>,
         );
@@ -76,7 +75,7 @@ function HighlightedLineContentImpl({ tokens, line, ranges }: Props) {
           key={key++}
           style={{
             color: token.color,
-            opacity: range.changed ? baseOpacity : dimOpacity,
+            opacity: baseOpacity,
             backgroundColor: range.changed ? changedBg : undefined,
           }}
         >

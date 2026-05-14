@@ -24,6 +24,7 @@ interface GapRender {
   remainingCount: number;
   onExpandDown: () => void;
   onExpandUp: () => void;
+  onExpandAll: () => void;
 }
 
 // All cached state is keyed by the source identity (filePath + revision).
@@ -140,6 +141,20 @@ export function useExpandableContext(
     [gaps, fetchFileLines, updateExpandStates],
   );
 
+  const expandGap = useCallback(
+    async (gapIndex: number) => {
+      const gap = getGapForHunk(gaps, gapIndex);
+      if (!gap) return;
+      await fetchFileLines();
+      updateExpandStates((prev) => {
+        const next = new Map(prev);
+        next.set(gapIndex, expandAll(gap.count));
+        return next;
+      });
+    },
+    [gaps, fetchFileLines, updateExpandStates],
+  );
+
   const expandAllGaps = useCallback(async () => {
     await fetchFileLines();
     updateExpandStates(() => {
@@ -173,9 +188,10 @@ export function useExpandableContext(
         remainingCount,
         onExpandDown: () => expand(hunkIndex, "down"),
         onExpandUp: () => expand(hunkIndex, "up"),
+        onExpandAll: () => expandGap(hunkIndex),
       };
     },
-    [gaps, expandStates, fileLines, expand],
+    [gaps, expandStates, fileLines, expand, expandGap],
   );
 
   const isExpanded = expandStates.size > 0;
