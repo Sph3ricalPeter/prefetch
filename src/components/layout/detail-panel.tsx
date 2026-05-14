@@ -134,6 +134,21 @@ export function DetailPanel() {
             <span className="ml-2 text-xs text-faint">
               {fileStatuses.length}
             </span>
+            {(() => {
+              const totals = fileStatuses.reduce(
+                (acc, f) => ({
+                  add: acc.add + (f.additions ?? 0),
+                  del: acc.del + (f.deletions ?? 0),
+                }),
+                { add: 0, del: 0 },
+              );
+              return (totals.add > 0 || totals.del > 0) ? (
+                <span className="ml-2 flex items-center gap-1.5 text-xs">
+                  {totals.add > 0 && <span className="text-green-400">+{totals.add}</span>}
+                  {totals.del > 0 && <span className="text-red-400">-{totals.del}</span>}
+                </span>
+              ) : null;
+            })()}
             <div className="ml-auto flex items-center gap-1">
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -358,7 +373,7 @@ function CommitDetailView({
       {/* Changed files section */}
       {(commitFilesLoading || commitFiles.length > 0) && (
         <CollapsibleSection
-          label={commitFilesLoading ? "Changed Files" : `Changed Files (${commitFiles.length})`}
+          label={changedFilesLabel(commitFiles, commitFilesLoading)}
           isOpen={filesOpen}
           onToggle={() => setFilesOpen(!filesOpen)}
           action={
@@ -449,7 +464,7 @@ function StashDetailView({
       {/* Changed files */}
       {(stashFilesLoading || stashFiles.length > 0) && (
         <CollapsibleSection
-          label={stashFilesLoading ? "Changed Files" : `Changed Files (${stashFiles.length})`}
+          label={changedFilesLabel(stashFiles, stashFilesLoading)}
           isOpen={filesOpen}
           onToggle={() => setFilesOpen(!filesOpen)}
           action={
@@ -498,6 +513,23 @@ function StashDetailView({
   );
 }
 
+function changedFilesLabel(files: FileStatus[], loading: boolean): React.ReactNode {
+  if (loading) return "Changed Files";
+  const add = files.reduce((s, f) => s + (f.additions ?? 0), 0);
+  const del = files.reduce((s, f) => s + (f.deletions ?? 0), 0);
+  return (
+    <span className="flex items-center gap-1.5">
+      Changed Files ({files.length})
+      {(add > 0 || del > 0) && (
+        <span className="flex items-center gap-1 text-xs font-normal normal-case tracking-normal">
+          {add > 0 && <span className="text-green-400">+{add}</span>}
+          {del > 0 && <span className="text-red-400">-{del}</span>}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function CollapsibleSection({
   label,
   isOpen,
@@ -505,7 +537,7 @@ function CollapsibleSection({
   action,
   children,
 }: {
-  label: string;
+  label: React.ReactNode;
   isOpen: boolean;
   onToggle: () => void;
   action?: React.ReactNode;

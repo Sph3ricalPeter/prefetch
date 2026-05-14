@@ -13,7 +13,7 @@ export default defineConfig({
   },
   clearScreen: false,
   server: {
-    port: 5173,
+    port: 5176,
     strictPort: true,
     watch: {
       // Ignore git internals and Rust build artifacts — git operations
