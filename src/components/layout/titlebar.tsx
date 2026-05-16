@@ -105,7 +105,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
       </div>
 
       {/* Spacer — pushes window controls to the right */}
-      <div className="flex-1 min-w-2" data-tauri-drag-region />
+      <div className="flex-1 min-w-2" data-tauri-drag-region data-titlebar-spacer />
 
       {/* Action buttons — renders in one of three modes:
            1. Centered (absolute) when there's room
@@ -377,9 +377,8 @@ function TitlebarActionsGroup() {
       const children = titlebar.children;
       for (let i = 0; i < children.length; i++) {
         const child = children[i] as HTMLElement;
-        // The spacer div has flex-1 and data-tauri-drag-region — detect it by flex style
-        if (child.style.minWidth || child.classList.contains("min-w-2")) {
-          // Everything before this is "left content"
+        // Detect the spacer by computed flex-grow (works regardless of class name format)
+        if (getComputedStyle(child).flexGrow === "1") {
           leftEdge = child.getBoundingClientRect().left - titlebar.getBoundingClientRect().left;
           break;
         }
@@ -418,7 +417,7 @@ function TitlebarActionsGroup() {
     observer.observe(titlebar);
     check();
     return () => observer.disconnect();
-  }, [layout]);
+  }, [layout, repoPath]);
 
   if (!repoPath) return null;
 
