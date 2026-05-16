@@ -88,14 +88,16 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
         data-tauri-drag-region
       >
         <PrefetchLogo className="h-4 w-4 shrink-0" />
-        <span
-          className="text-xs font-semibold tracking-tight text-foreground"
-          data-tauri-drag-region
-        >
-          Prefetch
-        </span>
-        <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-caption font-medium uppercase tracking-wider text-brand">
-          Alpha{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
+        {!IS_MAC && (
+          <span
+            className="text-xs font-semibold tracking-tight text-foreground"
+            data-tauri-drag-region
+          >
+            Prefetch
+          </span>
+        )}
+        <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-caption font-medium tracking-wider text-brand">
+          α{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
         </span>
       </div>
 
