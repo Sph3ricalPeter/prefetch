@@ -97,6 +97,7 @@ import {
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
 import { computeDiffRegions, buildOutputWithSources } from "@/lib/conflict-regions";
 import { MultiStepAction } from "@/lib/multi-step";
+import { isImageFile } from "@/lib/utils";
 import {
   addRecentRepo,
   getRecentRepos,
@@ -357,6 +358,7 @@ interface RepoState {
   selectCommitFile: (commitId: string, filePath: string) => Promise<void>;
   clearDiff: () => void;
   clearSelection: () => void;
+  setDiffLoading: (loading: boolean) => void;
   /** Load a deferred large diff (user clicked "Load anyway") */
   loadPendingDiff: () => Promise<void>;
   stage: (paths: string[]) => Promise<void>;
@@ -1003,7 +1005,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ diffLoading: true });
     try {
       const diff = await getFileDiff(path, staged);
-      set({ activeDiff: diff, diffLoading: false });
+      const keepLoading = diff.is_binary && isImageFile(path);
+      set({ activeDiff: diff, diffLoading: keepLoading });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
@@ -1022,7 +1025,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ diffLoading: true });
     try {
       const diff = await getCommitFileDiff(commitId, filePath);
-      set({ activeDiff: diff, diffLoading: false });
+      const keepLoading = diff.is_binary && isImageFile(filePath);
+      set({ activeDiff: diff, diffLoading: keepLoading });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
@@ -1030,6 +1034,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   clearDiff: () => set({ activeDiff: null, largeDiffPending: null, diffLoading: false, selectedFilePath: null }),
+  setDiffLoading: (loading) => set({ diffLoading: loading }),
 
   clearSelection: () =>
     set({
@@ -1357,7 +1362,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ diffLoading: true });
     try {
       const diff = await getStashFileDiff(index, filePath);
-      set({ activeDiff: diff, diffLoading: false });
+      const keepLoading = diff.is_binary && isImageFile(filePath);
+      set({ activeDiff: diff, diffLoading: keepLoading });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
