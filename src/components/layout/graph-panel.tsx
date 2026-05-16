@@ -139,6 +139,9 @@ export function GraphPanel() {
     commitId: string;
     x: number;
     y: number;
+    /** When set, the context menu lists actions for only this ref (set by the
+     *  hover dropdown's right-click so the user gets the right ref's actions). */
+    focusRefName?: string;
   } | null>(null);
   const [stashContextMenu, setStashContextMenu] = useState<{
     index: number;
@@ -493,9 +496,9 @@ export function GraphPanel() {
                 isWipSelected={selectedCommitId === null && selectedStashIndex === null}
                 onClickWip={() => { clearSelection(); loadStatus(); }}
                 onSelectStash={(index) => selectStash(index)}
-                onCommitContextMenu={(commitId, x, y) => {
+                onCommitContextMenu={(commitId, x, y, focusRefName) => {
                   if (isLoading) return;
-                  setCommitContextMenu({ commitId, x, y });
+                  setCommitContextMenu({ commitId, x, y, focusRefName });
                 }}
                 onStashContextMenu={(index, x, y) => {
                   if (isLoading) return;
@@ -558,6 +561,7 @@ export function GraphPanel() {
             },
             (tagName) => setConfirmDeleteTag(tagName),
             forgeStatus,
+            commitContextMenu.focusRefName,
           )}
           onClose={() => setCommitContextMenu(null)}
         />
@@ -1091,11 +1095,19 @@ function buildCommitContextMenuItems(
   openRewordDialog: (commitId: string) => void,
   confirmDeleteTag: (name: string) => void,
   forgeStatus: ForgeStatus | null,
+  /** When set, the branch and tag sections are filtered to this single ref so
+   *  the menu reflects the specific item the user clicked (e.g. via the hover
+   *  dropdown). Falsy/undefined keeps the full multi-ref behaviour. */
+  focusRefName?: string,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
   // ── Branch ops (when branches point to this commit) ──
-  const branchesOnCommit = branches.filter((b) => b.commit_id === commitId);
+  const branchesOnCommit = (
+    focusRefName
+      ? branches.filter((b) => b.commit_id === commitId && b.name === focusRefName)
+      : branches.filter((b) => b.commit_id === commitId)
+  );
 
   for (const branch of branchesOnCommit) {
     const isCurrent = branch.name === currentBranch;
@@ -1204,7 +1216,11 @@ function buildCommitContextMenuItems(
   });
 
   // Per-tag actions for tags already pointing at this commit
-  const tagsOnCommit = tags.filter((t) => t.commit_id && commitId.startsWith(t.commit_id));
+  const tagsOnCommit = (
+    focusRefName
+      ? tags.filter((t) => t.commit_id && commitId.startsWith(t.commit_id) && t.name === focusRefName)
+      : tags.filter((t) => t.commit_id && commitId.startsWith(t.commit_id))
+  );
   for (const tag of tagsOnCommit) {
     items.push({
       label: `Copy tag name: ${tag.name}`,

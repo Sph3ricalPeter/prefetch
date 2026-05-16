@@ -635,7 +635,14 @@ interface CommitGraphCanvasProps {
   isWipSelected: boolean;
   onClickWip: () => void;
   onSelectStash?: (index: number) => void;
-  onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
+  /** Optional `focusRefName` scopes branch/tag actions to a single ref — used by
+   *  the hover dropdown so right-clicking a specific item shows only its actions. */
+  onCommitContextMenu?: (
+    commitId: string,
+    x: number,
+    y: number,
+    focusRefName?: string,
+  ) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
   columnWidths: GraphColumnWidths;
   /** Ref name → unix timestamp of its tip commit. Drives MRU edge-draw order. */
@@ -899,13 +906,41 @@ export function CommitGraphCanvas({
     const isDetachedHead = headInfo.isDetached;
     const headHighlightColor = headInfo.highlightColor;
 
-    // Change 1: All row highlights use roundRect instead of fillRect
+    // Row highlight rect starts at the avatar's left edge so the badge column
+    // stays unhighlighted. Falls back to the canvas left for rows without a
+    // commit (e.g. WIP).
+    const HIGHLIGHT_LEFT_PAD = 4;
+    const rowHighlightLeft = (visRow: number): number => {
+      const commitIdx = visRow - rowOffset;
+      if (commitIdx >= 0 && commitIdx < commits.length) {
+        return laneX(commits[commitIdx].lane) - NODE_RADIUS - HIGHLIGHT_LEFT_PAD;
+      }
+      // WIP row uses HEAD's lane
+      if (hasWip && visRow === 0) {
+        const hci = headRow >= 0 ? headRow - rowOffset : -1;
+        if (hci >= 0 && hci < commits.length) {
+          return laneX(commits[hci].lane) - NODE_RADIUS - HIGHLIGHT_LEFT_PAD;
+        }
+      }
+      return SCROLLBAR_PAD;
+    };
+    const fillRowHighlight = (visRow: number) => {
+      const left = rowHighlightLeft(visRow);
+      ctx.beginPath();
+      ctx.roundRect(
+        left,
+        visRow * ROW_HEIGHT - scrollTop + ROW_INSET,
+        width - left,
+        ROW_HEIGHT - ROW_INSET * 2,
+        ROW_RADIUS,
+      );
+      ctx.fill();
+    };
+
     if (headRow >= firstVisibleRow && headRow <= lastVisibleRow) {
       ctx.fillStyle = headHighlightColor;
       ctx.globalAlpha = isDetachedHead ? 0.12 : 0.08;
-      ctx.beginPath();
-      ctx.roundRect(SCROLLBAR_PAD, headRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
-      ctx.fill();
+      fillRowHighlight(headRow);
       ctx.globalAlpha = 1;
     }
 
@@ -916,24 +951,18 @@ export function CommitGraphCanvas({
       if (selectedRow === headRow) {
         ctx.fillStyle = headHighlightColor;
         ctx.globalAlpha = isDetachedHead ? 0.22 : 0.18;
-        ctx.beginPath();
-        ctx.roundRect(SCROLLBAR_PAD, selectedRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
-        ctx.fill();
+        fillRowHighlight(selectedRow);
         ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = graphColors.bgSelected;
-        ctx.beginPath();
-        ctx.roundRect(SCROLLBAR_PAD, selectedRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
-        ctx.fill();
+        fillRowHighlight(selectedRow);
       }
     }
 
     // WIP row selected highlight
     if (isWipSelected && hasWip && 0 >= firstVisibleRow && 0 <= lastVisibleRow) {
       ctx.fillStyle = graphColors.bgSelected;
-      ctx.beginPath();
-      ctx.roundRect(SCROLLBAR_PAD, 0 * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
-      ctx.fill();
+      fillRowHighlight(0);
     }
 
     const hoveredRow = hoveredRowRef.current;
@@ -947,15 +976,11 @@ export function CommitGraphCanvas({
       if (hoveredRow === headRow) {
         ctx.fillStyle = headHighlightColor;
         ctx.globalAlpha = isDetachedHead ? 0.18 : 0.14;
-        ctx.beginPath();
-        ctx.roundRect(SCROLLBAR_PAD, hoveredRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
-        ctx.fill();
+        fillRowHighlight(hoveredRow);
         ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = graphColors.bgHover;
-        ctx.beginPath();
-        ctx.roundRect(SCROLLBAR_PAD, hoveredRow * ROW_HEIGHT - scrollTop + ROW_INSET, width - SCROLLBAR_PAD, ROW_HEIGHT - ROW_INSET * 2, ROW_RADIUS);
-        ctx.fill();
+        fillRowHighlight(hoveredRow);
       }
     }
 
@@ -1784,7 +1809,14 @@ export function CommitGraphCanvas({
                 if (it.kind === "stash" && it.stashIndex != null && onStashContextMenu) {
                   onStashContextMenu(it.stashIndex, e.clientX, e.clientY);
                 } else if (onCommitContextMenu) {
-                  onCommitContextMenu(hoverDropdown.commitId, e.clientX, e.clientY);
+                  // Scope the context menu to the specific ref the user clicked
+                  // so the menu doesn't list every branch on the commit.
+                  onCommitContextMenu(
+                    hoverDropdown.commitId,
+                    e.clientX,
+                    e.clientY,
+                    it.refName,
+                  );
                 }
                 setHoverDropdown(null);
               }}
