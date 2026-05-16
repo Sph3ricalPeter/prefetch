@@ -191,6 +191,7 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
   const [state, dispatch] = useReducer(fetchReducer, { loading: true, oldImg: null, newImg: null });
   const viewMode = useRepoStore((s) => s.imageDiffViewMode);
   const setImageDiffViewMode = useRepoStore((s) => s.setImageDiffViewMode);
+  const setDiffLoading = useRepoStore((s) => s.setDiffLoading);
   const [swipePos, setSwipePos] = useState(50);
   const [zoom, setZoom] = useState<ZoomState>(INITIAL_ZOOM);
 
@@ -225,20 +226,19 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
         .then((b64) => (b64 ? loadImageState(b64, mime) : null))
         .catch(() => null),
     ]).then(([oldImg, newImg]) => {
-      if (!cancelled) dispatch({ type: "done", oldImg, newImg });
+      if (!cancelled) {
+        dispatch({ type: "done", oldImg, newImg });
+        setDiffLoading(false);
+      }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [filePath, sourceCommitId, sourceStashIndex, staged]);
+  }, [filePath, sourceCommitId, sourceStashIndex, staged, setDiffLoading]);
 
   if (state.loading) {
-    return (
-      <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-        Loading image preview…
-      </div>
-    );
+    return <div className="flex flex-col h-full" />;
   }
 
   if (!state.oldImg && !state.newImg) {

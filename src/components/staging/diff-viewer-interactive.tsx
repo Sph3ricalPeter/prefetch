@@ -365,11 +365,6 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
 
       {/* Diff content + minimap */}
       <div className="relative flex flex-1 min-h-0">
-        {isLoading && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/50 backdrop-blur-[1px]">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground" />
-          </div>
-        )}
         <div
           ref={scrollRef}
           className={`overflow-auto flex-1 text-xs font-mono leading-5 select-none ${isLoading ? "pointer-events-none" : ""}`}
