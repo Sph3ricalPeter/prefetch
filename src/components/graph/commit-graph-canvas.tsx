@@ -1785,6 +1785,8 @@ export function CommitGraphCanvas({
               key={`${it.kind}:${it.refName}:${idx}`}
               item={it}
               onSingleClick={(e) => {
+                // Don't close on single click — the browser may still be in the
+                // middle of dispatching a double-click. Action fires either way.
                 if (it.kind === "stash" && it.stashIndex != null) {
                   onSelectStash?.(it.stashIndex);
                 } else {
@@ -1794,10 +1796,11 @@ export function CommitGraphCanvas({
                       : hoverDropdown.commitId,
                   );
                 }
-                setHoverDropdown(null);
                 e.stopPropagation();
               }}
               onDoubleClick={(e) => {
+                // Double-click triggers checkout — close the dropdown as the
+                // user has committed to an action.
                 if (it.kind === "branch" || it.kind === "tag") {
                   onCheckoutBranch(it.refName);
                   setHoverDropdown(null);
@@ -1805,12 +1808,13 @@ export function CommitGraphCanvas({
                 e.stopPropagation();
               }}
               onContextMenu={(e) => {
+                // Show the context menu but leave the dropdown open so the
+                // user can still see / interact with siblings. Dismissal
+                // happens only on mouse-out, scroll, or Esc.
                 e.preventDefault();
                 if (it.kind === "stash" && it.stashIndex != null && onStashContextMenu) {
                   onStashContextMenu(it.stashIndex, e.clientX, e.clientY);
                 } else if (onCommitContextMenu) {
-                  // Scope the context menu to the specific ref the user clicked
-                  // so the menu doesn't list every branch on the commit.
                   onCommitContextMenu(
                     hoverDropdown.commitId,
                     e.clientX,
@@ -1818,7 +1822,6 @@ export function CommitGraphCanvas({
                     it.refName,
                   );
                 }
-                setHoverDropdown(null);
               }}
             />
           ))}
