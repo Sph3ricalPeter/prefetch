@@ -429,6 +429,55 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
     Ok(branches)
 }
 
+/// List refs (branches + tags) with the unix timestamp of their tip commit, MRU first.
+///
+/// Used by the UI to (a) stack badges in most-recently-updated order when several
+/// refs point at the same commit and (b) sort the canvas edge draw order so the
+/// most recent branch's lines paint on top.
+///
+/// Uses `git for-each-ref --sort=-committerdate` over `refs/heads`, `refs/remotes`,
+/// and `refs/tags`. `committerdate` resolves to the underlying commit's date even
+/// for lightweight tags, which matches the "tip last touched" semantics we want.
+/// Refnames cannot contain spaces in git, so a single space is a safe delimiter
+/// after the leading unix timestamp.
+pub fn get_ref_mru(path: &str) -> Result<Vec<(String, i64)>, AppError> {
+    let out = run_git(
+        path,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(committerdate:unix) %(refname:short)",
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+        ],
+        &[],
+    )?;
+
+    let mut result = Vec::new();
+    for line in out.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(2, ' ');
+        let ts_str = match parts.next() {
+            Some(s) => s,
+            None => continue,
+        };
+        let name = match parts.next() {
+            Some(s) => s.trim().to_string(),
+            None => continue,
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let ts: i64 = ts_str.parse().unwrap_or(0);
+        result.push((name, ts));
+    }
+    Ok(result)
+}
+
 /// Checkout a branch using git CLI subprocess.
 pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
     run_git(path, &["checkout", name], &[])?;

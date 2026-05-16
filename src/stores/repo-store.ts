@@ -23,6 +23,7 @@ import {
   openRepo,
   getCommits,
   getBranches,
+  getRefMru,
   checkoutBranch,
   forceCheckoutBranch,
   resetBranchToRemote,
@@ -241,6 +242,9 @@ interface RepoState {
   totalLanes: number;
   headCommitId: string | null;
   branches: BranchInfo[];
+  /** Ref name → unix timestamp of its tip commit. Drives MRU ordering for
+   *  overlapping badges and the commit-graph edge draw order. */
+  refMru: Map<string, number>;
   currentBranch: string | null;
   selectedCommitId: string | null;
   isLoading: boolean;
@@ -445,9 +449,13 @@ interface RepoState {
   pruneLfsObjects: () => Promise<void>;
 }
 
-/** Fetch commits + branches without calling set(). Callers merge into their own set(). */
+/** Fetch commits + branches + ref MRU without calling set(). Callers merge into their own set(). */
 async function fetchRepoData(): Promise<Partial<RepoState>> {
-  const [data, branchList] = await Promise.all([getCommits(), getBranches()]);
+  const [data, branchList, mruList] = await Promise.all([
+    getCommits(),
+    getBranches(),
+    getRefMru().catch(() => [] as Array<[string, number]>),
+  ]);
   const head = branchList.find((b) => b.is_head);
   return {
     commits: data.commits,
@@ -455,6 +463,7 @@ async function fetchRepoData(): Promise<Partial<RepoState>> {
     totalLanes: data.total_lanes,
     headCommitId: data.head_commit_id,
     branches: branchList,
+    refMru: new Map(mruList),
     currentBranch: head?.name ?? null,
   };
 }
@@ -492,6 +501,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   totalLanes: 0,
   headCommitId: null,
   branches: [],
+  refMru: new Map(),
   currentBranch: null,
   selectedCommitId: null,
   isLoading: false,

@@ -134,6 +134,16 @@ pub async fn get_branches(state: State<'_, AppState>) -> Result<Vec<BranchInfo>,
     offload(move || repository::list_branches(&path)).await
 }
 
+/// Returns each branch/tag with the unix timestamp of its tip commit, MRU first.
+/// Used by the UI to order overlapping badges and to layer commit-graph edges so
+/// the most recently updated branch's lines draw on top.
+#[instrument(skip(state))]
+#[tauri::command]
+pub async fn get_ref_mru(state: State<'_, AppState>) -> Result<Vec<(String, i64)>, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::get_ref_mru(&path)).await
+}
+
 #[instrument(skip(state))]
 #[tauri::command]
 pub async fn get_file_status(state: State<'_, AppState>) -> Result<Vec<FileStatus>, AppError> {

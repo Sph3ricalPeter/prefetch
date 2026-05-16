@@ -571,6 +571,8 @@ interface CommitGraphCanvasProps {
   onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
   columnWidths: GraphColumnWidths;
+  /** Ref name → unix timestamp of its tip commit. Drives MRU edge-draw order. */
+  refMru: Map<string, number>;
 }
 
 export function CommitGraphCanvas({
@@ -592,6 +594,7 @@ export function CommitGraphCanvas({
   onCommitContextMenu,
   onStashContextMenu,
   columnWidths,
+  refMru,
 }: CommitGraphCanvasProps) {
   const graphColors = useThemeStore((s) => s.appTheme.graph);
   const fontFamilyId = useThemeStore((s) => s.fontFamilyId);
@@ -730,6 +733,21 @@ export function CommitGraphCanvas({
     },
     [commitColorMap],
   );
+
+  // Map each branch color to the MRU timestamp of the most recent branch that
+  // resolves to that color. Used to sort the edge draw order so the most
+  // recently updated branch's lines paint on top.
+  const colorMru = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const b of branches) {
+      const baseName = b.is_remote ? b.name.replace(/^[^/]+\//, "") : b.name;
+      const color = branchColor(baseName);
+      const ts = refMru.get(b.name) ?? 0;
+      const prev = map.get(color);
+      if (prev === undefined || ts > prev) map.set(color, ts);
+    }
+    return map;
+  }, [branches, refMru]);
 
   // Pre-compute HEAD row info to avoid O(n) findIndex inside draw() on every frame
   const headInfo = useMemo(() => {
@@ -892,7 +910,13 @@ export function CommitGraphCanvas({
       });
     }
     ctx.globalAlpha = 0.7;
-    for (const [color, segs] of edgesByColor) {
+    // Sort by MRU ascending so the most recently updated branch's color paints
+    // last (i.e. on top of older branches). Unknown colors (lane fallbacks) get
+    // 0 and draw underneath.
+    const sortedColors = Array.from(edgesByColor.entries()).sort(
+      (a, b) => (colorMru.get(a[0]) ?? 0) - (colorMru.get(b[0]) ?? 0),
+    );
+    for (const [color, segs] of sortedColors) {
       ctx.strokeStyle = color;
       ctx.beginPath();
       for (const s of segs) {
@@ -1229,7 +1253,7 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, textOffset, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
+  }, [commits, edges, headInfo, selectedRowIdx, textOffset, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);

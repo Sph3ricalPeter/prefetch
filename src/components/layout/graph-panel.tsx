@@ -83,6 +83,7 @@ export function GraphPanel() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const stashes = useRepoStore((s) => s.stashes);
   const branches = useRepoStore((s) => s.branches);
+  const refMru = useRepoStore((s) => s.refMru);
   const tags = useRepoStore((s) => s.tags);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
   const headCommitId = useRepoStore((s) => s.headCommitId);
@@ -501,6 +502,7 @@ export function GraphPanel() {
                   setStashContextMenu({ index, x, y });
                 }}
                 columnWidths={effectiveWidths}
+                refMru={refMru}
               />
             </div>
           </div>
