@@ -20,7 +20,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
-import { buildFileTree, collectFilePaths } from "@/lib/file-tree";
+import { buildFileTree, collectFilePaths, flattenTreeFiles } from "@/lib/file-tree";
 import type { FileTreeNode } from "@/lib/file-tree";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
@@ -147,12 +147,12 @@ export function FileList() {
             });
             return;
           }
-        } else {
-          // Shift+click in a different section: start fresh anchor here
-          setMultiSelected(new Set([file.path]));
-          lastClickedRef.current = { path: file.path, section };
-          return;
         }
+        // Cross-section shift-click, or anchor lost after status refresh —
+        // start a fresh selection at the clicked file.
+        setMultiSelected(new Set([file.path]));
+        lastClickedRef.current = { path: file.path, section };
+        return;
       }
 
       // Plain click: clear multi-select, open diff
@@ -187,6 +187,15 @@ export function FileList() {
   const conflicted = fileStatuses.filter((f) => f.is_conflicted);
   const staged = fileStatuses.filter((f) => f.is_staged && !f.is_conflicted);
   const unstaged = fileStatuses.filter((f) => !f.is_staged && !f.is_conflicted);
+
+  const unstagedTreeOrder = useMemo(
+    () => flattenTreeFiles(buildFileTree(unstaged)),
+    [unstaged],
+  );
+  const stagedTreeOrder = useMemo(
+    () => flattenTreeFiles(buildFileTree(staged)),
+    [staged],
+  );
 
   if (fileStatuses.length === 0) {
     return (
@@ -273,7 +282,7 @@ export function FileList() {
             selectedFilePath={selectedFilePath && !selectedFileStaged ? selectedFilePath : null}
             multiSelected={multiSelected}
             isLfsFile={isLfsFile}
-            onSelect={(path, e) => handleFileClick(e, unstaged.find((f) => f.path === path)!, false, unstaged)}
+            onSelect={(path, e) => handleFileClick(e, unstaged.find((f) => f.path === path)!, false, unstagedTreeOrder)}
             onToggle={(path) => wrappedStage([path])}
             toggleIcon={<Plus className="h-3 w-3" />}
             toggleTitle="Stage"
@@ -328,7 +337,7 @@ export function FileList() {
             selectedFilePath={selectedFilePath && selectedFileStaged ? selectedFilePath : null}
             multiSelected={multiSelected}
             isLfsFile={isLfsFile}
-            onSelect={(path, e) => handleFileClick(e, staged.find((f) => f.path === path)!, true, staged)}
+            onSelect={(path, e) => handleFileClick(e, staged.find((f) => f.path === path)!, true, stagedTreeOrder)}
             onToggle={(path) => wrappedUnstage([path])}
             toggleIcon={<Minus className="h-3 w-3" />}
             toggleTitle="Unstage"

@@ -183,6 +183,13 @@ export async function getFileBlob(
   return tracedInvoke<string[]>("get_file_blob", { filePath, rev });
 }
 
+export async function getBinaryBlobBase64(
+  filePath: string,
+  rev: string | null,
+): Promise<string | null> {
+  return tracedInvoke<string | null>("get_binary_blob_base64", { filePath, rev });
+}
+
 export async function getTags(): Promise<TagInfo[]> {
   return tracedInvoke<TagInfo[]>("get_tags");
 }

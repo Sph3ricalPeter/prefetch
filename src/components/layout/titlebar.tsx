@@ -107,15 +107,11 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
       {/* Spacer — pushes window controls to the right */}
       <div className="flex-1 min-w-2" data-tauri-drag-region />
 
-      {/* Center: Action buttons — absolutely centered in the titlebar so they
-         stay at the true midpoint regardless of left/right content widths */}
-      {!settingsOpen && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="pointer-events-auto">
-            <TitlebarActionsGroup />
-          </div>
-        </div>
-      )}
+      {/* Action buttons — renders in one of three modes:
+           1. Centered (absolute) when there's room
+           2. Right-aligned (in flow) when centered would overlap left content
+           3. Collapsed dropdown when right-aligned doesn't fit either */}
+      {!settingsOpen && <TitlebarActionsGroup />}
 
       {/* Right: Update indicator + Window controls */}
       <div className={`flex items-center gap-0.5 ${IS_MAC ? "pr-2.5" : "pr-0"}`}>
@@ -232,7 +228,7 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        className="flex h-7 items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
       >
         <span className="font-medium text-foreground">{repoName}</span>
         {currentBranch ? (
@@ -338,9 +334,13 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
   );
 }
 
-/** Change 5: Responsive wrapper — shows inline buttons or collapsed dropdown */
+/** Three layout modes for the action buttons:
+ *  - "center": absolutely centered in the titlebar (default, wide windows)
+ *  - "right":  pushed right in the normal flow (when centered would overlap left content)
+ *  - "dropdown": collapsed into a ⋯ dropdown (when right-aligned doesn't fit either)  */
+type ActionLayout = "center" | "right" | "dropdown";
+
 function TitlebarActionsGroup() {
-  // All hooks MUST be called before any early returns (React Rules of Hooks)
   const repoPath = useRepoStore((s) => s.repoPath);
   const isLoading = useRepoStore((s) => s.isLoading);
   const undoInfo = useRepoStore((s) => s.undoInfo);
@@ -354,39 +354,76 @@ function TitlebarActionsGroup() {
   const pullAction = useRepoStore((s) => s.pull);
   const pushAction = useRepoStore((s) => s.push);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const buttonsRef = useRef<HTMLDivElement>(null);
+  const buttonsWidthRef = useRef(0);
+  const [layout, setLayout] = useState<ActionLayout>("center");
   const [showBranchInput, setShowBranchInput] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    // Observe the full titlebar width to decide collapse.
-    // Brand ~130px, repo switcher ~200px, window controls ~130px (0 on macOS),
-    // action buttons need ~560px → collapse below ~960px total.
-    const titlebar = container.closest("[data-tauri-drag-region]") as HTMLElement;
+    const buttons = buttonsRef.current;
+    if (!buttons) return;
+    const titlebar = buttons.closest("[data-tauri-drag-region]") as HTMLElement | null;
     if (!titlebar) return;
-    const observer = new ResizeObserver(() => {
-      const threshold = IS_MAC ? 830 : 960;
-      setCollapsed(titlebar.clientWidth < threshold);
-    });
+
+    const check = () => {
+      const titlebarW = titlebar.clientWidth;
+
+      // Measure left content (brand + repo switcher) and right content (window controls).
+      // Left content = all children before the spacer (flex-1).
+      // Right content = last child (window controls div).
+      let leftEdge = 0;
+      let rightWidth = 0;
+      const children = titlebar.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i] as HTMLElement;
+        // The spacer div has flex-1 and data-tauri-drag-region — detect it by flex style
+        if (child.style.minWidth || child.classList.contains("min-w-2")) {
+          // Everything before this is "left content"
+          leftEdge = child.getBoundingClientRect().left - titlebar.getBoundingClientRect().left;
+          break;
+        }
+      }
+      // Right controls = last child's width
+      const lastChild = children[children.length - 1] as HTMLElement;
+      rightWidth = lastChild.getBoundingClientRect().width;
+
+      // Record the inline buttons' natural width when they're visible
+      if (layout !== "dropdown") {
+        const inner = buttons.querySelector("[data-action-buttons]") as HTMLElement | null;
+        if (inner) buttonsWidthRef.current = inner.scrollWidth;
+      }
+      const bw = buttonsWidthRef.current > 0 ? buttonsWidthRef.current : 500;
+
+      // Would centered buttons overlap left content?
+      // Centered left edge = (titlebarW - bw) / 2
+      const centeredLeft = (titlebarW - bw) / 2;
+      const centeredFits = centeredLeft >= leftEdge + 8; // 8px gap
+
+      // Would right-aligned buttons fit?
+      // Available = titlebarW - leftEdge - rightWidth - gaps
+      const availableRight = titlebarW - leftEdge - rightWidth - 32;
+      const rightFits = bw <= availableRight;
+
+      if (centeredFits) {
+        setLayout("center");
+      } else if (rightFits) {
+        setLayout("right");
+      } else {
+        setLayout("dropdown");
+      }
+    };
+
+    const observer = new ResizeObserver(check);
     observer.observe(titlebar);
+    check();
     return () => observer.disconnect();
-  }, []);
+  }, [layout]);
 
   if (!repoPath) return null;
 
-  if (collapsed) {
-    return (
-      <div ref={containerRef}>
-        <CollapsedActionsDropdown />
-      </div>
-    );
-  }
-
-  return (
-    <div ref={containerRef} className="flex items-center gap-0.5">
+  const actionButtons = (
+    <div data-action-buttons className="flex items-center gap-0.5">
       {/* Undo */}
       {undoInfo?.can_undo && (
         <>
@@ -470,6 +507,33 @@ function TitlebarActionsGroup() {
       )}
     </div>
   );
+
+  if (layout === "center") {
+    // Absolutely centered in the titlebar — the original design
+    return (
+      <div ref={buttonsRef} className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="pointer-events-auto">
+          {actionButtons}
+        </div>
+      </div>
+    );
+  }
+
+  if (layout === "right") {
+    // Pushed right in the normal flex flow (spacer pushes us here)
+    return (
+      <div ref={buttonsRef} className="shrink-0 mr-2">
+        {actionButtons}
+      </div>
+    );
+  }
+
+  // Dropdown mode
+  return (
+    <div ref={buttonsRef} className="shrink-0 mr-2">
+      <CollapsedActionsDropdown />
+    </div>
+  );
 }
 
 /** Change 5: Collapsed dropdown for all actions when window is narrow */
@@ -509,7 +573,7 @@ function CollapsedActionsDropdown() {
         <TooltipTrigger asChild>
           <button
             onClick={() => setIsOpen(!isOpen)}
-            className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            className="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <MoreHorizontal className="h-3.5 w-3.5" />
             <ChevronDown className="h-3 w-3" />
@@ -657,7 +721,7 @@ function TitlebarActionButton({
         <button
           onClick={onClick}
           disabled={disabled}
-          className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {icon}
           <span>{label}</span>
