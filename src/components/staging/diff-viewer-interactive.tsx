@@ -851,10 +851,8 @@ function InteractiveContextLine({ line, tokens, wrapClass }: InteractiveContextL
       </span>
       <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />
       <pre className={`flex-1 px-2 ${wrapClass}`}>
-        {tokens && tokens.length > 0 ? (
-          tokens.map((token, i) => (
-            <span key={i} style={{ color: token.color }}>{token.content}</span>
-          ))
+        {tokens ? (
+          <HighlightedLineContent tokens={tokens} line={line} />
         ) : (
           <span className="text-muted-foreground">{line.content || " "}</span>
         )}
@@ -885,10 +883,8 @@ function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: Int
               </span>
               <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
               <pre className={`flex-1 px-1 ${wrapClass}`}>
-                {tokens && tokens.length > 0 ? (
-                  tokens.map((token, ti) => (
-                    <span key={ti} style={{ color: token.color }}>{token.content}</span>
-                  ))
+                {tokens ? (
+                  <HighlightedLineContent tokens={tokens} line={line} />
                 ) : (
                   <span className="text-muted-foreground">{line.content || " "}</span>
                 )}
@@ -901,10 +897,8 @@ function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: Int
               </span>
               <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
               <pre className={`flex-1 px-1 ${wrapClass}`}>
-                {tokens && tokens.length > 0 ? (
-                  tokens.map((token, ti) => (
-                    <span key={ti} style={{ color: token.color }}>{token.content}</span>
-                  ))
+                {tokens ? (
+                  <HighlightedLineContent tokens={tokens} line={line} />
                 ) : (
                   <span className="text-muted-foreground">{line.content || " "}</span>
                 )}

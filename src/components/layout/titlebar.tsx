@@ -88,14 +88,16 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
         data-tauri-drag-region
       >
         <PrefetchLogo className="h-4 w-4 shrink-0" />
-        <span
-          className="text-xs font-semibold tracking-tight text-foreground"
-          data-tauri-drag-region
-        >
-          Prefetch
-        </span>
-        <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-caption font-medium uppercase tracking-wider text-brand">
-          Alpha{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
+        {!IS_MAC && (
+          <span
+            className="text-xs font-semibold tracking-tight text-foreground"
+            data-tauri-drag-region
+          >
+            Prefetch
+          </span>
+        )}
+        <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-caption font-medium tracking-wider text-brand">
+          α{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
         </span>
       </div>
 
@@ -225,24 +227,24 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
   const otherRepos = recentRepos.filter((r) => r.path !== repoPath);
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative min-w-0" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex h-7 items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        className="flex h-7 min-w-0 max-w-72 items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
       >
-        <span className="font-medium text-foreground">{repoName}</span>
+        <span className="truncate font-medium text-foreground">{repoName}</span>
         {currentBranch ? (
           <>
-            <span className="text-faint">/</span>
-            <span className="flex items-center gap-1">
+            <span className="shrink-0 text-faint">/</span>
+            <span className="flex shrink-0 items-center gap-1">
               <GitBranch className="h-3 w-3" />
-              {currentBranch}
+              <span className="truncate max-w-32">{currentBranch}</span>
             </span>
           </>
         ) : headCommitId ? (
           <>
-            <span className="text-faint">/</span>
-            <span className="flex items-center gap-1 text-muted-foreground">
+            <span className="shrink-0 text-faint">/</span>
+            <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
               ~HEAD
               <span className="font-mono text-faint">{headCommitId.slice(0, 7)}</span>
             </span>
@@ -256,7 +258,7 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
             </span>
           </>
         )}
-        <ChevronDown className="h-3 w-3 text-faint" />
+        <ChevronDown className="h-3 w-3 shrink-0 text-faint" />
       </button>
 
       {isOpen && (
