@@ -259,7 +259,9 @@ function drawTagIcon(
   return w + 5;
 }
 
-/** Draw a rounded rect pill and return its width */
+/** Draw a rounded rect pill and return its width. Pass `maxContentWidth` to
+ *  truncate the text label so the pill fits a bounded area. Returns 0 if even
+ *  the icon + ellipsis don't fit. */
 function drawPill(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -268,10 +270,17 @@ function drawPill(
   bgColor: string,
   textColor: string,
   drawIcon?: (ctx: CanvasRenderingContext2D, ix: number, iy: number, color: string) => number,
+  maxContentWidth?: number,
 ): number {
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   const iconWidth = drawIcon ? drawIcon(ctx, 0, -1000, textColor) : 0; // dry-run to measure width
-  const textWidth = ctx.measureText(text).width;
+  let displayText = text;
+  if (maxContentWidth !== undefined) {
+    const availTextW = maxContentWidth - LABEL_PAD_X * 2 - iconWidth;
+    if (availTextW <= 0) return 0;
+    displayText = truncateText(ctx, text, availTextW);
+  }
+  const textWidth = ctx.measureText(displayText).width;
   const pillWidth = textWidth + iconWidth + LABEL_PAD_X * 2;
   const pillY = y - LABEL_HEIGHT / 2;
 
@@ -288,7 +297,7 @@ function drawPill(
   }
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   ctx.fillStyle = textColor;
-  ctx.fillText(text, x + LABEL_PAD_X + iconWidth, y);
+  ctx.fillText(displayText, x + LABEL_PAD_X + iconWidth, y);
 
   return pillWidth;
 }
@@ -348,6 +357,28 @@ function drawRemoteIcon(
   ctx.stroke();
   ctx.restore();
   return iconW + 3;
+}
+
+/** Draw a small checkmark icon — used to mark the current (HEAD) branch */
+function drawCheckIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+): number {
+  const w = 10;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.7;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(x + 1, y);
+  ctx.lineTo(x + 4, y + 3);
+  ctx.lineTo(x + w - 1, y - 4);
+  ctx.stroke();
+  ctx.restore();
+  return w + 4; // icon + trailing gap
 }
 
 /** Draw a small file-edit icon for WIP row */
@@ -417,12 +448,22 @@ function groupBranches(branches: BranchInfo[]): MergedBranchGroup[] {
   });
 }
 
-/** Draw a merged branch pill with local/remote indicator icons */
+// Icon widths used during pill layout — kept as constants so dry-run measurement
+// matches the actual draw.
+const CHECK_ICON_W = 14;   // 10px glyph + 4px trailing gap
+const LOCAL_ICON_W = 15;   // 11px glyph + 4px leading gap
+const REMOTE_ICON_W = 12;  // 9px glyph + 3px leading gap
+
+/** Layout: [check?] [name] [local?] [remote?]
+ *  HEAD branch gets a leading checkmark; local / remote indicators sit on the
+ *  right of the name (issue #38). Pass `maxContentWidth` to truncate the name
+ *  so the pill fits a bounded area (e.g. the badge column). */
 function drawMergedBranchPill(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   group: MergedBranchGroup,
+  maxContentWidth?: number,
 ): number {
   const bColor = branchColor(group.baseName);
   const dimColor = branchColorDim(group.baseName);
@@ -436,39 +477,46 @@ function drawMergedBranchPill(
         .padStart(2, "0")}`;
   const textCol = isRemoteOnly ? dimColor : bColor;
 
-  // Measure text
+  const checkW = group.isHead ? CHECK_ICON_W : 0;
+  let trailingIconsW = 0;
+  if (group.local) trailingIconsW += LOCAL_ICON_W;
+  if (group.remote) trailingIconsW += REMOTE_ICON_W;
+
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
-  const textWidth = ctx.measureText(group.baseName).width;
+  let displayName = group.baseName;
+  if (maxContentWidth !== undefined) {
+    const availTextW =
+      maxContentWidth - LABEL_PAD_X * 2 - checkW - trailingIconsW;
+    if (availTextW <= 0) return 0;
+    displayName = truncateText(ctx, group.baseName, availTextW);
+  }
+  const textWidth = ctx.measureText(displayName).width;
 
-  // Calculate icon widths — Change 2: was 11/10
-  let iconsWidth = 0;
-  if (group.local) iconsWidth += 15; // 11px icon + 4px gap before remote
-  if (group.remote) iconsWidth += 12;
-
-  const pillWidth = LABEL_PAD_X + iconsWidth + textWidth + LABEL_PAD_X;
+  const pillWidth =
+    LABEL_PAD_X + checkW + textWidth + trailingIconsW + LABEL_PAD_X;
   const pillY = y - LABEL_HEIGHT / 2;
 
-  // Background
   ctx.fillStyle = bg;
   ctx.beginPath();
   ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, LABEL_RADIUS);
   ctx.fill();
 
-  // Icons — Change 2: advance widths updated
-  let iconX = x + LABEL_PAD_X;
+  let cursorX = x + LABEL_PAD_X;
+  if (group.isHead) {
+    drawCheckIcon(ctx, cursorX, y, textCol);
+    cursorX += CHECK_ICON_W;
+  }
+  ctx.fillStyle = textCol;
+  ctx.fillText(displayName, cursorX, y);
+  cursorX += textWidth;
   if (group.local) {
-    drawLocalIcon(ctx, iconX, y, textCol);
-    iconX += 15; // 11px icon + 4px gap
+    drawLocalIcon(ctx, cursorX, y, textCol);
+    cursorX += LOCAL_ICON_W;
   }
   if (group.remote) {
-    drawRemoteIcon(ctx, iconX, y, textCol);
-    iconX += 12;
+    drawRemoteIcon(ctx, cursorX, y, textCol);
+    cursorX += REMOTE_ICON_W;
   }
-
-  // Text
-  ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
-  ctx.fillStyle = textCol;
-  ctx.fillText(group.baseName, x + LABEL_PAD_X + iconsWidth, y);
 
   return pillWidth;
 }
@@ -1077,101 +1125,141 @@ export function CommitGraphCanvas({
         avatarHitAreas.push({ cx: x, cy: y, row: visRow, commitIdx: commitIdx });
       }
 
-      // --- Labels (branches + tags + stashes) ---
-      let labelX = textOffset;
+      // --- Badge column (left of graph): primary ref + optional +N indicator ---
       const commitBranches = branchMap.get(commit.id) ?? [];
       const commitTags = tagMap.get(commit.id) ?? [];
       const commitStashes = stashMap.get(commit.id) ?? [];
-      const hasLabels = commitBranches.length > 0 || commitTags.length > 0 || commitStashes.length > 0;
-      const maxLabelArea = 260; // Change 2: was 220
+      const branchGroups = groupBranches(commitBranches);
 
-      if (hasLabels) {
-        let usedWidth = 0;
-        let labelCount = 0;
-        const branchGroups = groupBranches(commitBranches);
-        const totalLabels = branchGroups.length + commitTags.length + commitStashes.length;
+      // Unified, MRU-sorted list of refs at this commit. Branches sort with HEAD
+      // already promoted by groupBranches; refMru breaks remaining ties.
+      const badgeItems: Array<
+        | { kind: "branch"; group: MergedBranchGroup; refName: string; mru: number }
+        | { kind: "tag"; tag: TagInfo; refName: string; mru: number }
+        | { kind: "stash"; stash: StashInfo; refName: string; mru: number }
+      > = [];
+      for (const g of branchGroups) {
+        const refName = g.local?.name ?? g.remote?.name ?? g.baseName;
+        badgeItems.push({ kind: "branch", group: g, refName, mru: refMru.get(refName) ?? 0 });
+      }
+      for (const t of commitTags) {
+        badgeItems.push({ kind: "tag", tag: t, refName: t.name, mru: refMru.get(t.name) ?? 0 });
+      }
+      for (const s of commitStashes) {
+        badgeItems.push({
+          kind: "stash",
+          stash: s,
+          refName: `stash@{${s.index}}`,
+          mru: 0,
+        });
+      }
+      // HEAD branch always primary; otherwise MRU desc.
+      badgeItems.sort((a, b) => {
+        const aHead = a.kind === "branch" && a.group.isHead ? 1 : 0;
+        const bHead = b.kind === "branch" && b.group.isHead ? 1 : 0;
+        if (aHead !== bHead) return bHead - aHead;
+        return b.mru - a.mru;
+      });
 
-        // Draw merged branch pills
-        for (const group of branchGroups) {
-          if (usedWidth > maxLabelArea - 40) {
-            const remaining = totalLabels - labelCount;
-            if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", graphColors.dim);
-            }
-            break;
-          }
-          const pillX = labelX + usedWidth;
-          const w = drawMergedBranchPill(ctx, pillX, y, group);
-          // Store hit area -- prefer local branch name for checkout
-          hitAreas.push({
-            x: pillX,
-            y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
-            width: w,
-            height: LABEL_HEIGHT,
-            branchName: group.local?.name ?? group.remote!.name,
-            row: visRow,
-            badgeType: "branch",
-          });
-          usedWidth += w + LABEL_GAP;
-          labelCount++;
-        }
+      if (badgeItems.length > 0) {
+        const primary = badgeItems[0];
+        const extra = badgeItems.length - 1;
+        // Left-aligned inside the badge column with small left inset; reserve a
+        // small right gap before the link starts.
+        const badgeColLeft = SCROLLBAR_PAD + 6;
+        const badgeColRight = columnWidths.badge - 6;
+        const totalAvail = Math.max(0, badgeColRight - badgeColLeft);
 
-        // Draw tag pills
-        for (const tag of commitTags) {
-          if (usedWidth > maxLabelArea - 40) {
-            const remaining = totalLabels - labelCount;
-            if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", graphColors.dim);
-            }
-            break;
-          }
-          const tagPillX = labelX + usedWidth;
-          const w = drawPill(ctx, tagPillX, y, tag.name, "rgba(255,255,255,0.08)", graphColors.dim, drawTagIcon);
-          hitAreas.push({
-            x: tagPillX,
-            y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
-            width: w,
-            height: LABEL_HEIGHT,
-            branchName: tag.name, // reuse branchName field -- checkout works for tags too
-            row: visRow,
-            badgeType: "tag",
-          });
-          usedWidth += w + LABEL_GAP;
-          labelCount++;
-        }
-
-        // Draw stash pills
-        for (const stash of commitStashes) {
-          if (usedWidth > maxLabelArea - 40) {
-            const remaining = totalLabels - labelCount;
-            if (remaining > 0) {
-              drawPill(ctx, labelX + usedWidth + LABEL_GAP, y, `+${remaining}`, "rgba(255,255,255,0.1)", graphColors.dim);
-            }
-            break;
-          }
-          const stashPillX = labelX + usedWidth;
-          // Truncate stash message for the pill
+        // Measure +N chip
+        let nChipW = 0;
+        if (extra > 0) {
           ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
-          const stashLabel = truncateText(ctx, stash.message, 120);
-          const w = drawPill(ctx, stashPillX, y, stashLabel, "rgba(255,255,255,0.08)", graphColors.dim, drawStashIcon);
-          hitAreas.push({
-            x: stashPillX,
-            y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
-            width: w,
-            height: LABEL_HEIGHT,
-            branchName: `stash@{${stash.index}}`,
-            row: visRow,
-            stashIndex: stash.index,
-            badgeType: "stash",
-          });
-          usedWidth += w + LABEL_GAP;
-          labelCount++;
+          nChipW = ctx.measureText(`+${extra}`).width + LABEL_PAD_X * 2;
+        }
+        const gapBeforeChip = extra > 0 ? LABEL_GAP : 0;
+        const maxPrimaryW = Math.max(0, totalAvail - nChipW - gapBeforeChip);
+
+        // Draw primary pill
+        let primaryW = 0;
+        let primaryColor = graphColors.dim;
+        if (maxPrimaryW > 20) {
+          if (primary.kind === "branch") {
+            primaryW = drawMergedBranchPill(ctx, badgeColLeft, y, primary.group, maxPrimaryW);
+            primaryColor = branchColor(primary.group.baseName);
+          } else if (primary.kind === "tag") {
+            primaryW = drawPill(
+              ctx,
+              badgeColLeft,
+              y,
+              primary.tag.name,
+              "rgba(255,255,255,0.08)",
+              graphColors.dim,
+              drawTagIcon,
+              maxPrimaryW,
+            );
+          } else {
+            primaryW = drawPill(
+              ctx,
+              badgeColLeft,
+              y,
+              primary.stash.message,
+              "rgba(255,255,255,0.08)",
+              graphColors.dim,
+              drawStashIcon,
+              maxPrimaryW,
+            );
+          }
         }
 
-        labelX += usedWidth + 8;
+        // Hit area for the primary badge — preserves single-click select-stash
+        // and double-click checkout behavior at the new badge location.
+        if (primaryW > 0) {
+          hitAreas.push({
+            x: badgeColLeft,
+            y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
+            width: primaryW,
+            height: LABEL_HEIGHT,
+            branchName: primary.refName,
+            row: visRow,
+            stashIndex: primary.kind === "stash" ? primary.stash.index : undefined,
+            badgeType: primary.kind,
+          });
+        }
+
+        // +N chip (non-interactive in this pass — hover dropdown lands in #39)
+        if (extra > 0 && primaryW > 0) {
+          drawPill(
+            ctx,
+            badgeColLeft + primaryW + LABEL_GAP,
+            y,
+            `+${extra}`,
+            "rgba(255,255,255,0.1)",
+            graphColors.dim,
+          );
+        }
+
+        // Link from right edge of badge content to the commit node, colored
+        // by the primary badge so lineage is visible.
+        if (primaryW > 0) {
+          const linkStartX =
+            badgeColLeft + primaryW + (extra > 0 ? LABEL_GAP + nChipW : 0) + 2;
+          const linkEndX = x - NODE_RADIUS - 2;
+          if (linkEndX > linkStartX + 1) {
+            ctx.save();
+            ctx.strokeStyle = primaryColor;
+            ctx.globalAlpha = 0.7;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(linkStartX, y);
+            ctx.lineTo(linkEndX, y);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
       }
 
-      // Short SHA
+      // Short SHA + message start at the right edge of the graph column.
+      const labelX = textOffset;
       ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
       ctx.fillStyle = graphColors.dim;
       ctx.fillText(commit.short_id, labelX, y);
@@ -1253,7 +1341,7 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, textOffset, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
+  }, [commits, edges, headInfo, selectedRowIdx, textOffset, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths.badge, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
