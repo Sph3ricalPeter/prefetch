@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
@@ -11,7 +11,12 @@ import { getUiState, setUiState } from "@/lib/database";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
-import { CommitGraphCanvas } from "@/components/graph/commit-graph-canvas";
+import {
+  CommitGraphCanvas,
+  LANE_WIDTH,
+  type GraphColumnWidths,
+} from "@/components/graph/commit-graph-canvas";
+import { GraphHeader } from "@/components/graph/graph-header";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
@@ -22,6 +27,49 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+
+// ── Graph column layout (badge / graph / message / date) ──────────────────
+const COL_BADGE_DEFAULT = 190;
+const COL_BADGE_MIN = 120;
+const COL_BADGE_MAX = 420;
+const COL_GRAPH_MIN = 80;
+const COL_GRAPH_MAX = 800;
+const COL_DATE_WIDTH = 80;
+const COL_GRAPH_PAD_RIGHT = 24; // breathing room past the last lane
+
+/** Default graph column width derived from the topology's lane count. */
+function defaultGraphWidth(totalLanes: number): number {
+  return Math.max(
+    COL_GRAPH_MIN,
+    Math.min(COL_GRAPH_MAX, totalLanes * LANE_WIDTH + COL_GRAPH_PAD_RIGHT),
+  );
+}
+
+/** Minimum allowed graph column width — must fit every lane in the current topology. */
+function minGraphWidth(totalLanes: number): number {
+  return Math.max(COL_GRAPH_MIN, totalLanes * LANE_WIDTH + 8);
+}
+
+/** Parse a persisted widths blob; falls back to defaults on any malformed input. */
+function parseStoredWidths(
+  raw: string | null,
+  totalLanes: number,
+): GraphColumnWidths | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { badge?: unknown; graph?: unknown };
+    const badge = typeof parsed.badge === "number" ? parsed.badge : NaN;
+    const graph = typeof parsed.graph === "number" ? parsed.graph : NaN;
+    if (!Number.isFinite(badge) || !Number.isFinite(graph)) return null;
+    return {
+      badge: Math.max(COL_BADGE_MIN, Math.min(COL_BADGE_MAX, badge)),
+      graph: Math.max(minGraphWidth(totalLanes), Math.min(COL_GRAPH_MAX, graph)),
+      date: COL_DATE_WIDTH,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function GraphPanel() {
   const repoPath = useRepoStore((s) => s.repoPath);
@@ -144,6 +192,72 @@ export function GraphPanel() {
 
   const recentRepos = useRepoStore((s) => s.recentRepos);
   const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
+
+  // ── Graph column widths ───────────────────────────────────────────────
+  // Stored per-repo as JSON under ui_state key `graph_layout:{path}`.
+  // Defaults: badge=190, graph derived from totalLanes, date=80.
+  const [columnWidths, setColumnWidths] = useState<GraphColumnWidths>({
+    badge: COL_BADGE_DEFAULT,
+    graph: defaultGraphWidth(totalLanes),
+    date: COL_DATE_WIDTH,
+  });
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const [graphContainerWidth, setGraphContainerWidth] = useState<number>(0);
+
+  // Restore persisted widths when the repo changes. If nothing's saved, derive
+  // the graph column from the current lane count so the default fits.
+  useEffect(() => {
+    if (!repoPath) return;
+    let cancelled = false;
+    getUiState(`graph_layout:${repoPath}`)
+      .then((raw) => {
+        if (cancelled) return;
+        const stored = parseStoredWidths(raw, totalLanes);
+        setColumnWidths(
+          stored ?? {
+            badge: COL_BADGE_DEFAULT,
+            graph: defaultGraphWidth(totalLanes),
+            date: COL_DATE_WIDTH,
+          },
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setColumnWidths({
+            badge: COL_BADGE_DEFAULT,
+            graph: defaultGraphWidth(totalLanes),
+            date: COL_DATE_WIDTH,
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the repo changes — totalLanes shifts during fetches and
+    // we don't want to clobber a width the user has manually set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoPath]);
+
+  // Effective widths fed to header + canvas. The graph column is clamped up if the
+  // topology grew wider than the stored value (e.g. after a fetch). Derived rather
+  // than synced via setState-in-effect to keep the user's stored preference intact.
+  const effectiveWidths: GraphColumnWidths = {
+    badge: columnWidths.badge,
+    graph: Math.max(columnWidths.graph, minGraphWidth(totalLanes)),
+    date: columnWidths.date,
+  };
+
+  // Track the canvas container's width so the date column can be right-anchored.
+  useEffect(() => {
+    const el = graphContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      setGraphContainerWidth(el.clientWidth);
+    });
+    observer.observe(el);
+    setGraphContainerWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
 
   // Auto-reopen checkbox state (welcome screen only)
   const [autoReopen, setAutoReopen] = useState(false);
@@ -342,31 +456,54 @@ export function GraphPanel() {
             />
           </div>
         ) : (
-          <CommitGraphCanvas
-            commits={commits}
-            edges={edges}
-            totalLanes={totalLanes}
-            selectedCommitId={selectedCommitId}
-            headCommitId={headCommitId}
-            onSelectCommit={selectCommit}
-            onCheckoutBranch={checkout}
-            branches={branches}
-            tags={tags}
-            stashes={stashes}
-            hasUncommittedChanges={fileStatuses.length > 0}
-            fileStatusCount={fileStatuses.length}
-            isWipSelected={selectedCommitId === null && selectedStashIndex === null}
-            onClickWip={() => { clearSelection(); loadStatus(); }}
-            onSelectStash={(index) => selectStash(index)}
-            onCommitContextMenu={(commitId, x, y) => {
-              if (isLoading) return;
-              setCommitContextMenu({ commitId, x, y });
-            }}
-            onStashContextMenu={(index, x, y) => {
-              if (isLoading) return;
-              setStashContextMenu({ index, x, y });
-            }}
-          />
+          <div ref={graphContainerRef} className="flex h-full flex-col">
+            <GraphHeader
+              widths={effectiveWidths}
+              containerWidth={graphContainerWidth}
+              badgeMin={COL_BADGE_MIN}
+              badgeMax={COL_BADGE_MAX}
+              graphMin={minGraphWidth(totalLanes)}
+              graphMax={COL_GRAPH_MAX}
+              onResize={setColumnWidths}
+              onResizeEnd={(w) => {
+                setColumnWidths(w);
+                if (repoPath) {
+                  setUiState(
+                    `graph_layout:${repoPath}`,
+                    JSON.stringify({ badge: w.badge, graph: w.graph }),
+                  ).catch(() => {});
+                }
+              }}
+            />
+            <div className="flex-1 min-h-0">
+              <CommitGraphCanvas
+                commits={commits}
+                edges={edges}
+                totalLanes={totalLanes}
+                selectedCommitId={selectedCommitId}
+                headCommitId={headCommitId}
+                onSelectCommit={selectCommit}
+                onCheckoutBranch={checkout}
+                branches={branches}
+                tags={tags}
+                stashes={stashes}
+                hasUncommittedChanges={fileStatuses.length > 0}
+                fileStatusCount={fileStatuses.length}
+                isWipSelected={selectedCommitId === null && selectedStashIndex === null}
+                onClickWip={() => { clearSelection(); loadStatus(); }}
+                onSelectStash={(index) => selectStash(index)}
+                onCommitContextMenu={(commitId, x, y) => {
+                  if (isLoading) return;
+                  setCommitContextMenu({ commitId, x, y });
+                }}
+                onStashContextMenu={(index, x, y) => {
+                  if (isLoading) return;
+                  setStashContextMenu({ index, x, y });
+                }}
+                columnWidths={effectiveWidths}
+              />
+            </div>
+          </div>
         )}
 
         {/* Loading overlay — blocks interaction during git ops or diff loading */}

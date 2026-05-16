@@ -10,13 +10,16 @@ import { gravatarUrl } from "@/lib/gravatar";
 import { searchUserAvatar } from "@/lib/commands";
 import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
 
-const ROW_HEIGHT = 32;
-const LANE_WIDTH = 20;
+export const ROW_HEIGHT = 32;
+export const LANE_WIDTH = 20;
 const NODE_RADIUS = 10;          // Change 4: was 8 (16px -> 20px diameter)
 const CURVE_RADIUS = 6;          // Constant corner radius for cross-lane edges (GitKraken-style)
-const SCROLLBAR_PAD = 6;         // matches scrollbar width for visual balance
-const GRAPH_PADDING_LEFT = 12 + SCROLLBAR_PAD; // left padding accounts for scrollbar parity
-const TEXT_GAP = 24;
+const SCROLLBAR_PAD = 6;         // visual breathing room for left edge
+// Inset between the right edge of the badge column and the first graph lane.
+// Small so node centers sit ~one node-radius into the graph column.
+const GRAPH_INSET_LEFT = SCROLLBAR_PAD;
+// Inset between the right edge of the graph column and the start of label / message text.
+const MESSAGE_INSET_LEFT = 16;
 const LABEL_HEIGHT = 20;         // Change 2: was 16
 const LABEL_PAD_X = 7;           // Change 2: was 5
 const LABEL_GAP = 3;
@@ -178,10 +181,6 @@ function authorColor(email: string): string {
   return hslToHex({ h, s: 55, l: 50 });
 }
 
-
-function laneX(lane: number): number {
-  return GRAPH_PADDING_LEFT + lane * LANE_WIDTH + LANE_WIDTH / 2;
-}
 
 // Change 3: Time-group classification for commit timestamps
 type TimeGroup = "Today" | "Yesterday" | "This week" | "Last week" | "This month" | "Last month" | "Older";
@@ -546,6 +545,13 @@ interface CanvasHoverInfo {
   row: number;
 }
 
+/** Column widths driving the badge | graph | message | date layout. */
+export interface GraphColumnWidths {
+  badge: number;
+  graph: number;
+  date: number;
+}
+
 interface CommitGraphCanvasProps {
   commits: CommitInfo[];
   edges: GraphEdge[];
@@ -564,6 +570,7 @@ interface CommitGraphCanvasProps {
   onSelectStash?: (index: number) => void;
   onCommitContextMenu?: (commitId: string, x: number, y: number) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
+  columnWidths: GraphColumnWidths;
 }
 
 export function CommitGraphCanvas({
@@ -584,6 +591,7 @@ export function CommitGraphCanvas({
   onSelectStash,
   onCommitContextMenu,
   onStashContextMenu,
+  columnWidths,
 }: CommitGraphCanvasProps) {
   const graphColors = useThemeStore((s) => s.appTheme.graph);
   const fontFamilyId = useThemeStore((s) => s.fontFamilyId);
@@ -602,7 +610,18 @@ export function CommitGraphCanvas({
 
   const hasWip = hasUncommittedChanges;
   const rowOffset = hasWip ? 1 : 0;
-  const textOffset = GRAPH_PADDING_LEFT + totalLanes * LANE_WIDTH + TEXT_GAP;
+  // Column-driven layout: graph lanes live inside the graph column, labels/SHA/message
+  // start at the right edge of the graph column. The badge column on the left is empty
+  // for now (filled by a later issue).
+  const graphLeft = columnWidths.badge + GRAPH_INSET_LEFT;
+  const textOffset = columnWidths.badge + columnWidths.graph + MESSAGE_INSET_LEFT;
+  // totalLanes is unused inside the canvas now (column widths drive layout) but the
+  // parent panel uses it to size the default graph column width and clamp the resize.
+  void totalLanes;
+  const laneX = useCallback(
+    (lane: number) => graphLeft + lane * LANE_WIDTH + LANE_WIDTH / 2,
+    [graphLeft],
+  );
   const totalRows = commits.length + rowOffset;
   const totalHeight = totalRows * ROW_HEIGHT + GRAPH_PADDING_TOP;
 
@@ -1210,7 +1229,7 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, textOffset, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
+  }, [commits, edges, headInfo, selectedRowIdx, textOffset, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
