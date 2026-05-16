@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback, useReducer } from "react";
+import { useState, useEffect, useCallback, useReducer, useRef } from "react";
+import { Columns2, SwatchBook } from "lucide-react";
 import { getBinaryBlobBase64 } from "@/lib/commands";
+import { useRepoStore } from "@/stores/repo-store";
 import type { DiffSource } from "@/hooks/use-expandable-context";
 
 interface ImageDiffViewerProps {
@@ -86,39 +88,150 @@ function loadImageState(base64: string, mime: string): Promise<ImageState> {
 
 const CHECKER_BG = "bg-[length:16px_16px] [background-image:linear-gradient(45deg,hsl(var(--muted))_25%,transparent_25%,transparent_75%,hsl(var(--muted))_75%),linear-gradient(45deg,hsl(var(--muted))_25%,transparent_25%,transparent_75%,hsl(var(--muted))_75%)] [background-position:0_0,8px_8px]";
 
+const IMG_CONSTRAINT = "block max-w-[calc(100cqw-2rem)] max-h-[calc(100cqh-1rem)]";
+
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 20;
+const ZOOM_STEP = 1.15;
+
+interface ZoomState {
+  scale: number;
+  tx: number;
+  ty: number;
+}
+
+const INITIAL_ZOOM: ZoomState = { scale: 1, tx: 0, ty: 0 };
+
+function useZoomAndPan(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  zoom: ZoomState,
+  onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>,
+) {
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const panStart = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  const rafId = useRef<number>(0);
+  const lastMouse = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const dx = e.clientX - rect.left - rect.width / 2;
+      const dy = e.clientY - rect.top - rect.height / 2;
+      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+      onZoomChange((prev) => {
+        const newScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, prev.scale * factor));
+        if (newScale === prev.scale) return prev;
+        if (newScale <= 1) return INITIAL_ZOOM;
+        const ratio = newScale / prev.scale;
+        return {
+          scale: newScale,
+          tx: dx * (1 - ratio) + prev.tx * ratio,
+          ty: dy * (1 - ratio) + prev.ty * ratio,
+        };
+      });
+    };
+
+    const onDown = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest("[data-swipe-handle]")) return;
+      const z = zoomRef.current;
+      if (z.scale <= 1) return;
+      e.preventDefault();
+      panStart.current = { x: e.clientX, y: e.clientY, tx: z.tx, ty: z.ty };
+    };
+
+    const applyPan = () => {
+      rafId.current = 0;
+      const ps = panStart.current;
+      if (!ps) return;
+      const { x, y } = lastMouse.current;
+      onZoomChange((prev) => ({
+        ...prev,
+        tx: ps.tx + (x - ps.x),
+        ty: ps.ty + (y - ps.y),
+      }));
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (!panStart.current) return;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      if (!rafId.current) {
+        rafId.current = requestAnimationFrame(applyPan);
+      }
+    };
+
+    const onUp = () => {
+      panStart.current = null;
+      if (rafId.current) {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = 0;
+      }
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("mousedown", onDown);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (rafId.current) cancelAnimationFrame(rafId.current);
+    };
+  }, [containerRef, onZoomChange]);
+}
+
 export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerProps) {
   const [state, dispatch] = useReducer(fetchReducer, { loading: true, oldImg: null, newImg: null });
-  const [viewMode, setViewMode] = useState<ViewMode>("side-by-side");
+  const viewMode = useRepoStore((s) => s.imageDiffViewMode);
+  const setImageDiffViewMode = useRepoStore((s) => s.setImageDiffViewMode);
   const [swipePos, setSwipePos] = useState(50);
-  const [dragging, setDragging] = useState(false);
+  const [zoom, setZoom] = useState<ZoomState>(INITIAL_ZOOM);
+
+  const handleSetViewMode = useCallback((mode: ViewMode) => {
+    setImageDiffViewMode(mode);
+    setZoom(INITIAL_ZOOM);
+  }, [setImageDiffViewMode]);
+
+  useEffect(() => {
+    setZoom(INITIAL_ZOOM);
+    setSwipePos(50);
+  }, [filePath]);
+
+  const sourceCommitId = source.commitId;
+  const sourceStashIndex = source.stashIndex;
 
   useEffect(() => {
     let cancelled = false;
-    const { oldRev, newRev } = resolveRevs(source, staged);
+    const { oldRev, newRev } = resolveRevs(
+      { commitId: sourceCommitId, stashIndex: sourceStashIndex },
+      staged,
+    );
     const mime = getMimeType(filePath);
 
     dispatch({ type: "start" });
 
     Promise.all([
-      getBinaryBlobBase64(filePath, oldRev).then((b64) =>
-        b64 ? loadImageState(b64, mime) : null,
-      ).catch(() => null),
-      getBinaryBlobBase64(filePath, newRev).then((b64) =>
-        b64 ? loadImageState(b64, mime) : null,
-      ).catch(() => null),
+      getBinaryBlobBase64(filePath, oldRev)
+        .then((b64) => (b64 ? loadImageState(b64, mime) : null))
+        .catch(() => null),
+      getBinaryBlobBase64(filePath, newRev)
+        .then((b64) => (b64 ? loadImageState(b64, mime) : null))
+        .catch(() => null),
     ]).then(([oldImg, newImg]) => {
       if (!cancelled) dispatch({ type: "done", oldImg, newImg });
     });
 
-    return () => { cancelled = true; };
-  }, [filePath, source, staged]);
-
-  const handleSwipeMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pct = ((e.clientX - rect.left) / rect.width) * 100;
-    setSwipePos(Math.max(0, Math.min(100, pct)));
-  }, [dragging]);
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath, sourceCommitId, sourceStashIndex, staged]);
 
   if (state.loading) {
     return (
@@ -138,39 +251,65 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 shrink-0 border-b border-border px-3 py-1.5">
-        <span className="text-xs text-muted-foreground mr-auto">Image Preview</span>
-        <div className="flex items-center rounded-md border border-border overflow-hidden text-caption">
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-card shrink-0">
+        <div className="w-0 overflow-hidden border border-transparent py-1 text-xs font-medium leading-normal shrink-0" aria-hidden>{"​"}</div>
+        <span className="truncate text-xs font-medium text-foreground min-w-0" title={filePath}>
+          {filePath}
+        </span>
+        <span className="w-px h-4 bg-border shrink-0" />
+
+        <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
           <button
-            className={`px-2 py-0.5 ${viewMode === "side-by-side" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setViewMode("side-by-side")}
+            onClick={() => handleSetViewMode("side-by-side")}
+            title="Side-by-side"
+            className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+              viewMode === "side-by-side"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
           >
-            Side by Side
+            <Columns2 className="w-3.5 h-3.5" />
+            <span>Side by Side</span>
           </button>
           {state.oldImg && state.newImg && (
             <button
-              className={`px-2 py-0.5 border-l border-border ${viewMode === "swipe" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              onClick={() => setViewMode("swipe")}
+              onClick={() => handleSetViewMode("swipe")}
+              title="Swipe overlay"
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+                viewMode === "swipe"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              Swipe
+              <SwatchBook className="w-3.5 h-3.5" />
+              <span>Swipe</span>
             </button>
           )}
         </div>
+
+        {zoom.scale > 1 && (
+          <div className="ml-auto flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+            <button
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setZoom(INITIAL_ZOOM)}
+            >
+              {Math.round(zoom.scale * 100)}% — Reset
+            </button>
+          </div>
+        )}
       </div>
 
-      <div className="flex-1 overflow-auto min-h-0">
+      <div className="flex-1 overflow-hidden min-h-0">
         {viewMode === "side-by-side" ? (
-          <SideBySide oldImg={state.oldImg} newImg={state.newImg} />
+          <SideBySide oldImg={state.oldImg} newImg={state.newImg} zoom={zoom} onZoomChange={setZoom} />
         ) : (
           <SwipeView
             oldImg={state.oldImg!}
             newImg={state.newImg!}
             swipePos={swipePos}
-            dragging={dragging}
-            onMouseDown={() => setDragging(true)}
-            onMouseUp={() => setDragging(false)}
-            onMouseLeave={() => setDragging(false)}
-            onMouseMove={handleSwipeMove}
+            onSwipePosChange={setSwipePos}
+            zoom={zoom}
+            onZoomChange={setZoom}
           />
         )}
       </div>
@@ -181,15 +320,32 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
 function ImageMeta({ label, img, accent }: { label: string; img: ImageState; accent?: "red" | "green" }) {
   const accentClass = accent === "red" ? "text-red-400" : accent === "green" ? "text-green-400" : "text-muted-foreground";
   return (
-    <div className="flex items-center gap-2 text-caption text-muted-foreground">
-      <span className={accentClass}>{label}</span>
-      <span>{img.width} × {img.height}</span>
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span className={`text-caption uppercase tracking-widest ${accentClass}`}>{label}</span>
+      <span>
+        {img.width} × {img.height}
+      </span>
       <span>{formatBytes(img.sizeBytes)}</span>
     </div>
   );
 }
 
-function ImagePanel({ img, label, accent }: { img: ImageState | null; label: string; accent?: "red" | "green" }) {
+function ImagePanel({
+  img,
+  label,
+  accent,
+  zoom,
+  onZoomChange,
+}: {
+  img: ImageState | null;
+  label: string;
+  accent?: "red" | "green";
+  zoom: ZoomState;
+  onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>;
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  useZoomAndPan(viewportRef, zoom, onZoomChange);
+
   if (!img) {
     const text = label === "Before" ? "File added" : "File deleted";
     return (
@@ -202,22 +358,50 @@ function ImagePanel({ img, label, accent }: { img: ImageState | null; label: str
     );
   }
 
+  const wrapperStyle: React.CSSProperties = {
+    transform: `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`,
+  };
+
   return (
-    <div className="flex-1 flex flex-col items-center gap-2 p-4 min-w-0">
-      <ImageMeta label={label} img={img} accent={accent} />
-      <div className={`rounded border border-border overflow-hidden ${CHECKER_BG}`}>
-        <img src={img.dataUri} alt={label} className="max-w-full max-h-[60vh] object-contain" />
+    <div className="flex-1 flex flex-col min-w-0">
+      <div className="px-3 py-1.5 border-b border-border shrink-0">
+        <ImageMeta label={label} img={img} accent={accent} />
+      </div>
+      <div
+        ref={viewportRef}
+        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden [container-type:size]"
+        style={{ cursor: zoom.scale > 1 ? "grab" : "default" }}
+        onDoubleClick={() => onZoomChange(INITIAL_ZOOM)}
+      >
+        <div className={`rounded border border-border ${CHECKER_BG}`} style={wrapperStyle}>
+          <img
+            src={img.dataUri}
+            alt={label}
+            className={`${IMG_CONSTRAINT} pointer-events-none`}
+            draggable={false}
+          />
+        </div>
       </div>
     </div>
   );
 }
 
-function SideBySide({ oldImg, newImg }: { oldImg: ImageState | null; newImg: ImageState | null }) {
+function SideBySide({
+  oldImg,
+  newImg,
+  zoom,
+  onZoomChange,
+}: {
+  oldImg: ImageState | null;
+  newImg: ImageState | null;
+  zoom: ZoomState;
+  onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>;
+}) {
   return (
     <div className="flex h-full gap-px">
-      <ImagePanel img={oldImg} label="Before" accent="red" />
+      <ImagePanel img={oldImg} label="Before" accent="red" zoom={zoom} onZoomChange={onZoomChange} />
       <div className="w-px shrink-0 bg-border" />
-      <ImagePanel img={newImg} label="After" accent="green" />
+      <ImagePanel img={newImg} label="After" accent="green" zoom={zoom} onZoomChange={onZoomChange} />
     </div>
   );
 }
@@ -226,43 +410,88 @@ interface SwipeViewProps {
   oldImg: ImageState;
   newImg: ImageState;
   swipePos: number;
-  dragging: boolean;
-  onMouseDown: () => void;
-  onMouseUp: () => void;
-  onMouseLeave: () => void;
-  onMouseMove: (e: React.MouseEvent<HTMLDivElement>) => void;
+  onSwipePosChange: React.Dispatch<React.SetStateAction<number>>;
+  zoom: ZoomState;
+  onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>;
 }
 
-function SwipeView({ oldImg, newImg, swipePos, dragging, onMouseDown, onMouseUp, onMouseLeave, onMouseMove }: SwipeViewProps) {
+function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomChange }: SwipeViewProps) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const swipeDragging = useRef(false);
+
+  useZoomAndPan(viewportRef, zoom, onZoomChange);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!swipeDragging.current || !wrapperRef.current) return;
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const pct = ((e.clientX - rect.left) / rect.width) * 100;
+      onSwipePosChange(Math.max(0, Math.min(100, pct)));
+    };
+
+    const onUp = () => {
+      swipeDragging.current = false;
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [onSwipePosChange]);
+
+  const wrapperStyle: React.CSSProperties = {
+    transform: `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`,
+  };
+
   return (
-    <div className="flex flex-col items-center gap-2 p-4">
-      <div className="flex items-center gap-4 text-caption text-muted-foreground">
+    <div className="flex flex-col h-full">
+      <div className="px-3 py-1.5 border-b border-border flex items-center justify-center gap-4 text-caption text-muted-foreground shrink-0">
         <ImageMeta label="Before" img={oldImg} accent="red" />
         <span>→</span>
         <ImageMeta label="After" img={newImg} accent="green" />
       </div>
       <div
-        className={`relative rounded border border-border overflow-hidden select-none ${CHECKER_BG}`}
-        style={{ cursor: dragging ? "ew-resize" : "default" }}
-        onMouseDown={onMouseDown}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseLeave}
-        onMouseMove={onMouseMove}
+        ref={viewportRef}
+        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden select-none [container-type:size]"
+        style={{ cursor: zoom.scale > 1 ? "grab" : "default" }}
+        onDoubleClick={() => onZoomChange(INITIAL_ZOOM)}
       >
-        <img src={newImg.dataUri} alt="After" className="max-w-full max-h-[60vh] object-contain block" />
-        <div
-          className="absolute inset-0 overflow-hidden"
-          style={{ width: `${swipePos}%` }}
-        >
-          <img src={oldImg.dataUri} alt="Before" className="max-w-full max-h-[60vh] object-contain block" />
-        </div>
-        <div
-          className="absolute top-0 bottom-0 w-0.5 bg-foreground/60 cursor-ew-resize"
-          style={{ left: `${swipePos}%` }}
-          onMouseDown={(e) => { e.stopPropagation(); onMouseDown(); }}
-        >
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-foreground/80 flex items-center justify-center text-background text-[10px]">
-            ⇔
+        <div ref={wrapperRef} className="relative" style={wrapperStyle}>
+          <div className={`rounded border border-border ${CHECKER_BG} relative overflow-hidden`}>
+            <img
+              src={newImg.dataUri}
+              alt="After"
+              className={`${IMG_CONSTRAINT} pointer-events-none`}
+              draggable={false}
+            />
+            <div
+              className={`absolute inset-0 ${CHECKER_BG} pointer-events-none`}
+              style={{ clipPath: `inset(0 ${100 - swipePos}% 0 0)` }}
+            >
+              <img
+                src={oldImg.dataUri}
+                alt="Before"
+                className={IMG_CONSTRAINT}
+                draggable={false}
+              />
+            </div>
+          </div>
+          <div
+            data-swipe-handle
+            className="absolute top-0 bottom-0 z-10"
+            style={{ left: `${swipePos}%`, width: "24px", marginLeft: "-12px", cursor: "ew-resize" }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              swipeDragging.current = true;
+            }}
+          >
+            <div className="absolute left-1/2 top-0 bottom-0 w-0.5 -translate-x-1/2 bg-foreground/60" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-foreground/80 flex items-center justify-center text-background text-[10px]">
+              ⇔
+            </div>
           </div>
         </div>
       </div>
