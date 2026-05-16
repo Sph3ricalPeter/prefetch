@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Monitor, ArrowUp, Tag, Archive } from "lucide-react";
 import type {
   BranchInfo,
   CommitInfo,
@@ -554,6 +555,20 @@ function drawStashIcon(
   return w + 5;
 }
 
+/** A ref shown in the hover dropdown when multiple refs sit on one commit (#39). */
+interface DropdownRef {
+  kind: "branch" | "tag" | "stash";
+  refName: string;
+  displayName: string;
+  isHead: boolean;
+  hasLocal: boolean;
+  hasRemote: boolean;
+  isRemoteOnly: boolean;
+  /** Branch/tag color hex used for the row swatch. */
+  color: string;
+  stashIndex?: number;
+}
+
 /** Stored badge position for hit testing */
 interface BadgeHitArea {
   x: number;
@@ -564,6 +579,10 @@ interface BadgeHitArea {
   row: number;
   stashIndex?: number;
   badgeType: "branch" | "tag" | "stash";
+  /** Populated when N>1 refs sit on this commit — drives the hover dropdown (#39). */
+  dropdownItems?: DropdownRef[];
+  /** Commit id this row corresponds to, used when an item selects the commit. */
+  commitId?: string;
 }
 
 /** Stored body-text position for hover tooltip (Change 6) */
@@ -656,6 +675,18 @@ export function CommitGraphCanvas({
   const avatarHitAreasRef = useRef<AvatarHitArea[]>([]);
   const [canvasHover, setCanvasHover] = useState<CanvasHoverInfo | null>(null); // Change 6
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);     // Change 6
+  // Hover dropdown state (#39) — opens when pointer rests over a badge whose
+  // commit has multiple refs. Anchored to the badge's left edge.
+  const [hoverDropdown, setHoverDropdown] = useState<{
+    row: number;
+    commitId: string;
+    items: DropdownRef[];
+    /** Container-relative coords for the dropdown anchor. */
+    x: number;
+    y: number;
+  } | null>(null);
+  const openHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable ref so async avatar-load callbacks always reach the latest draw
   const requestDrawRef = useRef<() => void>(() => {});
 
@@ -1211,18 +1242,66 @@ export function CommitGraphCanvas({
           }
         }
 
+        // Build dropdown ref list when there are stacked refs (drives #39).
+        let dropdownItems: DropdownRef[] | undefined;
+        if (extra > 0) {
+          dropdownItems = badgeItems.map((it): DropdownRef => {
+            if (it.kind === "branch") {
+              const g = it.group;
+              return {
+                kind: "branch",
+                refName: it.refName,
+                displayName: g.baseName,
+                isHead: g.isHead,
+                hasLocal: !!g.local,
+                hasRemote: !!g.remote,
+                isRemoteOnly: !g.local && !!g.remote,
+                color: branchColor(g.baseName),
+              };
+            }
+            if (it.kind === "tag") {
+              return {
+                kind: "tag",
+                refName: it.refName,
+                displayName: it.tag.name,
+                isHead: false,
+                hasLocal: false,
+                hasRemote: false,
+                isRemoteOnly: false,
+                color: graphColors.dim,
+              };
+            }
+            return {
+              kind: "stash",
+              refName: it.refName,
+              displayName: it.stash.message,
+              isHead: false,
+              hasLocal: false,
+              hasRemote: false,
+              isRemoteOnly: false,
+              color: graphColors.dim,
+              stashIndex: it.stash.index,
+            };
+          });
+        }
+
         // Hit area for the primary badge — preserves single-click select-stash
         // and double-click checkout behavior at the new badge location.
         if (primaryW > 0) {
+          // Hit area spans badge + +N chip so hover-open works over either.
+          const hitWidth =
+            primaryW + (extra > 0 ? LABEL_GAP + nChipW : 0);
           hitAreas.push({
             x: badgeColLeft,
             y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
-            width: primaryW,
+            width: hitWidth,
             height: LABEL_HEIGHT,
             branchName: primary.refName,
             row: visRow,
             stashIndex: primary.kind === "stash" ? primary.stash.index : undefined,
             badgeType: primary.kind,
+            dropdownItems,
+            commitId: commit.id,
           });
         }
 
@@ -1353,7 +1432,19 @@ export function CommitGraphCanvas({
     requestDrawRef.current = requestDraw;
   }, [requestDraw]);
 
-  const handleScroll = useCallback(() => requestDraw(), [requestDraw]);
+  const handleScroll = useCallback(() => {
+    requestDraw();
+    // Close the hover dropdown — its anchor is in canvas coords which scroll away.
+    if (openHoverTimer.current) {
+      clearTimeout(openHoverTimer.current);
+      openHoverTimer.current = null;
+    }
+    if (closeHoverTimer.current) {
+      clearTimeout(closeHoverTimer.current);
+      closeHoverTimer.current = null;
+    }
+    setHoverDropdown(null);
+  }, [requestDraw]);
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -1440,10 +1531,44 @@ export function CommitGraphCanvas({
       }
 
       // Change cursor to pointer when hovering a branch badge
-      const overBadge = badgeHitAreasRef.current.some(
+      const overBadgeArea = badgeHitAreasRef.current.find(
         (b) => mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height,
       );
+      const overBadge = !!overBadgeArea;
       scroll.style.cursor = overBadge ? "pointer" : "";
+
+      // Hover dropdown (#39): open after 150ms over a badge with stacked refs;
+      // close after 200ms when pointer leaves the badge (cancelled if it enters
+      // the dropdown).
+      if (overBadgeArea && overBadgeArea.dropdownItems && overBadgeArea.commitId) {
+        if (closeHoverTimer.current) {
+          clearTimeout(closeHoverTimer.current);
+          closeHoverTimer.current = null;
+        }
+        const sameRow = hoverDropdown && hoverDropdown.row === overBadgeArea.row;
+        if (!sameRow && !openHoverTimer.current) {
+          const targetRow = overBadgeArea.row;
+          const items = overBadgeArea.dropdownItems;
+          const commitId = overBadgeArea.commitId;
+          const ax = overBadgeArea.x;
+          const ay = overBadgeArea.y + overBadgeArea.height + 2;
+          openHoverTimer.current = setTimeout(() => {
+            openHoverTimer.current = null;
+            setHoverDropdown({ row: targetRow, commitId, items, x: ax, y: ay });
+          }, 150);
+        }
+      } else {
+        if (openHoverTimer.current) {
+          clearTimeout(openHoverTimer.current);
+          openHoverTimer.current = null;
+        }
+        if (hoverDropdown && !closeHoverTimer.current) {
+          closeHoverTimer.current = setTimeout(() => {
+            closeHoverTimer.current = null;
+            setHoverDropdown(null);
+          }, 200);
+        }
+      }
 
       // Hover tooltips: body text and avatar
       const overBody = bodyHitAreasRef.current.find(
@@ -1495,7 +1620,7 @@ export function CommitGraphCanvas({
         if (canvasHover) setCanvasHover(null);
       }
     },
-    [totalRows, canvasHover, commits],
+    [totalRows, canvasHover, commits, hoverDropdown],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -1503,6 +1628,11 @@ export function CommitGraphCanvas({
     requestDrawRef.current();
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     setCanvasHover(null);
+    // Don't close the dropdown immediately — pointer may be travelling toward it.
+    if (openHoverTimer.current) {
+      clearTimeout(openHoverTimer.current);
+      openHoverTimer.current = null;
+    }
   }, []);
 
   const handleContextMenu = useCallback(
@@ -1560,6 +1690,20 @@ export function CommitGraphCanvas({
     };
   }, [requestDraw]);
 
+  // Hover dropdown is closed by the local event handlers (single-click in the
+  // dropdown, mouseLeave, scroll, Esc) — external selection changes leave it
+  // alone, and the next pointer move will dismiss it naturally.
+
+  // Esc closes the hover dropdown (#39).
+  useEffect(() => {
+    if (!hoverDropdown) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHoverDropdown(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hoverDropdown]);
+
   return (
     <div className="relative h-full w-full">
       <div
@@ -1590,6 +1734,121 @@ export function CommitGraphCanvas({
         >
           <p className="whitespace-pre-wrap">{canvasHover.text}</p>
         </div>
+      )}
+
+      {/* Hover dropdown listing every ref on a multi-ref commit (#39). */}
+      {hoverDropdown && (
+        <div
+          className="absolute z-40 min-w-[180px] rounded-md border border-border bg-card py-1 shadow-lg"
+          style={{ left: hoverDropdown.x, top: hoverDropdown.y }}
+          onMouseEnter={() => {
+            if (closeHoverTimer.current) {
+              clearTimeout(closeHoverTimer.current);
+              closeHoverTimer.current = null;
+            }
+          }}
+          onMouseLeave={() => {
+            if (closeHoverTimer.current) clearTimeout(closeHoverTimer.current);
+            closeHoverTimer.current = setTimeout(() => {
+              closeHoverTimer.current = null;
+              setHoverDropdown(null);
+            }, 200);
+          }}
+        >
+          {hoverDropdown.items.map((it, idx) => (
+            <DropdownItemRow
+              key={`${it.kind}:${it.refName}:${idx}`}
+              item={it}
+              onSingleClick={(e) => {
+                if (it.kind === "stash" && it.stashIndex != null) {
+                  onSelectStash?.(it.stashIndex);
+                } else {
+                  onSelectCommit(
+                    hoverDropdown.commitId === selectedCommitId
+                      ? null
+                      : hoverDropdown.commitId,
+                  );
+                }
+                setHoverDropdown(null);
+                e.stopPropagation();
+              }}
+              onDoubleClick={(e) => {
+                if (it.kind === "branch" || it.kind === "tag") {
+                  onCheckoutBranch(it.refName);
+                  setHoverDropdown(null);
+                }
+                e.stopPropagation();
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (it.kind === "stash" && it.stashIndex != null && onStashContextMenu) {
+                  onStashContextMenu(it.stashIndex, e.clientX, e.clientY);
+                } else if (onCommitContextMenu) {
+                  onCommitContextMenu(hoverDropdown.commitId, e.clientX, e.clientY);
+                }
+                setHoverDropdown(null);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Single row inside the hover dropdown — styled as a mini-badge that mirrors the
+ *  canvas badge visual: colored background tint, optional HEAD checkmark on the
+ *  left, name, then local/remote indicator icons on the right. */
+function DropdownItemRow({
+  item,
+  onSingleClick,
+  onDoubleClick,
+  onContextMenu,
+}: {
+  item: DropdownRef;
+  onSingleClick: (e: React.MouseEvent) => void;
+  onDoubleClick: (e: React.MouseEvent) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  const isStash = item.kind === "stash";
+  const isTag = item.kind === "tag";
+  const isBranch = item.kind === "branch";
+  // Tint matches the canvas pill — 0.3 alpha for HEAD, 0.15 otherwise. Stashes
+  // and tags share a neutral muted background.
+  const bgStyle =
+    isBranch && !item.isRemoteOnly
+      ? { backgroundColor: `${item.color}${item.isHead ? "4d" : "26"}` } // hex alpha 4d≈0.3, 26≈0.15
+      : { backgroundColor: "rgba(255,255,255,0.06)" };
+  const colorStyle = { color: isBranch ? item.color : undefined };
+
+  return (
+    <div
+      onClick={onSingleClick}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
+      className="mx-1 my-0.5 flex cursor-pointer select-none items-center gap-1.5 rounded px-2 py-1 text-xs hover:brightness-125"
+      style={bgStyle}
+    >
+      {item.isHead && (
+        <Check className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
+      )}
+      {isTag && (
+        <Tag className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+      )}
+      {isStash && (
+        <Archive className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+      )}
+      <span
+        className={`truncate ${isBranch ? "" : "text-muted-foreground"}`}
+        style={isBranch ? colorStyle : undefined}
+      >
+        {item.displayName}
+      </span>
+      {item.hasLocal && (
+        <Monitor className="ml-auto h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
+      )}
+      {item.hasRemote && (
+        <ArrowUp className={`h-3 w-3 shrink-0 ${item.hasLocal ? "" : "ml-auto"}`} style={colorStyle} aria-hidden="true" />
       )}
     </div>
   );
