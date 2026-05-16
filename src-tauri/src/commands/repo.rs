@@ -210,6 +210,17 @@ pub async fn get_file_blob(
     offload(move || repository::get_file_blob(&path, &file_path, rev.as_deref())).await
 }
 
+#[tauri::command]
+pub async fn get_binary_blob_base64(
+    file_path: String,
+    rev: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, AppError> {
+    let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
+    offload(move || repository::get_binary_blob_base64(&path, &file_path, rev.as_deref())).await
+}
+
 #[instrument(skip(state))]
 #[tauri::command]
 pub async fn get_tags(state: State<'_, AppState>) -> Result<Vec<TagInfo>, AppError> {

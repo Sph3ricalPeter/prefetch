@@ -2337,6 +2337,49 @@ pub fn get_file_blob(
     }
 }
 
+/// Read a file as raw bytes and return base64-encoded content.
+///
+/// - `rev = None`       → read from working directory (disk)
+/// - `rev = Some("")`   → read from the git index (staged version)
+/// - `rev = Some("ab")` → read from a specific commit/ref via `git show`
+///
+/// Returns `None` when the file does not exist at the given revision.
+pub fn get_binary_blob_base64(
+    repo_path: &str,
+    file_path: &str,
+    rev: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    use base64::Engine;
+
+    let raw = match rev {
+        None => {
+            let abs = Path::new(repo_path).join(file_path);
+            match std::fs::read(&abs) {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(None),
+            }
+        }
+        Some(r) => {
+            let spec = if r.is_empty() {
+                format!(":{file_path}")
+            } else {
+                format!("{r}:{file_path}")
+            };
+            let output = git_cmd()
+                .args(["show", &spec])
+                .current_dir(repo_path)
+                .output()
+                .map_err(|e| AppError::Other(format!("Failed to run git show: {e}")))?;
+            if !output.status.success() {
+                return Ok(None);
+            }
+            output.stdout
+        }
+    };
+
+    Ok(Some(base64::engine::general_purpose::STANDARD.encode(&raw)))
+}
+
 /// Get the last undoable action from the reflog.
 pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
     let output = git_cmd()

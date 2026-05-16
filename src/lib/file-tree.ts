@@ -58,3 +58,20 @@ export function collectFilePaths(node: FileTreeNode): string[] {
   }
   return paths;
 }
+
+/** Flatten a sorted tree into FileStatus[] in visual (DFS) order.
+ *  Used so shift-click range selection matches what the user sees on screen. */
+export function flattenTreeFiles(roots: FileTreeNode[]): FileStatus[] {
+  const result: FileStatus[] = [];
+  const walk = (nodes: FileTreeNode[]) => {
+    for (const node of nodes) {
+      if (node.type === "file" && node.file) {
+        result.push(node.file);
+      } else if (node.type === "directory") {
+        walk(node.children);
+      }
+    }
+  };
+  walk(roots);
+  return result;
+}

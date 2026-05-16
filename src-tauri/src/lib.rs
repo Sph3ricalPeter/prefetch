@@ -108,6 +108,7 @@ pub fn run() {
             commands::repo::get_stash_files,
             commands::repo::get_stash_file_diff,
             commands::repo::get_file_blob,
+            commands::repo::get_binary_blob_base64,
             commands::repo::get_tags,
             commands::repo::create_tag,
             commands::repo::delete_tag,

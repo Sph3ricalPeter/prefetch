@@ -3,6 +3,8 @@ import { DiffViewerReadonly } from "@/components/staging/diff-viewer-readonly";
 import { DiffViewerInteractive } from "@/components/staging/diff-viewer-interactive";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { useExpandableContext, type DiffSource } from "@/hooks/use-expandable-context";
+import { ImageDiffViewer } from "@/components/staging/image-diff-viewer";
+import { isImageFile } from "@/lib/utils";
 
 interface DiffViewerProps {
   diff: FileDiff;
@@ -23,6 +25,9 @@ export function DiffViewer({ diff, filePath, mode = "readonly", source = {}, sta
   const ctx = useExpandableContext(diff.hunks, diff.path, source);
 
   if (diff.is_binary) {
+    if (isImageFile(resolvedPath)) {
+      return <ImageDiffViewer filePath={resolvedPath} source={source} staged={staged} />;
+    }
     return (
       <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
         Binary file — cannot display diff

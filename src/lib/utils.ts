@@ -18,3 +18,13 @@ export function getDataAttrFromEvent(
   }
   return null;
 }
+
+const IMAGE_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".avif",
+]);
+
+export function isImageFile(filePath: string): boolean {
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return false;
+  return IMAGE_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
+}
