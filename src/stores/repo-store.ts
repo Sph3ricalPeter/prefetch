@@ -330,6 +330,8 @@ interface RepoState {
 
   /** Diff view layout — unified (interleaved) or side-by-side (split columns) */
   diffViewMode: "unified" | "side-by-side";
+  /** Image diff view mode — side-by-side or swipe overlay */
+  imageDiffViewMode: "side-by-side" | "swipe";
   /** Whether long lines wrap in the diff viewer */
   diffWrapLines: boolean;
 
@@ -429,6 +431,7 @@ interface RepoState {
   setFileViewMode: (mode: "flat" | "tree") => void;
   loadFileViewMode: () => Promise<void>;
   setDiffViewMode: (mode: "unified" | "side-by-side") => void;
+  setImageDiffViewMode: (mode: "side-by-side" | "swipe") => void;
   setDiffWrapLines: (on: boolean) => void;
   loadDiffPreferences: () => Promise<void>;
 
@@ -522,6 +525,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   prCache: {},
   fileViewMode: "flat",
   diffViewMode: "unified",
+  imageDiffViewMode: "side-by-side",
   diffWrapLines: true,
 
   openRepository: async (path: string) => {
@@ -2003,6 +2007,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     setUiState("diff_view_mode", mode).catch(() => {});
   },
 
+  setImageDiffViewMode: (mode) => {
+    set({ imageDiffViewMode: mode });
+    setUiState("image_diff_view_mode", mode).catch(() => {});
+  },
+
   setDiffWrapLines: (on) => {
     set({ diffWrapLines: on });
     setUiState("diff_wrap_lines", on ? "true" : "false").catch(() => {});
@@ -2010,13 +2019,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   loadDiffPreferences: async () => {
     try {
-      const [viewMode, wrapLines] = await Promise.all([
+      const [viewMode, imageViewMode, wrapLines] = await Promise.all([
         getUiState("diff_view_mode"),
+        getUiState("image_diff_view_mode"),
         getUiState("diff_wrap_lines"),
       ]);
       const update: Partial<RepoState> = {};
       if (viewMode === "unified" || viewMode === "side-by-side") {
         update.diffViewMode = viewMode;
+      }
+      if (imageViewMode === "side-by-side" || imageViewMode === "swipe") {
+        update.imageDiffViewMode = imageViewMode;
       }
       if (wrapLines === "true" || wrapLines === "false") {
         update.diffWrapLines = wrapLines === "true";
