@@ -13,18 +13,18 @@ import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
 
 export const ROW_HEIGHT = 32;
 export const LANE_WIDTH = 20;
-const NODE_RADIUS = 10;          // Change 4: was 8 (16px -> 20px diameter)
+const NODE_RADIUS = 12;          // avatar diameter 24px
 const CURVE_RADIUS = 6;          // Constant corner radius for cross-lane edges (GitKraken-style)
 const SCROLLBAR_PAD = 6;         // visual breathing room for left edge
 // Inset between the right edge of the badge column and the first graph lane.
 // Small so node centers sit ~one node-radius into the graph column.
 const GRAPH_INSET_LEFT = SCROLLBAR_PAD;
 // Inset between the right edge of the graph column and the start of label / message text.
-const MESSAGE_INSET_LEFT = 16;
-const LABEL_HEIGHT = 20;         // Change 2: was 16
-const LABEL_PAD_X = 7;           // Change 2: was 5
+const MESSAGE_INSET_LEFT = 12;
+const LABEL_HEIGHT = 24;         // badge pill height
+const LABEL_PAD_X = 8;
 const LABEL_GAP = 3;
-const LABEL_RADIUS = 4;          // Change 2: was 3
+const LABEL_RADIUS = 5;
 const ROW_RADIUS = 6;            // Change 1: matches CSS rounded-md
 const GRAPH_PADDING_TOP = 6;     // top padding matching left padding
 const ROW_INSET = 2;             // vertical inset so row highlights don't touch
@@ -203,6 +203,53 @@ function getTimeGroup(timestamp: number): TimeGroup {
   if (timestamp >= startOfThisMonth) return "This month";
   if (timestamp >= startOfLastMonth) return "Last month";
   return "Older";
+}
+
+export type { DateFormatId } from "@/lib/date-format";
+import { type DateFormatId } from "@/lib/date-format";
+
+function formatRelativeDate(timestamp: number): string {
+  const now = Date.now() / 1000;
+  const diff = now - timestamp;
+  if (diff < 60) return "now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
+  const date = new Date(timestamp * 1000);
+  const thisYear = new Date().getFullYear();
+  if (date.getFullYear() === thisYear) {
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatDate(timestamp: number, fmt: DateFormatId, availWidth: number, ctx: CanvasRenderingContext2D): string {
+  if (fmt === "relative") return formatRelativeDate(timestamp);
+  const date = new Date(timestamp * 1000);
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const time = `${hh}:${mm}`;
+  const fits = (s: string) => ctx.measureText(s).width <= availWidth;
+
+  if (fmt === "iso") {
+    const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const isoTime = `${iso} ${time}`;
+    if (fits(isoTime)) return isoTime;
+    return iso;
+  }
+  const thisYear = new Date().getFullYear();
+  const short = date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const long = date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+  if (fmt === "long" || (fmt === "short" && date.getFullYear() !== thisYear)) {
+    const longTime = `${long} ${time}`;
+    if (fits(longTime)) return longTime;
+    if (fits(long)) return long;
+    return short;
+  }
+  const shortTime = `${short} ${time}`;
+  if (fits(shortTime)) return shortTime;
+  return short;
 }
 
 function truncateText(
@@ -603,20 +650,39 @@ interface AvatarHitArea {
   commitIdx: number;
 }
 
-/** Canvas hover info for tooltip overlay (Change 6) */
+/** Stored author-column position for hover tooltip when email is truncated */
+interface AuthorHitArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  row: number;
+  tooltip: string;
+}
+
+/** Canvas hover info for tooltip overlay */
 interface CanvasHoverInfo {
-  type: "body" | "avatar";
+  type: "body" | "avatar" | "author";
   text: string;
   x: number;
   y: number;
   row: number;
 }
 
-/** Column widths driving the badge | graph | message | date layout. */
+/** Column widths driving the badge | graph | sha | message | author | date layout. */
 export interface GraphColumnWidths {
   badge: number;
   graph: number;
+  sha: number;
+  author: number;
   date: number;
+}
+
+/** Which optional columns are visible (all hidden by default). */
+export interface GraphColumnVisibility {
+  sha: boolean;
+  author: boolean;
+  date: boolean;
 }
 
 interface CommitGraphCanvasProps {
@@ -645,6 +711,8 @@ interface CommitGraphCanvasProps {
   ) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
   columnWidths: GraphColumnWidths;
+  columnVisibility: GraphColumnVisibility;
+  dateFormat: DateFormatId;
   /** Ref name → unix timestamp of its tip commit. Drives MRU edge-draw order. */
   refMru: Map<string, number>;
 }
@@ -668,6 +736,8 @@ export function CommitGraphCanvas({
   onCommitContextMenu,
   onStashContextMenu,
   columnWidths,
+  columnVisibility,
+  dateFormat,
   refMru,
 }: CommitGraphCanvasProps) {
   const graphColors = useThemeStore((s) => s.appTheme.graph);
@@ -680,6 +750,7 @@ export function CommitGraphCanvas({
   const badgeHitAreasRef = useRef<BadgeHitArea[]>([]);
   const bodyHitAreasRef = useRef<BodyHitArea[]>([]);       // Change 6
   const avatarHitAreasRef = useRef<AvatarHitArea[]>([]);
+  const authorHitAreasRef = useRef<AuthorHitArea[]>([]);
   const [canvasHover, setCanvasHover] = useState<CanvasHoverInfo | null>(null); // Change 6
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);     // Change 6
   // Hover dropdown state (#39) — opens when pointer rests over a badge whose
@@ -699,11 +770,11 @@ export function CommitGraphCanvas({
 
   const hasWip = hasUncommittedChanges;
   const rowOffset = hasWip ? 1 : 0;
-  // Column-driven layout: graph lanes live inside the graph column, labels/SHA/message
-  // start at the right edge of the graph column. The badge column on the left is empty
-  // for now (filled by a later issue).
+  // Column-driven layout: badge | graph | [sha] | message | [author] | [date]
   const graphLeft = columnWidths.badge + GRAPH_INSET_LEFT;
-  const textOffset = columnWidths.badge + columnWidths.graph + MESSAGE_INSET_LEFT;
+  const shaColLeft = columnWidths.badge + columnWidths.graph;
+  const shaEffW = columnVisibility.sha ? columnWidths.sha : 0;
+  const msgLeft = shaColLeft + shaEffW + MESSAGE_INSET_LEFT;
   // totalLanes is unused inside the canvas now (column widths drive layout) but the
   // parent panel uses it to size the default graph column width and clamp the resize.
   void totalLanes;
@@ -900,6 +971,7 @@ export function CommitGraphCanvas({
     const hitAreas: BadgeHitArea[] = [];
     const bodyHitAreas: BodyHitArea[] = [];
     const avatarHitAreas: AvatarHitArea[] = [];
+    const authorHitAreas: AuthorHitArea[] = [];
 
     // --- HEAD row highlight (permanent "you are here") ---
     const headRow = headInfo.row;
@@ -909,7 +981,7 @@ export function CommitGraphCanvas({
     // Row highlight rect starts at the avatar's left edge so the badge column
     // stays unhighlighted. Falls back to the canvas left for rows without a
     // commit (e.g. WIP).
-    const HIGHLIGHT_LEFT_PAD = 4;
+    const HIGHLIGHT_LEFT_PAD = 5;
     const rowHighlightLeft = (visRow: number): number => {
       const commitIdx = visRow - rowOffset;
       if (commitIdx >= 0 && commitIdx < commits.length) {
@@ -1087,12 +1159,12 @@ export function CommitGraphCanvas({
 
       // File edit icon + change count
       const wipTextColor = graphColors.muted;
-      const wipIconW = drawFileEditIcon(ctx, textOffset, wipY, wipTextColor);
+      const wipIconW = drawFileEditIcon(ctx, msgLeft, wipY, wipTextColor);
       ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
       ctx.fillStyle = wipTextColor;
       const changeText =
         fileStatusCount === 1 ? "1 change" : `${fileStatusCount} changes`;
-      ctx.fillText(changeText, textOffset + wipIconW, wipY);
+      ctx.fillText(changeText, msgLeft + wipIconW, wipY);
     }
 
     // --- Commit rows ---
@@ -1362,35 +1434,40 @@ export function CommitGraphCanvas({
         }
       }
 
-      // Short SHA + message start at the right edge of the graph column.
-      const labelX = textOffset;
-      ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
-      ctx.fillStyle = graphColors.dim;
-      ctx.fillText(commit.short_id, labelX, y);
+      // --- Column drawing: [SHA] | Message | [Author] | [Date] ---
+      const dateEffW = columnVisibility.date ? columnWidths.date : 0;
+      const authorEffW = columnVisibility.author ? columnWidths.author : 0;
+      const rightColsW = dateEffW + authorEffW;
+      const authorColLeft = width - rightColsW;
+      const dateColLeft = width - dateEffW;
 
-      // Message + Body (Change 3: reclaimed right space, Change 6: inline body)
-      const msgX = labelX + 64;
-      const totalAvailWidth = width - msgX - 80; // Change 3: was -160, now -80 (time-group label area)
+      // SHA column
+      if (columnVisibility.sha) {
+        ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
+        ctx.fillStyle = graphColors.dim;
+        ctx.fillText(commit.short_id, shaColLeft + 8, y);
+      }
+
+      // Message + Body
+      const msgRight = rightColsW > 0 ? authorColLeft - 8 : width - 16;
+      const msgAvail = Math.max(0, msgRight - msgLeft);
       ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
 
       const fullMsgWidth = ctx.measureText(commit.message).width;
-      if (fullMsgWidth <= totalAvailWidth) {
-        // Message fits — draw it, then body if available
+      if (fullMsgWidth <= msgAvail) {
         ctx.fillStyle = graphColors.fg;
-        ctx.fillText(commit.message, msgX, y);
+        ctx.fillText(commit.message, msgLeft, y);
 
-        // Change 6: Draw body text after message
         if (commit.body) {
           const bodyGap = 8;
-          const bodyX = msgX + fullMsgWidth + bodyGap;
-          const bodyAvail = totalAvailWidth - fullMsgWidth - bodyGap;
-          if (bodyAvail > 30) {
+          const bodyX = msgLeft + fullMsgWidth + bodyGap;
+          const bodyAvailW = msgAvail - fullMsgWidth - bodyGap;
+          if (bodyAvailW > 30) {
             ctx.fillStyle = graphColors.dim;
             const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
-            const bodyText = truncateText(ctx, bodyOneLine, bodyAvail);
+            const bodyText = truncateText(ctx, bodyOneLine, bodyAvailW);
             ctx.fillText(bodyText, bodyX, y);
 
-            // Store hit area for tooltip
             const drawnBodyWidth = ctx.measureText(bodyText).width;
             bodyHitAreas.push({
               x: bodyX,
@@ -1403,41 +1480,87 @@ export function CommitGraphCanvas({
           }
         }
       } else {
-        // Message alone overflows — truncate it, no room for body
         ctx.fillStyle = graphColors.fg;
-        ctx.fillText(truncateText(ctx, commit.message, totalAvailWidth), msgX, y);
+        ctx.fillText(truncateText(ctx, commit.message, msgAvail), msgLeft, y);
       }
 
-      // Change 3: removed author + time (was here)
+      // Author column — show name + email when space allows
+      if (columnVisibility.author) {
+        ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
+        const authorPad = 8;
+        const authorAvail = authorEffW - authorPad * 2;
+        const authorX = authorColLeft + authorPad;
+        let emailShown = false;
+        if (authorAvail > 10) {
+          const nameW = ctx.measureText(commit.author_name).width;
+          const emailGap = 6;
+          const remaining = authorAvail - nameW - emailGap;
+
+          if (remaining > 10 && commit.author_email) {
+            ctx.fillStyle = graphColors.fg;
+            ctx.fillText(commit.author_name, authorX, y);
+            ctx.fillStyle = graphColors.dim;
+            const emailText = truncateText(ctx, commit.author_email, remaining);
+            ctx.fillText(emailText, authorX + nameW + emailGap, y);
+            emailShown = ctx.measureText(commit.author_email).width <= remaining;
+          } else {
+            ctx.fillStyle = graphColors.fg;
+            ctx.fillText(truncateText(ctx, commit.author_name, authorAvail), authorX, y);
+          }
+
+          if (!emailShown) {
+            authorHitAreas.push({
+              x: authorX,
+              y: visRow * ROW_HEIGHT - scrollTop,
+              width: authorAvail,
+              height: ROW_HEIGHT,
+              row: visRow,
+              tooltip: `${commit.author_name} <${commit.author_email}>`,
+            });
+          }
+        }
+      }
+
+      // Date column
+      if (columnVisibility.date) {
+        ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
+        ctx.fillStyle = graphColors.dim;
+        const dateAvail = dateEffW - 16;
+        if (dateAvail > 10) {
+          ctx.fillText(formatDate(commit.timestamp, dateFormat, dateAvail, ctx), dateColLeft + 8, y);
+        }
+      }
     }
 
-    // Change 3: Draw time-group separator lines
+    // Draw time-group separator lines — label right-aligned within the message column
     ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
+    const tgDateEffW = columnVisibility.date ? columnWidths.date : 0;
+    const tgAuthorEffW = columnVisibility.author ? columnWidths.author : 0;
+    const tgRightColsW = tgDateEffW + tgAuthorEffW;
+    const tgMsgRight = tgRightColsW > 0 ? width - tgRightColsW - 8 : width - 16;
     for (const [row, group] of timeGroupBoundaries) {
       if (row < firstVisibleRow || row > lastVisibleRow) continue;
-      const separatorY = row * ROW_HEIGHT - scrollTop; // top edge of the first row in group
+      const separatorY = row * ROW_HEIGHT - scrollTop;
 
-      // Faint horizontal line across the text area
+      // Faint horizontal line — spans from message start all the way to the right
       ctx.strokeStyle = graphColors.faint;
       ctx.globalAlpha = 0.4;
       ctx.lineWidth = 0.5;
       ctx.beginPath();
-      ctx.moveTo(textOffset, separatorY);
+      ctx.moveTo(msgLeft, separatorY);
       ctx.lineTo(width - 12, separatorY);
       ctx.stroke();
       ctx.globalAlpha = 1;
 
-      // Right-aligned label with background clear-rect
+      // Right-aligned label within the message column area
       const label = group;
       const labelWidth = ctx.measureText(label).width;
       const labelPad = 6;
-      const labelDrawX = width - labelWidth - 16;
+      const labelDrawX = tgMsgRight - labelWidth - 8;
 
-      // Clear a gap in the line behind the label
       ctx.fillStyle = graphColors.bgPage;
       ctx.fillRect(labelDrawX - labelPad, separatorY - 7, labelWidth + labelPad * 2, 14);
 
-      // Draw the label text
       ctx.fillStyle = graphColors.faint;
       ctx.fillText(label, labelDrawX, separatorY);
     }
@@ -1445,7 +1568,8 @@ export function CommitGraphCanvas({
     badgeHitAreasRef.current = hitAreas;
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, textOffset, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths.badge, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
+    authorHitAreasRef.current = authorHitAreas;
+  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -1604,6 +1728,11 @@ export function CommitGraphCanvas({
             (a) => Math.hypot(mx - a.cx, my - a.cy) <= NODE_RADIUS,
           )
         : undefined;
+      const overAuthor = !overBody && !overAvatar
+        ? authorHitAreasRef.current.find(
+            (a) => mx >= a.x && mx <= a.x + a.width && my >= a.y && my <= a.y + a.height,
+          )
+        : undefined;
 
       if (overBody) {
         if (!canvasHover || canvasHover.row !== overBody.row || canvasHover.type !== "body") {
@@ -1637,6 +1766,19 @@ export function CommitGraphCanvas({
               x: e.clientX,
               y: e.clientY,
               row: overAvatar.row,
+            });
+          }, 300);
+        }
+      } else if (overAuthor) {
+        if (!canvasHover || canvasHover.row !== overAuthor.row || canvasHover.type !== "author") {
+          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          hoverTimerRef.current = setTimeout(() => {
+            setCanvasHover({
+              type: "author",
+              text: overAuthor.tooltip,
+              x: e.clientX,
+              y: e.clientY,
+              row: overAuthor.row,
             });
           }, 300);
         }
@@ -1764,8 +1906,8 @@ export function CommitGraphCanvas({
       {/* Hover dropdown listing every ref on a multi-ref commit (#39). */}
       {hoverDropdown && (
         <div
-          className="absolute z-40 min-w-[180px] rounded-md border border-border bg-card py-1 shadow-lg"
-          style={{ left: hoverDropdown.x, top: hoverDropdown.y }}
+          className="absolute z-40 min-w-[180px] border border-border bg-card shadow-lg overflow-hidden p-px"
+          style={{ borderRadius: LABEL_RADIUS, left: hoverDropdown.x, top: hoverDropdown.y }}
           onMouseEnter={() => {
             if (closeHoverTimer.current) {
               clearTimeout(closeHoverTimer.current);
@@ -1861,8 +2003,8 @@ function DropdownItemRow({
       onClick={onSingleClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      className="mx-1 my-0.5 flex cursor-pointer select-none items-center gap-1.5 rounded px-2 py-1 text-xs hover:brightness-125"
-      style={bgStyle}
+      className="flex cursor-pointer select-none items-center gap-1.5 px-2.5 text-xs hover:brightness-125"
+      style={{ ...bgStyle, height: LABEL_HEIGHT, borderRadius: LABEL_RADIUS }}
     >
       {item.isHead && (
         <Check className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />

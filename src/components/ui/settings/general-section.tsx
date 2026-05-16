@@ -4,6 +4,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { getUiState, setUiState } from "@/lib/database";
 import { useUpdaterStore } from "@/stores/updater-store";
 import { setFetchInterval as setFetchIntervalCmd } from "@/lib/commands";
+import { DATE_FORMATS, type DateFormatId } from "@/lib/date-format";
 
 const FETCH_INTERVALS = [
   { label: "1 minute", value: "60" },
@@ -21,6 +22,7 @@ const VIEW_MODES = [
 export function GeneralSection() {
   const [fetchInterval, setFetchInterval] = useState("300");
   const [fileViewMode, setFileViewMode] = useState("flat");
+  const [dateFormat, setDateFormat] = useState<DateFormatId>("short");
   const [autoReopen, setAutoReopen] = useState(false);
   const [conflictAutoResolve, setConflictAutoResolve] = useState(false);
 
@@ -40,6 +42,11 @@ export function GeneralSection() {
     getUiState("conflict_auto_resolve").then((v) => {
       if (v === "true") setConflictAutoResolve(true);
     }).catch(() => {});
+    getUiState("graph_date_format").then((v) => {
+      if (v && (v === "relative" || v === "short" || v === "long" || v === "iso")) {
+        setDateFormat(v as DateFormatId);
+      }
+    }).catch(() => {});
   }, []);
 
   const handleFetchIntervalChange = (value: string) => {
@@ -51,6 +58,11 @@ export function GeneralSection() {
   const handleViewModeChange = (value: string) => {
     setFileViewMode(value);
     setUiState("file_view_mode", value).catch(() => {});
+  };
+
+  const handleDateFormatChange = (value: DateFormatId) => {
+    setDateFormat(value);
+    setUiState("graph_date_format", value).catch(() => {});
   };
 
   return (
@@ -159,6 +171,32 @@ export function GeneralSection() {
               }`}
             >
               {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Date format */}
+      <div className="space-y-2">
+        <label className="block text-xs font-medium text-foreground">
+          Date format
+        </label>
+        <p className="text-xs text-muted-foreground">
+          How dates are displayed in the commit graph.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {DATE_FORMATS.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => handleDateFormatChange(opt.id)}
+              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                dateFormat === opt.id
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
+              }`}
+            >
+              {opt.label}
+              <span className="ml-1.5 text-muted-foreground">{opt.example}</span>
             </button>
           ))}
         </div>

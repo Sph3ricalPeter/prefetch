@@ -15,7 +15,9 @@ import {
   CommitGraphCanvas,
   LANE_WIDTH,
   type GraphColumnWidths,
+  type GraphColumnVisibility,
 } from "@/components/graph/commit-graph-canvas";
+import type { DateFormatId } from "@/lib/date-format";
 import { GraphHeader } from "@/components/graph/graph-header";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
@@ -28,14 +30,18 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 
-// ── Graph column layout (badge / graph / message / date) ──────────────────
+// ── Graph column layout (badge / graph / sha / message / author / date) ──────
 const COL_BADGE_DEFAULT = 190;
 const COL_BADGE_MIN = 120;
 const COL_BADGE_MAX = 420;
 const COL_GRAPH_MIN = 80;
 const COL_GRAPH_MAX = 800;
-const COL_DATE_WIDTH = 80;
+const COL_SHA_DEFAULT = 70;
+const COL_AUTHOR_DEFAULT = 120;
+const COL_DATE_DEFAULT = 80;
 const COL_GRAPH_PAD_RIGHT = 24; // breathing room past the last lane
+
+const DEFAULT_VISIBILITY: GraphColumnVisibility = { sha: false, author: false, date: false };
 
 /** Default graph column width derived from the topology's lane count. */
 function defaultGraphWidth(totalLanes: number): number {
@@ -57,14 +63,33 @@ function parseStoredWidths(
 ): GraphColumnWidths | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { badge?: unknown; graph?: unknown };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
     const badge = typeof parsed.badge === "number" ? parsed.badge : NaN;
     const graph = typeof parsed.graph === "number" ? parsed.graph : NaN;
     if (!Number.isFinite(badge) || !Number.isFinite(graph)) return null;
+    const sha = typeof parsed.sha === "number" ? parsed.sha : COL_SHA_DEFAULT;
+    const author = typeof parsed.author === "number" ? parsed.author : COL_AUTHOR_DEFAULT;
+    const date = typeof parsed.date === "number" ? parsed.date : COL_DATE_DEFAULT;
     return {
       badge: Math.max(COL_BADGE_MIN, Math.min(COL_BADGE_MAX, badge)),
       graph: Math.max(minGraphWidth(totalLanes), Math.min(COL_GRAPH_MAX, graph)),
-      date: COL_DATE_WIDTH,
+      sha: Math.max(50, Math.min(150, sha)),
+      author: Math.max(80, Math.min(400, author)),
+      date: Math.max(60, Math.min(170, date)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredVisibility(raw: string | null): GraphColumnVisibility | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      sha: parsed.sha === true,
+      author: parsed.author === true,
+      date: parsed.date === true,
     };
   } catch {
     return null;
@@ -203,8 +228,12 @@ export function GraphPanel() {
   const [columnWidths, setColumnWidths] = useState<GraphColumnWidths>({
     badge: COL_BADGE_DEFAULT,
     graph: defaultGraphWidth(totalLanes),
-    date: COL_DATE_WIDTH,
+    sha: COL_SHA_DEFAULT,
+    author: COL_AUTHOR_DEFAULT,
+    date: COL_DATE_DEFAULT,
   });
+  const [columnVisibility, setColumnVisibility] = useState<GraphColumnVisibility>(DEFAULT_VISIBILITY);
+  const [dateFormat, setDateFormat] = useState<DateFormatId>("short");
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const [graphContainerWidth, setGraphContainerWidth] = useState<number>(0);
 
@@ -213,34 +242,45 @@ export function GraphPanel() {
   useEffect(() => {
     if (!repoPath) return;
     let cancelled = false;
+    const defaultWidths: GraphColumnWidths = {
+      badge: COL_BADGE_DEFAULT,
+      graph: defaultGraphWidth(totalLanes),
+      sha: COL_SHA_DEFAULT,
+      author: COL_AUTHOR_DEFAULT,
+      date: COL_DATE_DEFAULT,
+    };
     getUiState(`graph_layout:${repoPath}`)
       .then((raw) => {
         if (cancelled) return;
-        const stored = parseStoredWidths(raw, totalLanes);
-        setColumnWidths(
-          stored ?? {
-            badge: COL_BADGE_DEFAULT,
-            graph: defaultGraphWidth(totalLanes),
-            date: COL_DATE_WIDTH,
-          },
-        );
+        setColumnWidths(parseStoredWidths(raw, totalLanes) ?? defaultWidths);
       })
       .catch(() => {
-        if (!cancelled) {
-          setColumnWidths({
-            badge: COL_BADGE_DEFAULT,
-            graph: defaultGraphWidth(totalLanes),
-            date: COL_DATE_WIDTH,
-          });
-        }
+        if (!cancelled) setColumnWidths(defaultWidths);
       });
-    return () => {
-      cancelled = true;
-    };
-    // Only re-run when the repo changes — totalLanes shifts during fetches and
-    // we don't want to clobber a width the user has manually set.
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoPath]);
+
+  // Restore column visibility (global, not per-repo).
+  useEffect(() => {
+    getUiState("graph_column_visibility")
+      .then((raw) => {
+        const stored = parseStoredVisibility(raw);
+        if (stored) setColumnVisibility(stored);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Restore date format preference (global).
+  useEffect(() => {
+    getUiState("graph_date_format")
+      .then((raw) => {
+        if (raw && (raw === "relative" || raw === "short" || raw === "long" || raw === "iso")) {
+          setDateFormat(raw as DateFormatId);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Effective widths fed to header + canvas. The graph column is clamped up if the
   // topology grew wider than the stored value (e.g. after a fetch). Derived rather
@@ -248,6 +288,8 @@ export function GraphPanel() {
   const effectiveWidths: GraphColumnWidths = {
     badge: columnWidths.badge,
     graph: Math.max(columnWidths.graph, minGraphWidth(totalLanes)),
+    sha: columnWidths.sha,
+    author: columnWidths.author,
     date: columnWidths.date,
   };
 
@@ -468,15 +510,20 @@ export function GraphPanel() {
               badgeMax={COL_BADGE_MAX}
               graphMin={minGraphWidth(totalLanes)}
               graphMax={COL_GRAPH_MAX}
+              visibility={columnVisibility}
               onResize={setColumnWidths}
               onResizeEnd={(w) => {
                 setColumnWidths(w);
                 if (repoPath) {
                   setUiState(
                     `graph_layout:${repoPath}`,
-                    JSON.stringify({ badge: w.badge, graph: w.graph }),
+                    JSON.stringify({ badge: w.badge, graph: w.graph, sha: w.sha, author: w.author, date: w.date }),
                   ).catch(() => {});
                 }
+              }}
+              onVisibilityChange={(v) => {
+                setColumnVisibility(v);
+                setUiState("graph_column_visibility", JSON.stringify(v)).catch(() => {});
               }}
             />
             <div className="flex-1 min-h-0">
@@ -505,6 +552,8 @@ export function GraphPanel() {
                   setStashContextMenu({ index, x, y });
                 }}
                 columnWidths={effectiveWidths}
+                columnVisibility={columnVisibility}
+                dateFormat={dateFormat}
                 refMru={refMru}
               />
             </div>
