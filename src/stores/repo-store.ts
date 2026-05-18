@@ -105,7 +105,7 @@ import {
   addRecentRepo,
   getRecentRepos,
   removeRecentRepo,
-  updateRepoForgeKind,
+  updateRepoForgeInfo,
   getUiState,
   setUiState,
   type RecentRepo,
@@ -1975,7 +1975,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ forgeStatus: status });
       const path = get().repoPath;
       if (path && status.kind) {
-        updateRepoForgeKind(path, status.kind).catch(() => {});
+        updateRepoForgeInfo(
+          path,
+          status.kind,
+          status.host ?? null,
+          status.owner ?? null,
+          status.repo ?? null,
+        ).catch(() => {});
       }
     } catch {
       // Forge detection is non-critical
