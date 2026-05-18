@@ -16,6 +16,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
+import { getProfileForgeHosts, type ProfileForgeHost } from "@/lib/database";
 import { getInitials, getContrastColor, PROFILE_COLORS, PROFILE_ICONS } from "@/lib/avatar";
 import {
   saveForgeToken as saveForgeTokenCmd,
@@ -607,10 +608,38 @@ function ProfileEdit({
 
 // ── Forge tokens per profile ────────────────────────────────────────────────
 
-const FORGE_HOSTS: { host: string; label: string; kind: ForgeKind; oauthProvider: "github" | "gitlab"; hasOAuth: boolean; tokenDocsUrl: string; placeholder: string; scopes: string[] }[] = [
+type ForgeHostSpec = { host: string; label: string; kind: ForgeKind; oauthProvider: "github" | "gitlab"; hasOAuth: boolean; tokenDocsUrl: string; placeholder: string; scopes: string[] };
+
+const FORGE_HOSTS: ForgeHostSpec[] = [
   { host: "github.com", label: "GitHub", kind: "github", oauthProvider: "github", hasOAuth: true, tokenDocsUrl: "https://github.com/settings/tokens", placeholder: "ghp_...", scopes: ["repo — push, pull, fetch, PR detection"] },
   { host: "gitlab.com", label: "GitLab", kind: "gitlab", oauthProvider: "gitlab", hasOAuth: true, tokenDocsUrl: "https://gitlab.com/-/user_settings/personal_access_tokens/legacy/new", placeholder: "glpat-...", scopes: ["read_api — PR/MR detection", "write_repository — push, pull, fetch"] },
 ];
+
+function buildSelfHostedSpec(host: string, kind: ForgeKind): ForgeHostSpec {
+  if (kind === "gitlab") {
+    return {
+      host,
+      label: host,
+      kind,
+      oauthProvider: "gitlab",
+      hasOAuth: false,
+      tokenDocsUrl: `https://${host}/-/user_settings/personal_access_tokens`,
+      placeholder: "glpat-...",
+      scopes: ["read_api — PR/MR detection", "write_repository — push, pull, fetch"],
+    };
+  }
+  // GitHub Enterprise
+  return {
+    host,
+    label: host,
+    kind,
+    oauthProvider: "github",
+    hasOAuth: false,
+    tokenDocsUrl: `https://${host}/settings/tokens`,
+    placeholder: "ghp_...",
+    scopes: ["repo — push, pull, fetch, PR detection"],
+  };
+}
 
 function ForgeTokensSection({ profileId }: { profileId: string }) {
   const [tokenInfos, setTokenInfos] = useState<Record<string, TokenInfo | null>>({});
@@ -619,14 +648,41 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
   const [tokenInput, setTokenInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [oauthWaitingHost, setOauthWaitingHost] = useState<string | null>(null);
+  const [profileHosts, setProfileHosts] = useState<ProfileForgeHost[]>([]);
   const loadForgeStatus = useRepoStore((s) => s.loadForgeStatus);
+
+  // Defaults always shown (they have OAuth), plus any host this profile has repos on.
+  const hosts: ForgeHostSpec[] = (() => {
+    const list = [...FORGE_HOSTS];
+    for (const ph of profileHosts) {
+      if (!list.some((h) => h.host === ph.host)) {
+        list.push(buildSelfHostedSpec(ph.host, ph.kind as ForgeKind));
+      }
+    }
+    return list;
+  })();
+
+  const reposByHost: Record<string, { owner: string; repo: string; path: string }[]> = {};
+  for (const ph of profileHosts) reposByHost[ph.host] = ph.repos;
+
+  useEffect(() => {
+    let cancelled = false;
+    getProfileForgeHosts(profileId)
+      .then((rows) => {
+        if (!cancelled) setProfileHosts(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setProfileHosts([]);
+      });
+    return () => { cancelled = true; };
+  }, [profileId]);
 
   useEffect(() => {
     let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingInfo(true);
     Promise.all(
-      FORGE_HOSTS.map(({ host }) =>
+      hosts.map(({ host }) =>
         getTokenInfo(profileId, host)
           .then((info) => ({ host, info }))
           .catch(() => ({ host, info: null as TokenInfo | null }))
@@ -639,7 +695,9 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
       setLoadingInfo(false);
     });
     return () => { cancelled = true; };
-  }, [profileId]);
+    // hosts is derived from profileHosts; depend on its serialised host list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, profileHosts.map((p) => p.host).join(",")]);
 
   const fetchHostTokenInfo = useCallback(async (host: string, retries = 2): Promise<TokenInfo | null> => {
     for (let i = 0; i <= retries; i++) {
@@ -714,7 +772,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
       </p>
 
       <div className="space-y-2">
-        {FORGE_HOSTS.map(({ host, label, kind, oauthProvider, hasOAuth, tokenDocsUrl, placeholder, scopes }) => {
+        {hosts.map(({ host, label, kind, oauthProvider, hasOAuth, tokenDocsUrl, placeholder, scopes }) => {
           const info = tokenInfos[host];
           const hasToken = info != null;
           const isEditing = editingHost === host;
@@ -751,6 +809,19 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                   <span className="text-label text-faint">Not connected</span>
                 )}
               </div>
+
+              {/* Repos using this host (from this profile's recent repos) */}
+              {reposByHost[host]?.length > 0 && (
+                <ul className="space-y-0.5 pl-5 text-label text-muted-foreground">
+                  {reposByHost[host].map((r) => (
+                    <li key={r.path} className="truncate">
+                      <span className="text-foreground">{r.owner}</span>
+                      <span className="text-faint">/</span>
+                      <span className="text-foreground">{r.repo}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               {/* OAuth waiting state */}
               {isWaiting ? (

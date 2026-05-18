@@ -19,6 +19,8 @@ import type {
   TagInfo,
   UndoAction,
 } from "@/types/git";
+import type { GraphColumnVisibility } from "@/components/graph/commit-graph-canvas";
+import type { DateFormatId } from "@/lib/date-format";
 import {
   openRepo,
   getCommits,
@@ -103,7 +105,7 @@ import {
   addRecentRepo,
   getRecentRepos,
   removeRecentRepo,
-  updateRepoForgeKind,
+  updateRepoForgeInfo,
   getUiState,
   setUiState,
   type RecentRepo,
@@ -340,6 +342,11 @@ interface RepoState {
   /** Whether long lines wrap in the diff viewer */
   diffWrapLines: boolean;
 
+  /** Which optional graph columns are visible (global) */
+  graphColumnVisibility: GraphColumnVisibility;
+  /** Date format used in the graph date column (global) */
+  graphDateFormat: DateFormatId;
+
   // Actions
   openRepository: (path: string) => Promise<void>;
   loadRecentRepos: () => Promise<void>;
@@ -440,6 +447,9 @@ interface RepoState {
   setImageDiffViewMode: (mode: "side-by-side" | "swipe") => void;
   setDiffWrapLines: (on: boolean) => void;
   loadDiffPreferences: () => Promise<void>;
+  setGraphColumnVisibility: (v: GraphColumnVisibility) => void;
+  setGraphDateFormat: (f: DateFormatId) => void;
+  loadGraphPreferences: () => Promise<void>;
 
   // LFS actions
   loadLfsInfo: (full?: boolean) => Promise<void>;
@@ -539,6 +549,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   diffViewMode: "unified",
   imageDiffViewMode: "side-by-side",
   diffWrapLines: true,
+  graphColumnVisibility: { sha: false, author: false, date: false },
+  graphDateFormat: "short",
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
@@ -1963,7 +1975,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ forgeStatus: status });
       const path = get().repoPath;
       if (path && status.kind) {
-        updateRepoForgeKind(path, status.kind).catch(() => {});
+        updateRepoForgeInfo(
+          path,
+          status.kind,
+          status.host ?? null,
+          status.owner ?? null,
+          status.repo ?? null,
+        ).catch(() => {});
       }
     } catch {
       // Forge detection is non-critical
@@ -2059,6 +2077,42 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       if (wrapLines === "true" || wrapLines === "false") {
         update.diffWrapLines = wrapLines === "true";
+      }
+      if (Object.keys(update).length > 0) set(update);
+    } catch {
+      // DB might not be ready yet — use defaults
+    }
+  },
+
+  setGraphColumnVisibility: (v) => {
+    set({ graphColumnVisibility: v });
+    setUiState("graph_column_visibility", JSON.stringify(v)).catch(() => {});
+  },
+
+  setGraphDateFormat: (f) => {
+    set({ graphDateFormat: f });
+    setUiState("graph_date_format", f).catch(() => {});
+  },
+
+  loadGraphPreferences: async () => {
+    try {
+      const [visRaw, fmtRaw] = await Promise.all([
+        getUiState("graph_column_visibility"),
+        getUiState("graph_date_format"),
+      ]);
+      const update: Partial<RepoState> = {};
+      if (visRaw) {
+        try {
+          const parsed = JSON.parse(visRaw) as Record<string, unknown>;
+          update.graphColumnVisibility = {
+            sha: parsed.sha === true,
+            author: parsed.author === true,
+            date: parsed.date === true,
+          };
+        } catch { /* malformed — keep default */ }
+      }
+      if (fmtRaw === "relative" || fmtRaw === "short" || fmtRaw === "long" || fmtRaw === "iso") {
+        update.graphDateFormat = fmtRaw;
       }
       if (Object.keys(update).length > 0) set(update);
     } catch {

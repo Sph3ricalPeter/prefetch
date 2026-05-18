@@ -21,6 +21,7 @@ function DatabaseInit() {
   const loadRecentRepos = useRepoStore((s) => s.loadRecentRepos);
   const loadFileViewMode = useRepoStore((s) => s.loadFileViewMode);
   const loadDiffPreferences = useRepoStore((s) => s.loadDiffPreferences);
+  const loadGraphPreferences = useRepoStore((s) => s.loadGraphPreferences);
   const openRepository = useRepoStore((s) => s.openRepository);
   const loadProfiles = useProfileStore((s) => s.loadProfiles);
   const restoreActiveProfile = useProfileStore((s) => s.restoreActiveProfile);
@@ -37,6 +38,7 @@ function DatabaseInit() {
           loadRecentRepos(),
           loadFileViewMode(),
           loadDiffPreferences(),
+          loadGraphPreferences(),
           loadThemePreferences(),
           loadProfiles().then(() => restoreActiveProfile()),
           // Restore saved auto-fetch interval so the Rust fetcher uses
@@ -64,7 +66,7 @@ function DatabaseInit() {
     };
     tryInit();
     return () => { cancelled = true; };
-  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadThemePreferences, loadProfiles, restoreActiveProfile, openRepository]);
+  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadGraphPreferences, loadThemePreferences, loadProfiles, restoreActiveProfile, openRepository]);
 
   return null;
 }

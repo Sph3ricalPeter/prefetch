@@ -64,6 +64,15 @@ export async function initDatabase(): Promise<void> {
     // Column already exists — ignore
   }
 
+  // Add forge_host / forge_owner / forge_repo columns to recent_repos (migration)
+  for (const col of ["forge_host", "forge_owner", "forge_repo"]) {
+    try {
+      await db.execute(`ALTER TABLE recent_repos ADD COLUMN ${col} TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+
   // Add color column to profiles (migration)
   try {
     await db.execute(
@@ -155,6 +164,15 @@ export interface RecentRepo {
   last_opened_at: number;
   profile_id: string | null;
   forge_kind: string | null;
+  forge_host: string | null;
+  forge_owner: string | null;
+  forge_repo: string | null;
+}
+
+export interface ProfileForgeHost {
+  host: string;
+  kind: string;
+  repos: { owner: string; repo: string; path: string }[];
 }
 
 /** Add or update a repo in the recent list. */
@@ -179,15 +197,53 @@ export async function getRecentRepos(
 ): Promise<RecentRepo[]> {
   if (profileId) {
     return await getDb().select<RecentRepo[]>(
-      `SELECT path, name, last_opened_at, profile_id, forge_kind FROM recent_repos
+      `SELECT path, name, last_opened_at, profile_id, forge_kind, forge_host, forge_owner, forge_repo FROM recent_repos
        WHERE profile_id = $1 OR profile_id IS NULL
        ORDER BY last_opened_at DESC LIMIT 20`,
       [profileId],
     );
   }
   return await getDb().select<RecentRepo[]>(
-    "SELECT path, name, last_opened_at, profile_id, forge_kind FROM recent_repos ORDER BY last_opened_at DESC LIMIT 20",
+    "SELECT path, name, last_opened_at, profile_id, forge_kind, forge_host, forge_owner, forge_repo FROM recent_repos ORDER BY last_opened_at DESC LIMIT 20",
   );
+}
+
+/** Get distinct forge hosts (with their repos) associated with a profile. */
+export async function getProfileForgeHosts(
+  profileId: string,
+): Promise<ProfileForgeHost[]> {
+  const rows = await getDb().select<{
+    forge_host: string;
+    forge_kind: string;
+    forge_owner: string | null;
+    forge_repo: string | null;
+    path: string;
+  }[]>(
+    `SELECT forge_host, forge_kind, forge_owner, forge_repo, path
+     FROM recent_repos
+     WHERE profile_id = $1
+       AND forge_host IS NOT NULL
+       AND forge_kind IS NOT NULL
+     ORDER BY last_opened_at DESC`,
+    [profileId],
+  );
+  const byHost = new Map<string, ProfileForgeHost>();
+  for (const r of rows) {
+    let entry = byHost.get(r.forge_host);
+    if (!entry) {
+      entry = { host: r.forge_host, kind: r.forge_kind, repos: [] };
+      byHost.set(r.forge_host, entry);
+    }
+    if (r.forge_owner && r.forge_repo) {
+      const dup = entry.repos.some(
+        (x) => x.owner === r.forge_owner && x.repo === r.forge_repo,
+      );
+      if (!dup) {
+        entry.repos.push({ owner: r.forge_owner, repo: r.forge_repo, path: r.path });
+      }
+    }
+  }
+  return [...byHost.values()];
 }
 
 /** Get the profile ID last associated with a specific repo path. */
@@ -212,14 +268,19 @@ export async function updateRepoProfile(
   );
 }
 
-/** Update the forge kind for a repo already in the recent list. */
-export async function updateRepoForgeKind(
+/** Update forge metadata (kind + host + owner + repo) for a repo. */
+export async function updateRepoForgeInfo(
   repoPath: string,
   forgeKind: string | null,
+  forgeHost: string | null,
+  forgeOwner: string | null,
+  forgeRepo: string | null,
 ): Promise<void> {
   await getDb().execute(
-    "UPDATE recent_repos SET forge_kind = $1 WHERE path = $2",
-    [forgeKind, repoPath],
+    `UPDATE recent_repos
+     SET forge_kind = $1, forge_host = $2, forge_owner = $3, forge_repo = $4
+     WHERE path = $5`,
+    [forgeKind, forgeHost, forgeOwner, forgeRepo, repoPath],
   );
 }
 

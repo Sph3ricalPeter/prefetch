@@ -1179,7 +1179,7 @@ export function CommitGraphCanvas({
 
     // --- Edges (offset by rowOffset) — batched by color to minimize stroke() calls ---
     ctx.lineWidth = 2;
-    const edgesByColor = new Map<string, { fX: number; fY: number; tX: number; tY: number; sameLane: boolean }[]>();
+    const edgesByColor = new Map<string, { fX: number; fY: number; tX: number; tY: number; sameLane: boolean; isMerge: boolean }[]>();
     for (const edge of edges) {
       const fromRow = edge.from_row + rowOffset;
       const toRow = edge.to_row + rowOffset;
@@ -1204,6 +1204,7 @@ export function CommitGraphCanvas({
         tX: laneX(edge.to_lane),
         tY: toRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2,
         sameLane: edge.from_lane === edge.to_lane,
+        isMerge: edge.edge_type === "Merge",
       });
     }
     ctx.globalAlpha = 0.7;
@@ -1221,12 +1222,20 @@ export function CommitGraphCanvas({
         if (s.sameLane) {
           ctx.lineTo(s.tX, s.tY);
         } else {
-          // GitKraken-style L-shaped edge: horizontal from source to
-          // target's lane, one constant-radius corner, then vertical
-          // straight down into the target node from above.
+          // GitKraken-style L-shaped edge with one constant-radius corner.
+          // Convex at divergence (Straight first-parent edge): corner near
+          // the target row — vertical down the source lane then curve into
+          // the older parent on the side.
+          // Concave at merge (Merge edge): corner near the source row —
+          // horizontal off the merge commit then vertical down into the
+          // merge-parent's lane.
           const maxR = Math.min(Math.abs(s.tY - s.fY), Math.abs(s.tX - s.fX));
           const r = Math.min(CURVE_RADIUS, maxR);
-          ctx.arcTo(s.tX, s.fY, s.tX, s.tY, r);
+          if (s.isMerge) {
+            ctx.arcTo(s.tX, s.fY, s.tX, s.tY, r);
+          } else {
+            ctx.arcTo(s.fX, s.tY, s.tX, s.tY, r);
+          }
           ctx.lineTo(s.tX, s.tY);
         }
       }
