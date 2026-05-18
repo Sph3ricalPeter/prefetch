@@ -129,11 +129,22 @@ pub async fn search_user_avatar(
     offload(move || {
         let config = forge::detect_forge(&path)?;
         match config {
-            None => Ok(None),
+            None => {
+                tracing::debug!(email = %email, "search_user_avatar: no forge detected");
+                Ok(None)
+            }
             Some(cfg) => {
                 let token =
                     forge::load_token_for_profile(profile_id.as_deref(), &cfg.host).unwrap_or(None);
-                Ok(forge::search_user_avatar(&cfg.host, &token, &email))
+                tracing::debug!(
+                    email = %email,
+                    host = %cfg.host,
+                    has_token = token.is_some(),
+                    "search_user_avatar: calling forge API"
+                );
+                let result = forge::search_user_avatar(&cfg.host, &token, &email);
+                tracing::debug!(email = %email, result = ?result, "search_user_avatar: result");
+                Ok(result)
             }
         }
     })

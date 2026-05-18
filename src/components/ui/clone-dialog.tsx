@@ -21,6 +21,7 @@ import { useProfileStore } from "@/stores/profile-store";
 import { listForgeRepos, cloneRepo, checkProfileToken } from "@/lib/commands";
 import { GitHubIcon, GitLabIcon } from "@/components/ui/forge-icons";
 import type { ForgeKind, ForgeRepo } from "@/types/git";
+import type { SettingsTarget } from "@/components/ui/settings-page";
 
 const FORGE_HOSTS: { kind: ForgeKind; host: string; label: string }[] = [
   { kind: "github", host: "github.com", label: "GitHub" },
@@ -29,7 +30,7 @@ const FORGE_HOSTS: { kind: ForgeKind; host: string; label: string }[] = [
 
 interface CloneDialogProps {
   onClose: () => void;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (target?: SettingsTarget) => void;
 }
 
 type Tab = "forge" | "url";
@@ -108,7 +109,7 @@ function TabPill({
 
 type ForgeStep = "pick-provider" | "pick-repo";
 
-function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSettings?: () => void }) {
+function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSettings?: (target?: SettingsTarget) => void }) {
   const activeProfile = useProfileStore((s) => s.activeProfile);
   const profileId = activeProfile?.id ?? undefined;
 
@@ -253,7 +254,7 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
             {Object.values(tokenStatus).some((v) => !v) && (
               <div className="pt-2 flex items-center justify-center">
                 <button
-                  onClick={() => { onClose(); onOpenSettings?.(); }}
+                  onClick={() => { onClose(); onOpenSettings?.({ tab: "profiles" }); }}
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Settings className="h-3 w-3" />

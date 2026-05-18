@@ -3,8 +3,6 @@ import {
   ChevronDown,
   ChevronRight,
   Tag,
-  ArrowUpFromLine,
-  Trash2,
   Plus,
 } from "lucide-react";
 import {
@@ -13,6 +11,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
+import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 
 export function TagList({ filter = "" }: { filter?: string }) {
   const allTags = useRepoStore((s) => s.tags);
@@ -20,11 +19,16 @@ export function TagList({ filter = "" }: { filter?: string }) {
   const createNewTag = useRepoStore((s) => s.createNewTag);
   const deleteExistingTag = useRepoStore((s) => s.deleteExistingTag);
   const pushExistingTag = useRepoStore((s) => s.pushExistingTag);
-  const isLoading = useRepoStore((s) => s.isLoading);
   const [isOpen, setIsOpen] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [newTagMessage, setNewTagMessage] = useState("");
+  const [tagContextMenu, setTagContextMenu] = useState<{
+    tagName: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
 
   const tags = filter
     ? allTags.filter((t) =>
@@ -137,6 +141,10 @@ export function TagList({ filter = "" }: { filter?: string }) {
           {tags.map((tag) => (
             <div
               key={tag.name}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setTagContextMenu({ tagName: tag.name, x: e.clientX, y: e.clientY });
+              }}
               className="group flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors"
             >
               <Tag className="h-3 w-3 shrink-0" />
@@ -144,44 +152,76 @@ export function TagList({ filter = "" }: { filter?: string }) {
               <span className="shrink-0 text-faint text-xs">
                 {tag.commit_id}
               </span>
-
-              {/* Push button */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      pushExistingTag(tag.name);
-                    }}
-                    disabled={isLoading}
-                    className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground transition-all disabled:opacity-40"
-                  >
-                    <ArrowUpFromLine className="h-3 w-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>Push to remote</TooltipContent>
-              </Tooltip>
-
-              {/* Delete button */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteExistingTag(tag.name);
-                    }}
-                    disabled={isLoading}
-                    className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive-foreground transition-all disabled:opacity-40"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>Delete tag</TooltipContent>
-              </Tooltip>
             </div>
           ))}
         </div>
       )}
+
+      {/* Tag context menu */}
+      {tagContextMenu && (
+        <ContextMenu
+          x={tagContextMenu.x}
+          y={tagContextMenu.y}
+          items={buildTagContextMenuItems(
+            tagContextMenu.tagName,
+            pushExistingTag,
+            (name) => setConfirmDeleteTag(name),
+          )}
+          onClose={() => setTagContextMenu(null)}
+        />
+      )}
+
+      {/* Delete tag confirmation */}
+      {confirmDeleteTag != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
+            <p className="text-sm text-foreground mb-1">Delete tag?</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              This will delete the local tag &quot;{confirmDeleteTag}&quot;. If it has been pushed, the remote tag is not affected.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteTag(null)}
+                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  deleteExistingTag(confirmDeleteTag);
+                  setConfirmDeleteTag(null);
+                }}
+                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function buildTagContextMenuItems(
+  tagName: string,
+  pushTag: (name: string) => void,
+  confirmDelete: (name: string) => void,
+): ContextMenuItem[] {
+  return [
+    {
+      label: "Push to remote",
+      onClick: () => pushTag(tagName),
+    },
+    {
+      label: "Copy tag name",
+      onClick: () => navigator.clipboard.writeText(tagName),
+    },
+    { separator: true },
+    {
+      label: `Delete ${tagName}…`,
+      onClick: () => confirmDelete(tagName),
+      destructive: true,
+    },
+  ];
 }

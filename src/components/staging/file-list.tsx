@@ -71,6 +71,7 @@ export function FileList() {
   }, [unstage]);
 
   const [confirmDiscard, setConfirmDiscard] = useState<string[] | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [conflictsOpen, setConflictsOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(true);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
@@ -380,6 +381,18 @@ export function FileList() {
         />
       )}
 
+      {/* Delete confirmation dialog */}
+      {confirmDelete && (
+        <DeleteDialog
+          path={confirmDelete}
+          onConfirm={() => {
+            deleteFile(confirmDelete);
+            setConfirmDelete(null);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
       {/* File context menu */}
       {fileContextMenu && (
         <ContextMenu
@@ -394,7 +407,7 @@ export function FileList() {
             stashFiles,
             openInEditor,
             showInFolder,
-            deleteFile,
+            (path) => setConfirmDelete(path),
           )}
           onClose={() => setFileContextMenu(null)}
         />
@@ -942,7 +955,7 @@ function TreeNodeView({
       <span className="truncate text-xs text-foreground">{node.name}</span>
       <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
       {isLfs && (
-        <span className="shrink-0 rounded px-1 py-px text-caption font-medium leading-none bg-blue-500/20 text-blue-400">
+        <span className="shrink-0 rounded px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
           LFS
         </span>
       )}
@@ -1039,7 +1052,7 @@ function FileRow({
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
         {isLfs && (
-          <span className="shrink-0 rounded px-1 py-px text-caption font-medium leading-none bg-blue-500/20 text-blue-400">
+          <span className="shrink-0 rounded px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
             LFS
           </span>
         )}
@@ -1431,6 +1444,43 @@ function DiscardDialog({
             className="rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
           >
             Discard
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteDialog({
+  path,
+  onConfirm,
+  onCancel,
+}: {
+  path: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const fileName = path.split("/").pop() ?? path;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
+        <p className="text-sm text-foreground mb-1">Delete file?</p>
+        <p className="text-xs text-muted-foreground mb-4">
+          Permanently delete &quot;{fileName}&quot; from disk. This cannot be undone.
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+          >
+            Delete
           </button>
         </div>
       </div>

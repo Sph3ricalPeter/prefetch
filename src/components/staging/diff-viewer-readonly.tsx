@@ -248,10 +248,10 @@ function UnifiedDiffLineImpl({ line, tokens, ranges, wrapClass }: UnifiedDiffLin
 
   return (
     <div className={`flex ${bgClass} ${isContext ? "opacity-80" : ""} group`} style={LINE_CONTAINMENT}>
-      <span className="w-10 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-10 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-caption">
         {line.old_lineno ?? ""}
       </span>
-      <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
         {line.new_lineno ?? ""}
       </span>
       <span className={`w-5 shrink-0 text-center select-none ${originClass}`}>
@@ -314,7 +314,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
             }`}>
               {pair.left ? (
                 <>
-                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-[10px]">
+                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-caption">
                     {pair.left.old_lineno ?? ""}
                   </span>
                   <span className={`w-5 shrink-0 text-center select-none ${
@@ -345,7 +345,7 @@ function SideBySideHunk({ hunk, hunkTokens, wrapClass, fileTokens, oldFileTokens
             }`}>
               {pair.right ? (
                 <>
-                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-[10px]">
+                  <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-caption">
                     {pair.right.new_lineno ?? ""}
                   </span>
                   <span className={`w-5 shrink-0 text-center select-none ${
@@ -462,7 +462,7 @@ function DiffExpandSeparator({ remainingCount, onExpandAll }: DiffExpandSeparato
       <button
         onClick={onExpandAll}
         title="Expand all hidden lines"
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption hover:bg-accent hover:text-foreground transition-colors"
       >
         <UnfoldVertical className="w-3 h-3" />
         <span>{remainingCount} hidden lines</span>
@@ -487,7 +487,7 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
         return (
           <div key={i} className="flex opacity-80">
             <div className="flex flex-1 min-w-0 overflow-hidden border-r border-border">
-              <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+              <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
                 {line.old_lineno ?? ""}
               </span>
               <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />
@@ -500,7 +500,7 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
               </pre>
             </div>
             <div className="flex flex-1 min-w-0 overflow-hidden">
-              <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+              <span className="w-10 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
                 {line.new_lineno ?? ""}
               </span>
               <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />

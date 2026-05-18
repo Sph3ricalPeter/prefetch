@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, ChevronRight, AlertTriangle, KeyRound, Globe } from "lucide-react";
-import { ForgeIcon } from "@/components/ui/forge-icons";
+import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
-import { gravatarUrl } from "@/lib/gravatar";
-import { getTokenInfo, searchUserAvatar } from "@/lib/commands";
+import { getTokenInfo } from "@/lib/commands";
 import type { TokenInfo } from "@/lib/commands";
 import {
   Tooltip,
@@ -12,6 +10,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ProfileAvatar } from "@/components/ui/avatar";
 
 const SOURCE_LABELS: Record<string, string> = {
   local: "Local repo config",
@@ -20,39 +19,6 @@ const SOURCE_LABELS: Record<string, string> = {
   profile: "Profile",
   unknown: "Unknown source",
 };
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase() || "?";
-}
-
-/** Tries Gravatar first, then forge API; returns the URL on success, null on failure. */
-function useAvatar(email: string | undefined): string | null {
-  const [loaded, setLoaded] = useState<{ email: string; url: string } | null>(null);
-
-  useEffect(() => {
-    if (!email) return;
-    let cancelled = false;
-    const src = gravatarUrl(email, 40);
-    const img = new Image();
-    img.onload = () => {
-      if (!cancelled) setLoaded({ email, url: src });
-    };
-    img.onerror = () => {
-      // Gravatar failed — try forge API
-      searchUserAvatar(email).then((forgeUrl) => {
-        if (!cancelled && forgeUrl) setLoaded({ email, url: forgeUrl });
-      }).catch(() => {});
-    };
-    img.src = src;
-    return () => { cancelled = true; };
-  }, [email]);
-
-  return email && loaded?.email === email ? loaded.url : null;
-}
 
 /** localStorage key for the commit message draft, scoped to the repo path. */
 function draftKey(repoPath: string) {
@@ -68,7 +34,6 @@ export function CommitBox() {
   const fileStatuses = useRepoStore((s) => s.fileStatuses);
   const isLoading = useRepoStore((s) => s.isLoading);
   const gitIdentity = useRepoStore((s) => s.gitIdentity);
-  const avatarUrl = useAvatar(gitIdentity?.email);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
   const activeProfile = useProfileStore((s) => s.activeProfile);
   const conflictState = useRepoStore((s) => s.conflictState);
@@ -230,36 +195,20 @@ export function CommitBox() {
         <Tooltip>
           <TooltipTrigger asChild>
             <div className="flex items-center gap-2 cursor-default">
-              {avatarUrl ? (
-                <img
-                  src={avatarUrl}
-                  alt={gitIdentity.name}
-                  className="h-5 w-5 shrink-0 rounded-full"
-                />
-              ) : (
-                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-caption font-bold text-primary">
-                  {getInitials(gitIdentity.name)}
-                </div>
-              )}
+              <ProfileAvatar
+                name={gitIdentity.name}
+                email={gitIdentity.email}
+                size={20}
+                color={activeProfile?.color}
+                icon={activeProfile?.icon}
+                avatarUrl={activeProfile?.avatar_url}
+              />
               <span className="text-xs text-muted-foreground truncate">
                 {gitIdentity.name}
               </span>
-              {authInfo ? (
-                <span className="ml-auto flex items-center gap-1 rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
-                  {forgeStatus?.kind ? (
-                    <ForgeIcon kind={forgeStatus.kind} className="h-2.5 w-2.5" />
-                  ) : authInfo.token_type === "oauth" ? (
-                    <Globe className="h-2.5 w-2.5" />
-                  ) : (
-                    <KeyRound className="h-2.5 w-2.5" />
-                  )}
-                  {authInfo.token_type === "oauth" ? "OAuth" : "PAT"}
-                </span>
-              ) : (
-                <span className="ml-auto rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
-                  {gitIdentity.source}
-                </span>
-              )}
+              <span className="ml-auto rounded bg-accent px-1.5 py-0.5 text-label text-dim shrink-0">
+                {gitIdentity.source}
+              </span>
             </div>
           </TooltipTrigger>
           <TooltipContent side="top" align="start">

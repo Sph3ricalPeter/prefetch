@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Settings2,
@@ -12,7 +12,12 @@ import { AppearanceSection } from "./settings/appearance-section";
 import { ProfilesSection } from "./settings/profiles-section";
 import { LfsSection } from "./settings/lfs-section";
 
-type SettingsTab = "general" | "appearance" | "profiles" | "lfs";
+export type SettingsTab = "general" | "appearance" | "profiles" | "lfs";
+
+export interface SettingsTarget {
+  tab: SettingsTab;
+  profileId?: string;
+}
 
 const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: "general", label: "General", icon: <Settings2 className="h-3.5 w-3.5" /> },
@@ -23,13 +28,27 @@ const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
 
 interface SettingsPageProps {
   onClose: () => void;
+  initialTab?: SettingsTab;
+  focusProfileId?: string;
   sidebarWidth?: number;
   onSidebarResize?: (width: number) => void;
 }
 
-export function SettingsPage({ onClose, sidebarWidth = 256, onSidebarResize }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+export function SettingsPage({ onClose, initialTab = "general", focusProfileId, sidebarWidth = 256, onSidebarResize }: SettingsPageProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const navRef = useRef<HTMLDivElement>(null);
+
+  // Mouse back button (button 3) closes settings
+  useEffect(() => {
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 3) {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, [onClose]);
 
   return (
     <div className="flex h-full">
@@ -84,7 +103,7 @@ export function SettingsPage({ onClose, sidebarWidth = 256, onSidebarResize }: S
         <div className="max-w-3xl mx-auto px-8 py-6">
           {activeTab === "general" && <GeneralSection />}
           {activeTab === "appearance" && <AppearanceSection />}
-          {activeTab === "profiles" && <ProfilesSection />}
+          {activeTab === "profiles" && <ProfilesSection focusProfileId={focusProfileId} />}
           {activeTab === "lfs" && <LfsSection />}
         </div>
       </div>

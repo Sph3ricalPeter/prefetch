@@ -45,6 +45,11 @@ export async function getBranches(): Promise<BranchInfo[]> {
   return tracedInvoke<BranchInfo[]>("get_branches");
 }
 
+/** Branches + tags sorted by their tip commit's committerdate, MRU first. */
+export async function getRefMru(): Promise<Array<[string, number]>> {
+  return tracedInvoke<Array<[string, number]>>("get_ref_mru");
+}
+
 export async function checkoutBranch(name: string): Promise<void> {
   return tracedInvoke<void>("checkout_branch", { name });
 }

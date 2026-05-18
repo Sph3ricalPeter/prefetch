@@ -1,0 +1,315 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Settings, Check } from "lucide-react";
+import type { GraphColumnWidths, GraphColumnVisibility } from "./commit-graph-canvas";
+
+const HEADER_HEIGHT = 24;
+const HANDLE_HIT = 6;
+
+const COL_SHA_MIN = 50;
+const COL_SHA_MAX = 150;
+const COL_AUTHOR_MIN = 80;
+const COL_AUTHOR_MAX = 400;
+const COL_DATE_MIN = 60;
+const COL_DATE_MAX = 170;
+
+interface GraphHeaderProps {
+  widths: GraphColumnWidths;
+  containerWidth: number;
+  badgeMin: number;
+  badgeMax: number;
+  graphMin: number;
+  graphMax: number;
+  visibility: GraphColumnVisibility;
+  onResize: (widths: GraphColumnWidths) => void;
+  onResizeEnd: (widths: GraphColumnWidths) => void;
+  onVisibilityChange: (visibility: GraphColumnVisibility) => void;
+}
+
+type DragKind = "badge" | "graph" | "sha" | "author" | "date";
+
+export function GraphHeader({
+  widths,
+  containerWidth,
+  badgeMin,
+  badgeMax,
+  graphMin,
+  graphMax,
+  visibility,
+  onResize,
+  onResizeEnd,
+  onVisibilityChange,
+}: GraphHeaderProps) {
+  const [dragging, setDragging] = useState<DragKind | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const dragStart = useRef<{ x: number; widths: GraphColumnWidths }>({
+    x: 0,
+    widths: widths,
+  });
+  const widthsRef = useRef(widths);
+  const onResizeRef = useRef(onResize);
+  const onResizeEndRef = useRef(onResizeEnd);
+  useEffect(() => { widthsRef.current = widths; }, [widths]);
+  useEffect(() => { onResizeRef.current = onResize; }, [onResize]);
+  useEffect(() => { onResizeEndRef.current = onResizeEnd; }, [onResizeEnd]);
+
+  const startDrag = useCallback(
+    (kind: DragKind) => (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragStart.current = { x: e.clientX, widths: { ...widths } };
+      setDragging(kind);
+    },
+    [widths],
+  );
+
+  useEffect(() => {
+    if (!dragging) return;
+    const clamp = (v: number, min: number, max: number) =>
+      Math.max(min, Math.min(max, v));
+
+    const onMove = (e: MouseEvent) => {
+      const delta = e.clientX - dragStart.current.x;
+      const current = widthsRef.current;
+      const start = dragStart.current.widths;
+
+      if (dragging === "badge") {
+        onResizeRef.current({ ...current, badge: clamp(start.badge + delta, badgeMin, badgeMax) });
+      } else if (dragging === "graph") {
+        onResizeRef.current({ ...current, graph: clamp(start.graph + delta, graphMin, graphMax) });
+      } else if (dragging === "sha") {
+        onResizeRef.current({ ...current, sha: clamp(start.sha + delta, COL_SHA_MIN, COL_SHA_MAX) });
+      } else if (dragging === "author") {
+        onResizeRef.current({ ...current, author: clamp(start.author - delta, COL_AUTHOR_MIN, COL_AUTHOR_MAX) });
+      } else if (dragging === "date") {
+        onResizeRef.current({ ...current, date: clamp(start.date - delta, COL_DATE_MIN, COL_DATE_MAX) });
+      }
+    };
+
+    const onUp = () => {
+      onResizeEndRef.current(widthsRef.current);
+      setDragging(null);
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [dragging, badgeMin, badgeMax, graphMin, graphMax]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+    };
+  }, [dragging]);
+
+  // Click outside to close settings dropdown
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [settingsOpen]);
+
+  // Column positions
+  const badgeRight = widths.badge;
+  const graphRight = badgeRight + widths.graph;
+  const shaWidth = visibility.sha ? widths.sha : 0;
+  const shaRight = graphRight + shaWidth;
+  const dateWidth = visibility.date ? widths.date : 0;
+  const authorWidth = visibility.author ? widths.author : 0;
+  const rightColsWidth = dateWidth + authorWidth;
+  const authorLeft = Math.max(shaRight, containerWidth - rightColsWidth);
+  const dateLeft = Math.max(shaRight, containerWidth - dateWidth);
+
+  const labelClasses =
+    "text-caption uppercase tracking-widest text-faint select-none";
+  const dividerClasses = "absolute top-1/2 -translate-y-1/2 h-4 w-px bg-border";
+
+  const toggleVis = (key: keyof GraphColumnVisibility) => {
+    onVisibilityChange({ ...visibility, [key]: !visibility[key] });
+  };
+
+  return (
+    <div
+      className="relative shrink-0 border-b border-border bg-background"
+      style={{ height: HEADER_HEIGHT }}
+    >
+      {/* Column labels */}
+      <div
+        className={`absolute inset-y-0 flex items-center pl-3 ${labelClasses}`}
+        style={{ left: 0, width: widths.badge }}
+      >
+        Branch / Tag
+      </div>
+      <div
+        className={`absolute inset-y-0 flex items-center pl-2 ${labelClasses}`}
+        style={{ left: badgeRight, width: widths.graph }}
+      >
+        Graph
+      </div>
+      {visibility.sha && (
+        <div
+          className={`absolute inset-y-0 flex items-center pl-2 ${labelClasses}`}
+          style={{ left: graphRight, width: widths.sha }}
+        >
+          Sha
+        </div>
+      )}
+      <div
+        className={`absolute inset-y-0 flex items-center pl-3 overflow-hidden whitespace-nowrap ${labelClasses}`}
+        style={{
+          left: shaRight,
+          right: rightColsWidth > 0
+            ? Math.max(28, containerWidth - authorLeft + 4)
+            : 28,
+        }}
+      >
+        Commit Message
+      </div>
+      {visibility.author && (
+        <div
+          className={`absolute inset-y-0 flex items-center pl-3 ${labelClasses}`}
+          style={{ left: authorLeft, width: authorWidth }}
+        >
+          Author
+        </div>
+      )}
+      {visibility.date && (
+        <div
+          className={`absolute inset-y-0 flex items-center pl-3 ${labelClasses}`}
+          style={{ left: dateLeft, width: dateWidth }}
+        >
+          Date
+        </div>
+      )}
+
+      {/* Static dividers for right-anchored columns */}
+      {visibility.author && (
+        <div className={dividerClasses} style={{ left: authorLeft }} aria-hidden="true" />
+      )}
+      {visibility.date && (
+        <div className={dividerClasses} style={{ left: dateLeft }} aria-hidden="true" />
+      )}
+
+      {/* Resize handles */}
+      <ResizeDivider
+        x={badgeRight}
+        active={dragging === "badge"}
+        onMouseDown={startDrag("badge")}
+        ariaLabel="Resize branch/tag column"
+      />
+      <ResizeDivider
+        x={graphRight}
+        active={dragging === "graph"}
+        onMouseDown={startDrag("graph")}
+        ariaLabel="Resize graph column"
+      />
+      {visibility.sha && (
+        <div className={dividerClasses} style={{ left: shaRight }} aria-hidden="true" />
+      )}
+      {visibility.author && (
+        <ResizeDivider
+          x={authorLeft}
+          active={dragging === "author"}
+          onMouseDown={startDrag("author")}
+          ariaLabel="Resize author column"
+        />
+      )}
+      {visibility.date && (
+        <ResizeDivider
+          x={dateLeft}
+          active={dragging === "date"}
+          onMouseDown={startDrag("date")}
+          ariaLabel="Resize date column"
+        />
+      )}
+
+      {/* Settings gear */}
+      <div ref={settingsRef} className="absolute right-0 inset-y-0 z-20 flex items-center">
+        <button
+          onClick={() => setSettingsOpen((p) => !p)}
+          className="flex h-full w-7 items-center justify-center text-faint transition-colors hover:text-foreground"
+          aria-label="Column settings"
+        >
+          <Settings className="h-3 w-3" />
+        </button>
+        {settingsOpen && (
+          <div className="absolute right-0 top-full mt-1 min-w-[160px] rounded-md border border-border bg-card shadow-lg">
+            <SettingsToggle label="Sha" checked={visibility.sha} onChange={() => toggleVis("sha")} />
+            <SettingsToggle label="Author" checked={visibility.author} onChange={() => toggleVis("author")} />
+            <SettingsToggle label="Date" checked={visibility.date} onChange={() => toggleVis("date")} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <button
+      onClick={onChange}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
+    >
+      <span className="flex h-3.5 w-3.5 items-center justify-center">
+        {checked && <Check className="h-3 w-3" />}
+      </span>
+      {label}
+    </button>
+  );
+}
+
+interface ResizeDividerProps {
+  x: number;
+  active: boolean;
+  onMouseDown: (e: React.MouseEvent) => void;
+  ariaLabel: string;
+}
+
+function ResizeDivider({
+  x,
+  active,
+  onMouseDown,
+  ariaLabel,
+}: ResizeDividerProps) {
+  return (
+    <div
+      role="separator"
+      aria-label={ariaLabel}
+      aria-orientation="vertical"
+      onMouseDown={onMouseDown}
+      className="group absolute inset-y-0 z-10 cursor-col-resize"
+      style={{
+        left: x - HANDLE_HIT / 2,
+        width: HANDLE_HIT,
+      }}
+    >
+      <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 h-4 w-px bg-border" />
+      <div
+        className={`absolute inset-y-0 left-1/2 -translate-x-1/2 w-px transition-colors ${
+          active ? "bg-accent" : "bg-transparent group-hover:bg-accent"
+        }`}
+      />
+    </div>
+  );
+}

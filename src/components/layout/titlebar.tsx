@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/tooltip";
 import { UpdateIndicator } from "@/components/update-indicator";
 import { ForgeIcon } from "@/components/ui/forge-icons";
+import { ProfileSwitcher } from "@/components/ui/profile-switcher";
+import type { SettingsTarget } from "@/components/ui/settings-page";
 import type { ForgeKind } from "@/types/git";
 
 /** Lazily resolve the Tauri window handle — safe to import outside Tauri context */
@@ -51,7 +53,7 @@ function getAppWindow(): TauriWindow | null {
   return _appWindow;
 }
 
-export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?: boolean; onOpenClone?: () => void }) {
+export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: { settingsOpen?: boolean; onOpenClone?: () => void; onOpenSettings?: (target?: SettingsTarget) => void }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
@@ -77,6 +79,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
   }, []);
 
   return (
+    <>
     <div
       className="relative flex h-10 shrink-0 items-center border-b border-border bg-background select-none"
       data-tauri-drag-region
@@ -96,7 +99,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
             Prefetch
           </span>
         )}
-        <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-caption font-medium tracking-wider text-brand">
+        <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-label font-medium tracking-wider text-brand">
           α{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
         </span>
       </div>
@@ -115,8 +118,11 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
            3. Collapsed dropdown when right-aligned doesn't fit either */}
       {!settingsOpen && <TitlebarActionsGroup />}
 
-      {/* Right: Update indicator + Window controls */}
+      {/* Right: Profile switcher + Update indicator + Window controls */}
       <div className={`flex items-center gap-0.5 ${IS_MAC ? "pr-2.5" : "pr-0"}`}>
+        <div className="mr-1">
+          <ProfileSwitcher onManageProfiles={() => onOpenSettings?.({ tab: "profiles" })} />
+        </div>
         <UpdateIndicator />
         {/* Window controls — Windows/Linux only (macOS uses native traffic lights) */}
         {!IS_MAC && (
@@ -163,6 +169,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone }: { settingsOpen?:
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -175,8 +182,8 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
   const recentRepos = useRepoStore((s) => s.recentRepos);
   const openRepository = useRepoStore((s) => s.openRepository);
   const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
+  const forgeStatus = useRepoStore((s) => s.forgeStatus);
   const profiles = useProfileStore((s) => s.profiles);
-  const commits = useRepoStore((s) => s.commits); // Change 5: commit count
 
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -230,8 +237,13 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
     <div className="relative min-w-0" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex h-7 min-w-0 max-w-72 items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        className="flex h-7 min-w-0 max-w-80 items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
       >
+        {forgeStatus?.kind ? (
+          <ForgeIcon kind={forgeStatus.kind} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )}
         <span className="truncate font-medium text-foreground">{repoName}</span>
         {currentBranch ? (
           <>
@@ -250,14 +262,6 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
             </span>
           </>
         ) : null}
-        {commits.length > 0 && (
-          <>
-            <span className="text-faint">&middot;</span>
-            <span className="text-faint">
-              {commits.length.toLocaleString()}
-            </span>
-          </>
-        )}
         <ChevronDown className="h-3 w-3 shrink-0 text-faint" />
       </button>
 
@@ -285,8 +289,8 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
                 Recent
               </p>
               {otherRepos.map((repo) => {
-                const profileName = repo.profile_id
-                  ? profiles.find((p) => p.id === repo.profile_id)?.name
+                const repoProfile = repo.profile_id
+                  ? profiles.find((p) => p.id === repo.profile_id)
                   : null;
                 return (
                   <div
@@ -306,9 +310,12 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
                       <span className="text-xs text-foreground truncate">{repo.name}</span>
                       <span className="text-label text-faint truncate">{repo.path}</span>
                     </div>
-                    {profileName && (
-                      <span className="shrink-0 rounded-sm bg-brand/10 px-1.5 py-0.5 text-caption font-medium text-brand-dim">
-                        {profileName}
+                    {repoProfile && (
+                      <span
+                        className="shrink-0 rounded-sm px-1.5 py-0.5 text-label font-medium"
+                        style={{ backgroundColor: `${repoProfile.color}18`, color: repoProfile.color }}
+                      >
+                        {repoProfile.name}
                       </span>
                     )}
                     <Tooltip>

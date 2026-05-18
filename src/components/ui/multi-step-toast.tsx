@@ -66,7 +66,7 @@ export function MultiStepToast({ state }: { state: MultiStepState }) {
       {/* Step list */}
       <div className="space-y-1">
         {state.steps.map((step, i) => (
-          <div key={i} className="flex items-center gap-2 text-caption">
+          <div key={i} className="flex items-center gap-2 text-label">
             {step.status === "done" ? (
               <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
             ) : step.status === "running" ? (
@@ -90,7 +90,7 @@ export function MultiStepToast({ state }: { state: MultiStepState }) {
       </div>
 
       {state.error && (
-        <p className="mt-2 text-caption text-destructive truncate">{state.error}</p>
+        <p className="mt-2 text-label text-destructive truncate">{state.error}</p>
       )}
     </div>
   );

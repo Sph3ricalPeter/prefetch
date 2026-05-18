@@ -23,6 +23,7 @@ import {
   openRepo,
   getCommits,
   getBranches,
+  getRefMru,
   checkoutBranch,
   forceCheckoutBranch,
   resetBranchToRemote,
@@ -241,6 +242,9 @@ interface RepoState {
   totalLanes: number;
   headCommitId: string | null;
   branches: BranchInfo[];
+  /** Ref name → unix timestamp of its tip commit. Drives MRU ordering for
+   *  overlapping badges and the commit-graph edge draw order. */
+  refMru: Map<string, number>;
   currentBranch: string | null;
   selectedCommitId: string | null;
   isLoading: boolean;
@@ -445,9 +449,13 @@ interface RepoState {
   pruneLfsObjects: () => Promise<void>;
 }
 
-/** Fetch commits + branches without calling set(). Callers merge into their own set(). */
+/** Fetch commits + branches + ref MRU without calling set(). Callers merge into their own set(). */
 async function fetchRepoData(): Promise<Partial<RepoState>> {
-  const [data, branchList] = await Promise.all([getCommits(), getBranches()]);
+  const [data, branchList, mruList] = await Promise.all([
+    getCommits(),
+    getBranches(),
+    getRefMru().catch(() => [] as Array<[string, number]>),
+  ]);
   const head = branchList.find((b) => b.is_head);
   return {
     commits: data.commits,
@@ -455,6 +463,7 @@ async function fetchRepoData(): Promise<Partial<RepoState>> {
     totalLanes: data.total_lanes,
     headCommitId: data.head_commit_id,
     branches: branchList,
+    refMru: new Map(mruList),
     currentBranch: head?.name ?? null,
   };
 }
@@ -492,6 +501,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   totalLanes: 0,
   headCommitId: null,
   branches: [],
+  refMru: new Map(),
   currentBranch: null,
   selectedCommitId: null,
   isLoading: false,
@@ -533,6 +543,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   openRepository: async (path: string) => {
     // Skip if this repo is already open
     if (get().repoPath === path && get().commits.length > 0) return;
+    // Clear avatar caches so forge lookups retry with fresh tokens
+    import("@/lib/avatar-cache").then((m) => m.clearAvatarCache()).catch(() => {});
     // Clear all previous repo state before loading new one
     set({
       isLoading: true,
@@ -1266,6 +1278,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await createCommit(fullMessage, amend);
+      // Clear the draft from localStorage before the state update, because
+      // setting fileStatuses to [] may unmount CommitBox before its persist
+      // effect can fire.
+      const rp = get().repoPath;
+      if (rp) localStorage.removeItem(`prefetch:commit_draft:${rp}`);
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({
         ...repoData,
@@ -1727,9 +1744,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   deleteFile: async (filePath) => {
     set({ isLoading: true });
     try {
+      const { selectedFilePath } = get();
+      if (selectedFilePath === filePath) {
+        set({ activeDiff: null, selectedFilePath: null });
+      }
       await deleteFileCmd(filePath);
-      const statuses = await getFileStatus();
-      set({ fileStatuses: statuses, isLoading: false });
+      await get().loadStatus();
       toast.success(`Deleted ${filePath.split("/").pop()}`);
     } catch (e) {
       set({ isLoading: false });

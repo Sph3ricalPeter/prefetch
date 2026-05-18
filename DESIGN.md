@@ -88,8 +88,8 @@ Four levels. Custom tokens defined in `src/index.css` via `@theme inline` using 
 
 | Token | Size | Tailwind class | Line-height | Role |
 |-------|------|---------------|-------------|------|
-| caption | 9px | `text-caption` | 14px | Section headers (uppercase+tracked), badges, tiny metadata |
-| label | 11px | `text-label` | 16px | Form labels, modal descriptions |
+| caption | 9px | `text-caption` | 14px | **UPPERCASE-only**: tracked column headers, short badge labels, counters |
+| label | 11px | `text-label` | 16px | Smallest readable size — form labels, descriptions, hint text, emails |
 | body | 12px | `text-xs` (built-in) | 16px | Default everything — lists, buttons, inputs |
 | title | 14px | `text-sm` (built-in) | 20px | Commit messages, dialog headings |
 
@@ -99,6 +99,7 @@ Use `font-mono` (JetBrains Mono) **only** for: diff viewer, code/config displays
 
 **Rules:**
 - Never use arbitrary font sizes (`text-[Npx]`). Pick from the four levels above.
+- **`text-caption` (9px) is reserved for uppercase tracked text and short badge keywords only** (e.g. "SHA", "DATE", "LFS", "default", character counters). Never use it for readable lowercase text — use `text-label` (11px) as the minimum readable size.
 - Canvas font sizes must stay in sync with the CSS tokens.
 - `text-xs` and `text-sm` are Tailwind built-ins — do not redefine them.
 
@@ -206,6 +207,37 @@ Can include a pulsing dot for "live" indicators:
   animation: pulse 2s ease-in-out infinite;
 }
 ```
+
+#### App Badge Sizing
+
+In-app badges (status pills, keyword labels, profile tags) use a consistent minimum size.
+
+| Context | Text size | Padding | Examples |
+|---|---|---|---|
+| **Minimum** | `text-label` (11px) | `px-1.5 py-0.5` | Smallest allowed badge anywhere in the app |
+| Inline keywords | `text-label` | `px-1.5 py-0.5` | "LFS", "WIP", "default", source badge, version tag |
+| Canvas badges | 12px (`SIZE_BODY`) | `LABEL_PAD_X = 8` | Branch/tag/stash pills in commit graph |
+
+**Rules:**
+- Never use `text-caption` (9px) for badges. `text-label` (11px) is the minimum badge text size.
+- Minimum horizontal padding is `px-1.5` (6px). Never use `px-1` or `py-px` on badges.
+- `text-caption` remains reserved for column headers and counters only — not badge content.
+- Canvas badge constants (`LABEL_HEIGHT`, `LABEL_PAD_X`) already meet the minimum.
+
+### Avatars
+
+Round, `shrink-0`. Two components: `AuthorAvatar` (commit authors) and `ProfileAvatar` (profile UI).
+
+| Context | Size | Notes |
+|---|---|---|
+| **Minimum** | `20px` | Smallest allowed avatar anywhere in the app |
+| Inline / compact UI | `20px` | Commit box author, detail-panel authors, switcher trigger, dropdown items |
+| Profile cards / modals | `40px` | Profile modal, settings profiles section |
+
+**Rules:**
+- Never render an avatar smaller than **20px**. Below that, initials and icons become unreadable.
+- Always pass an explicit `size` prop — don't rely on defaults for compact contexts.
+- Avatars are always `rounded-full` (circle).
 
 ---
 

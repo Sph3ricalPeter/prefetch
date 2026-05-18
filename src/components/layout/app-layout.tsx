@@ -4,12 +4,13 @@ import { Titlebar } from "./titlebar";
 import { SidebarPanel } from "./sidebar-panel";
 import { GraphPanel } from "./graph-panel";
 import { DetailPanel } from "./detail-panel";
-import { SettingsPage } from "@/components/ui/settings-page";
+import { StatusBar } from "./status-bar";
+import { SettingsPage, type SettingsTarget } from "@/components/ui/settings-page";
 import { CloneDialog } from "@/components/ui/clone-dialog";
 import { getUiState, setUiState } from "@/lib/database";
 
-const SIDEBAR_DEFAULT = 256; // w-64
-const DETAIL_DEFAULT = 370;
+const SIDEBAR_DEFAULT = 250;
+const DETAIL_DEFAULT = 400;
 const SIDEBAR_MIN = 140;
 const SIDEBAR_MAX = 370;
 const DETAIL_MIN = 200;
@@ -53,7 +54,7 @@ export function AppLayout() {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const [detailWidth, setDetailWidth] = useState(DETAIL_DEFAULT);
@@ -105,13 +106,19 @@ export function AppLayout() {
   }, [applyWidths]);
 
   // ── Re-fit panels whenever the window (or container) resizes ───────
+  // `settingsTab` is a dep so the observer re-attaches when panels remount
+  // after leaving settings (the old container DOM element is gone).
   useEffect(() => {
+    if (settingsTarget) return;
     const container = containerRef.current;
     if (!container) return;
 
+    // Re-apply widths to the (possibly fresh) DOM refs
+    if (sidebarRef.current) sidebarRef.current.style.width = `${sidebarWidth}px`;
+    if (detailRef.current) detailRef.current.style.width = `${detailWidth}px`;
+
     const observer = new ResizeObserver(() => {
       const available = container.clientWidth;
-      // Read current actual widths from DOM (they may differ from state during drag)
       const currentSb = sidebarRef.current?.getBoundingClientRect().width ?? sidebarWidth;
       const currentDt = detailRef.current?.getBoundingClientRect().width ?? detailWidth;
 
@@ -123,7 +130,7 @@ export function AppLayout() {
 
     observer.observe(container);
     return () => observer.disconnect();
-  }, [applyWidths, sidebarWidth, detailWidth]);
+  }, [applyWidths, sidebarWidth, detailWidth, settingsTarget]);
 
   const saveSidebarWidth = useCallback((width: number) => {
     const clamped = clampWidth(width, SIDEBAR_MIN, SIDEBAR_MAX, SIDEBAR_DEFAULT);
@@ -140,54 +147,57 @@ export function AppLayout() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground select-none">
       {/* Custom titlebar — replaces native window chrome */}
-      <Titlebar settingsOpen={settingsOpen} onOpenClone={() => setCloneOpen(true)} />
+      <Titlebar settingsOpen={!!settingsTarget} onOpenClone={() => setCloneOpen(true)} onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />
 
       {/* Settings fullpage view OR three-panel repo view */}
-      {settingsOpen ? (
+      {settingsTarget ? (
         <div className="flex-1 min-h-0 overflow-hidden">
-          <SettingsPage onClose={() => setSettingsOpen(false)} sidebarWidth={sidebarWidth} onSidebarResize={saveSidebarWidth} />
+          <SettingsPage onClose={() => setSettingsTarget(null)} initialTab={settingsTarget.tab} focusProfileId={settingsTarget.profileId} sidebarWidth={sidebarWidth} onSidebarResize={saveSidebarWidth} />
         </div>
       ) : (
-        <div ref={containerRef} className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Left sidebar — branches (flex-shrink default: shrinks when window narrows) */}
-          <div ref={sidebarRef} style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN }}>
-            <SidebarPanel onOpenSettings={() => setSettingsOpen(true)} />
+        <>
+          <div ref={containerRef} className="flex flex-1 min-h-0 overflow-hidden">
+            {/* Left sidebar — branches (flex-shrink default: shrinks when window narrows) */}
+            <div ref={sidebarRef} style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN }}>
+              <SidebarPanel />
+            </div>
+
+            <ResizeHandle
+              side="left"
+              panelRef={sidebarRef}
+              minWidth={SIDEBAR_MIN}
+              maxWidth={SIDEBAR_MAX}
+              onResizeEnd={saveSidebarWidth}
+            />
+
+            {/* Center — commit graph (grows to fill, never shrinks below CENTER_MIN) */}
+            <div className="grow shrink-0 basis-0 min-w-[120px]">
+              <GraphPanel />
+            </div>
+
+            <ResizeHandle
+              side="right"
+              panelRef={detailRef}
+              minWidth={DETAIL_MIN}
+              maxWidth={DETAIL_MAX}
+              onResizeEnd={saveDetailWidth}
+            />
+
+            {/* Right detail — commit info / diff (flex-shrink default: shrinks when window narrows) */}
+            <div ref={detailRef} style={{ width: detailWidth, minWidth: DETAIL_MIN }}>
+              <DetailPanel />
+            </div>
           </div>
-
-          <ResizeHandle
-            side="left"
-            panelRef={sidebarRef}
-            minWidth={SIDEBAR_MIN}
-            maxWidth={SIDEBAR_MAX}
-            onResizeEnd={saveSidebarWidth}
-          />
-
-          {/* Center — commit graph (grows to fill, never shrinks below CENTER_MIN) */}
-          <div className="grow shrink-0 basis-0 min-w-[120px]">
-            <GraphPanel />
-          </div>
-
-          <ResizeHandle
-            side="right"
-            panelRef={detailRef}
-            minWidth={DETAIL_MIN}
-            maxWidth={DETAIL_MAX}
-            onResizeEnd={saveDetailWidth}
-          />
-
-          {/* Right detail — commit info / diff (flex-shrink default: shrinks when window narrows) */}
-          <div ref={detailRef} style={{ width: detailWidth, minWidth: DETAIL_MIN }}>
-            <DetailPanel />
-          </div>
-        </div>
+          <StatusBar onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />
+        </>
       )}
 
       {cloneOpen && (
         <CloneDialog
           onClose={() => setCloneOpen(false)}
-          onOpenSettings={() => {
+          onOpenSettings={(target) => {
             setCloneOpen(false);
-            setSettingsOpen(true);
+            setSettingsTarget(target ?? { tab: "profiles" });
           }}
         />
       )}
