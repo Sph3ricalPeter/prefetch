@@ -738,7 +738,7 @@ function ConflictTreeNodeView({
       </span>
       <span className="truncate text-xs text-foreground">{node.name}</span>
       <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
-      <span className="ml-auto shrink-0 flex items-center gap-1 tabular-nums text-right">
+      <span className="ml-auto flex items-center gap-1 tabular-nums text-right overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}
@@ -959,7 +959,7 @@ function TreeNodeView({
           LFS
         </span>
       )}
-      <span className="ml-auto shrink-0 flex items-center gap-1 tabular-nums text-right">
+      <span className="ml-auto flex items-center gap-1 tabular-nums text-right overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}
@@ -1062,7 +1062,7 @@ function FileRow({
           </span>
         )}
       </div>
-      <span className="shrink-0 flex items-center gap-1 tabular-nums text-right min-w-[4rem] justify-end">
+      <span className="flex items-center gap-1 tabular-nums text-right justify-end overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}
@@ -1154,7 +1154,7 @@ function ConflictRow({
           </span>
         )}
       </div>
-      <span className="shrink-0 flex items-center gap-1 tabular-nums text-right min-w-[4rem] justify-end">
+      <span className="flex items-center gap-1 tabular-nums text-right justify-end overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}

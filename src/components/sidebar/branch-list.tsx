@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal, Monitor, Cloud } from "lucide-react";
 import type { BranchInfo, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
@@ -90,6 +90,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
         {/* Local branches */}
         <BranchSection
           label="Local"
+          icon={Monitor}
           count={localBranches.length}
           isOpen={localOpen}
           onToggle={() => setLocalOpen(!localOpen)}
@@ -118,6 +119,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
         {/* Remote branches */}
         <BranchSection
           label="Remote"
+          icon={Cloud}
           count={remoteBranches.length}
           isOpen={remoteOpen}
           onToggle={() => setRemoteOpen(!remoteOpen)}
@@ -408,12 +410,14 @@ function buildBranchContextMenuItems(
 
 function BranchSection({
   label,
+  icon: Icon,
   count,
   isOpen,
   onToggle,
   children,
 }: {
   label: string;
+  icon?: React.ComponentType<{ className?: string }>;
   count: number;
   isOpen: boolean;
   onToggle: () => void;
@@ -431,9 +435,10 @@ function BranchSection({
           <ChevronRight className="h-3 w-3" />
         )}
         {label}
-        <span className="ml-auto text-faint normal-case tracking-normal">
+        <span className="ml-1 normal-case tracking-normal text-faint">
           {count}
         </span>
+        {Icon && <Icon className="h-3 w-3 text-faint" />}
       </button>
       {isOpen && <div>{children}</div>}
     </div>

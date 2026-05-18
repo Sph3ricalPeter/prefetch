@@ -86,7 +86,7 @@ export function DetailPanel() {
             <h2 className="text-label font-semibold text-muted-foreground uppercase tracking-[0.06em]">
               Changes
             </h2>
-            <span className="ml-2 text-xs text-faint">
+            <span className="ml-2 text-xs text-faint overflow-hidden min-w-0 shrink-[999]">
               {fileStatuses.length}
             </span>
             {(() => {
@@ -98,7 +98,7 @@ export function DetailPanel() {
                 { add: 0, del: 0 },
               );
               return (totals.add > 0 || totals.del > 0) ? (
-                <span className="ml-2 flex items-center gap-1.5 text-xs">
+                <span className="ml-2 flex items-center gap-1.5 text-xs overflow-hidden min-w-0 shrink-[999]">
                   {totals.add > 0 && <span className="text-green-400">+{totals.add}</span>}
                   {totals.del > 0 && <span className="text-red-400">-{totals.del}</span>}
                 </span>
@@ -227,6 +227,7 @@ function CommitDetailView({
 }) {
   const [commitOpen, setCommitOpen] = useState(true);
   const [filesOpen, setFilesOpen] = useState(true);
+  const [bodyExpanded, setBodyExpanded] = useState(false);
   const viewMode = useRepoStore((s) => s.fileViewMode);
   const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
 
@@ -268,11 +269,25 @@ function CommitDetailView({
           <p className="text-sm text-foreground mb-1">{commit.message}</p>
 
           {/* Body (description) */}
-          {commit.body && (
-            <p className="text-sm text-dim whitespace-pre-wrap leading-relaxed mb-2">
-              {commit.body}
-            </p>
-          )}
+          {commit.body && (() => {
+            const bodyLines = commit.body.split("\n").length;
+            const needsClamp = bodyLines > 10;
+            return (
+              <div className="mb-2">
+                <p className={`text-xs text-dim whitespace-pre-wrap leading-relaxed ${!bodyExpanded && needsClamp ? "line-clamp-[10]" : ""}`}>
+                  {commit.body}
+                </p>
+                {needsClamp && (
+                  <button
+                    onClick={() => setBodyExpanded(!bodyExpanded)}
+                    className="mt-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {bodyExpanded ? "Show less" : "Show more"}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Authors — inline row */}
           <p className="text-label font-medium text-faint uppercase tracking-[0.08em] mt-3 mb-1">
@@ -461,10 +476,10 @@ function changedFilesLabel(files: FileStatus[], loading: boolean): React.ReactNo
   const add = files.reduce((s, f) => s + (f.additions ?? 0), 0);
   const del = files.reduce((s, f) => s + (f.deletions ?? 0), 0);
   return (
-    <span className="flex items-center gap-1.5">
-      Changed Files ({files.length})
+    <span className="flex items-center gap-1.5 min-w-0">
+      <span className="shrink-0 whitespace-nowrap">Changed Files ({files.length})</span>
       {(add > 0 || del > 0) && (
-        <span className="flex items-center gap-1 text-xs font-normal normal-case tracking-normal">
+        <span className="flex items-center gap-1 text-xs font-normal normal-case tracking-normal overflow-hidden min-w-0 shrink-[999]">
           {add > 0 && <span className="text-green-400">+{add}</span>}
           {del > 0 && <span className="text-red-400">-{del}</span>}
         </span>
@@ -575,7 +590,7 @@ function CommitFileRow({
           </span>
         )}
       </div>
-      <span className="shrink-0 flex items-center gap-1 tabular-nums text-right min-w-[4rem] justify-end">
+      <span className="flex items-center gap-1 tabular-nums text-right justify-end overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}
@@ -701,7 +716,7 @@ function CommitTreeNode({
         filename={node.name}
         className="h-3 w-3 shrink-0 text-muted-foreground"
       />
-      <span className="ml-auto shrink-0 flex items-center gap-1 tabular-nums">
+      <span className="ml-auto flex items-center gap-1 tabular-nums overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
         )}

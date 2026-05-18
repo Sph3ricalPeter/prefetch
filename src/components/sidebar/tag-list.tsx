@@ -148,8 +148,8 @@ export function TagList({ filter = "" }: { filter?: string }) {
               className="group flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors"
             >
               <Tag className="h-3 w-3 shrink-0" />
-              <span className="truncate flex-1">{tag.name}</span>
-              <span className="shrink-0 text-faint text-xs">
+              <span className="shrink-0">{tag.name}</span>
+              <span className="ml-auto min-w-0 truncate text-faint text-xs">
                 {tag.commit_id}
               </span>
             </div>
