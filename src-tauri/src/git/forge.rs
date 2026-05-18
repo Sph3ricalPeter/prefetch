@@ -223,7 +223,11 @@ pub fn delete_token_for_profile(profile_id: Option<&str>, host: &str) -> Result<
             .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
         match legacy_entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(e) => return Err(AppError::Other(format!("Failed to delete legacy token: {e}"))),
+            Err(e) => {
+                return Err(AppError::Other(format!(
+                    "Failed to delete legacy token: {e}"
+                )))
+            }
         }
     }
 
