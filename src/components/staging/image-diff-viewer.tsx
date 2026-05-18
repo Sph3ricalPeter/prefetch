@@ -108,7 +108,7 @@ function useZoomAndPan(
   onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>,
 ) {
   const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   const panStart = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const rafId = useRef<number>(0);
   const lastMouse = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -200,10 +200,9 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
     setZoom(INITIAL_ZOOM);
   }, [setImageDiffViewMode]);
 
-  useEffect(() => {
-    setZoom(INITIAL_ZOOM);
-    setSwipePos(50);
-  }, [filePath]);
+  // Reset zoom/swipe when the viewed file changes
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setZoom(INITIAL_ZOOM); setSwipePos(50); }, [filePath]);
 
   const sourceCommitId = source.commitId;
   const sourceStashIndex = source.stashIndex;

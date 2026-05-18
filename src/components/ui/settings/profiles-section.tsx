@@ -623,6 +623,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingInfo(true);
     Promise.all(
       FORGE_HOSTS.map(({ host }) =>
