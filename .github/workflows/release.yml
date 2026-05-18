@@ -152,3 +152,12 @@ jobs:
           git add docs/index.html
           git commit -m "docs: update landing page version to ${GITHUB_REF_NAME}"
           git push
+
+      - name: Fast-forward dev to match main
+        # Keeps dev in sync with main after the docs auto-commit so future
+        # dev → main merges can be fast-forward. Server-side FF-only push:
+        # only succeeds if dev is a strict ancestor of main. If dev moved
+        # during the release window, this no-ops and the developer back-
+        # syncs once manually — pattern self-heals next release.
+        run: |
+          git push origin main:dev || echo "dev moved during release; manual sync needed for this cycle only"

@@ -213,7 +213,8 @@ When compacting, always preserve:
    - `package.json` → `"version"`
    - `src-tauri/tauri.conf.json` → `"version"`
    - `src-tauri/Cargo.toml` → `version`
-3. Merge `dev` → `main`
+3. Merge `dev` → `main` **fast-forward only**: `git checkout main && git merge dev --ff-only`. If it refuses, fetch first; if it still refuses, dev and main have diverged — investigate before forcing.
 4. Tag: `git tag v0.X.0` + push tag
 5. CI builds installers + creates GitHub release automatically
-6. **Release notes are auto-generated** from conventional commits between the previous tag and the current one. The workflow picks the top 5 changes (features first, then bug fixes). If commit messages follow the convention (`feat: ...`, `fix: ...`), notes are accurate automatically. For manual overrides, edit the release body on GitHub after publishing.
+6. CI commits the landing-page version bump to `main`, then fast-forward pushes `main` → `dev` so the two branches stay in sync. If dev moved during the release window, the FF push no-ops and you'll need to back-sync `main` into `dev` once manually.
+7. **Release notes are auto-generated** from conventional commits between the previous tag and the current one. The workflow picks the top 5 changes (features first, then bug fixes). If commit messages follow the convention (`feat: ...`, `fix: ...`), notes are accurate automatically. For manual overrides, edit the release body on GitHub after publishing.
