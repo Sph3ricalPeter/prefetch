@@ -1027,7 +1027,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                   Ours ({oursLabel})
                 </span>
                 {oursHash && (
-                  <span className="text-[10px] text-muted-foreground/50 ml-1.5 font-mono">
+                  <span className="text-caption text-muted-foreground/50 ml-1.5 font-mono">
                     {oursHash}
                   </span>
                 )}
@@ -1144,7 +1144,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                   Theirs ({theirsLabel})
                 </span>
                 {theirsHash && (
-                  <span className="text-[10px] text-muted-foreground/50 ml-1.5 font-mono">
+                  <span className="text-caption text-muted-foreground/50 ml-1.5 font-mono">
                     {theirsHash}
                   </span>
                 )}
@@ -1247,11 +1247,11 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           <div className="shrink-0 px-3 py-1.5 text-xs font-medium text-[var(--conflict-output-text)] bg-[rgba(var(--conflict-output),0.05)] border-b border-border flex items-center gap-2">
             <span>Output</span>
             <div className="flex items-center gap-3 ml-auto">
-              <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60 font-normal">
+              <span className="flex items-center gap-1 text-caption text-muted-foreground/60 font-normal">
                 <OursIcon size={10} />
                 ours
               </span>
-              <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60 font-normal">
+              <span className="flex items-center gap-1 text-caption text-muted-foreground/60 font-normal">
                 <TheirsIcon size={10} />
                 theirs
               </span>
@@ -1352,7 +1352,7 @@ function OutputLineImpl({
       <span className="w-5 shrink-0 flex items-center justify-center">
         {iconEl}
       </span>
-      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
         {lineNo}
       </span>
       <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
@@ -1421,7 +1421,7 @@ function UnchangedBlock({
         ))}
         <button
           onClick={toggleExpand}
-          className="w-full px-2 py-0.5 text-[10px] text-muted-foreground/50 bg-secondary/50 hover:bg-secondary transition-colors text-center"
+          className="w-full px-2 py-0.5 text-caption text-muted-foreground/50 bg-secondary/50 hover:bg-secondary transition-colors text-center"
         >
           {"⋯ "}
           {hiddenCount} unchanged line{hiddenCount !== 1 ? "s" : ""}
@@ -1487,7 +1487,7 @@ function UnchangedLineImpl({
       data-hover-key={hoverKey}
     >
       <span className={`${conflictGutter ? "w-12" : "w-5"} shrink-0`} />
-      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
         {lineNo}
       </span>
       <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
@@ -1550,14 +1550,14 @@ function ChangedBlock({
   const hasBase = baseLines && baseLines.length > 0;
 
   const numberBadge = conflictNumber != null ? (
-    <span className="text-[9px] font-medium text-muted-foreground/50 select-none">
+    <span className="text-caption font-medium text-muted-foreground/50 select-none">
       #{conflictNumber}
     </span>
   ) : null;
 
   const renameBadge = isSuspicious ? (
     <span
-      className="flex items-center gap-0.5 text-[9px] font-medium select-none"
+      className="flex items-center gap-0.5 text-caption font-medium select-none"
       style={{ color: "var(--conflict-suspicious-text)" }}
     >
       <AlertTriangle className="w-2.5 h-2.5" />
@@ -1572,7 +1572,7 @@ function ChangedBlock({
         <div className="bg-zinc-500/[0.06] border-b border-border/30">
           <button
             onClick={onToggleBaseExpand}
-            className="flex items-center gap-1 w-full px-2 py-0.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors"
+            className="flex items-center gap-1 w-full px-2 py-0.5 text-caption text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors"
           >
             {numberBadge}
             {renameBadge}
@@ -1592,7 +1592,7 @@ function ChangedBlock({
                 return (
                   <div key={li} className="flex" style={LINE_CONTAINMENT}>
                     <span className="w-12 shrink-0" />
-                    <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                    <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
                       {baseStartLine ? baseStartLine + li : ""}
                     </span>
                     <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
@@ -1619,7 +1619,7 @@ function ChangedBlock({
       )}
 
       {!hasBase && (numberBadge || renameBadge) && (
-        <div className="flex items-center gap-1 px-2 py-px text-[9px] text-muted-foreground/40 border-b border-border/20"
+        <div className="flex items-center gap-1 px-2 py-px text-caption text-muted-foreground/40 border-b border-border/20"
           style={{ backgroundColor: side === "ours" ? "rgba(var(--conflict-ours), 0.03)" : "rgba(var(--conflict-theirs), 0.03)" }}
         >
           {numberBadge}
@@ -1678,7 +1678,7 @@ function ChangedBlock({
                       )}
                     </span>
                   </span>
-                  <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+                  <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
                     {startLineNo + li}
                   </span>
                   <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
@@ -1702,7 +1702,7 @@ function ChangedBlock({
           ) : (
             <div className="px-2 py-0.5">
               <span
-                className="text-[10px] italic"
+                className="text-caption italic"
                 style={{ color: `rgba(var(${side === "ours" ? "--conflict-ours" : "--conflict-theirs"}), 0.3)` }}
               >
                 — deleted —
@@ -1749,7 +1749,7 @@ function AutoResolvedBlock({
             <span className="shrink-0 w-12 flex items-center justify-center">
               <Check className="w-2.5 h-2.5" style={{ color: "rgba(var(--conflict-auto), 0.4)" }} />
             </span>
-            <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+            <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
               {winStartLine + li}
             </span>
             <pre className="flex-1 px-2 whitespace-pre-wrap break-all">
@@ -1775,7 +1775,7 @@ function AutoResolvedBlock({
         <div className="flex items-center" style={{ backgroundColor: "rgba(var(--conflict-auto), 0.03)" }}>
           <span className="shrink-0 w-12" />
           <span className="w-9 shrink-0" />
-          <span className="flex-1 px-2 text-[10px] italic leading-5" style={{ color: "rgba(var(--conflict-auto), 0.3)" }}>
+          <span className="flex-1 px-2 text-caption italic leading-5" style={{ color: "rgba(var(--conflict-auto), 0.3)" }}>
             — no changes —
           </span>
         </div>
@@ -1788,7 +1788,7 @@ function AutoResolvedBlock({
       {loseLines.map((line, li) => (
         <div key={li} className="flex" style={LINE_CONTAINMENT}>
           <span className="shrink-0 w-12" />
-          <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+          <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
             {loseStartLine + li}
           </span>
           <pre className="flex-1 px-2 whitespace-pre-wrap break-all">

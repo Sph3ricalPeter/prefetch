@@ -4,6 +4,9 @@ export interface Profile {
   user_name: string;
   user_email: string;
   ssh_key_path: string | null;
+  color: string;
+  icon: string | null;
+  avatar_url: string | null;
   is_default: boolean;
   created_at: number;
   updated_at: number;
@@ -29,5 +32,8 @@ export interface CreateProfileData {
   user_name: string;
   user_email: string;
   ssh_key_path?: string | null;
+  color?: string;
+  icon?: string | null;
+  avatar_url?: string | null;
   is_default?: boolean;
 }

@@ -137,11 +137,11 @@ export function GeneralSection() {
           <div className="select-none">
             <span className="text-xs text-foreground flex items-center gap-1.5">
               Auto-resolve files with no real conflicts
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-amber-500 border border-amber-500/30 rounded px-1 py-px leading-none">
+              <span className="text-caption font-semibold uppercase tracking-wider text-amber-500 border border-amber-500/30 rounded px-1 py-px leading-none">
                 Experimental
               </span>
             </span>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
+            <p className="text-label text-muted-foreground mt-0.5">
               During rebase, automatically save files where all changes were made by only one side.
             </p>
           </div>

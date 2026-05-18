@@ -207,7 +207,8 @@ body::before {
   /* Noise overlay — overridden by app theme at runtime */
   --noise-opacity: 0.025;
 
-  /* Type scale — 4 levels (caption, label, body=text-xs, title=text-sm) */
+  /* Type scale — 4 levels (caption, label, body=text-xs, title=text-sm)
+     caption = UPPERCASE tracked text & badges only; label = min readable size */
   --text-caption: 9px;
   --text-caption--line-height: 14px;
   --text-label: 11px;

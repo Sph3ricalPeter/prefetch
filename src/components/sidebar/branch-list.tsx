@@ -78,7 +78,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             <span className="text-muted-foreground">~HEAD</span>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-caption text-faint font-mono">
+                <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-label text-faint font-mono">
                   {headCommitId.slice(0, 7)}
                 </span>
               </TooltipTrigger>
@@ -477,7 +477,7 @@ function BranchRow({
       {/* Ahead/behind badges */}
       {((branch.ahead != null && branch.ahead > 0) ||
         (branch.behind != null && branch.behind > 0)) && (
-        <span className="flex items-center gap-0.5 text-caption text-faint shrink-0">
+        <span className="flex items-center gap-0.5 text-label text-faint shrink-0">
           {branch.ahead ? <span>↑{branch.ahead}</span> : null}
           {branch.behind ? <span>↓{branch.behind}</span> : null}
         </span>

@@ -1,5 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import type { Profile, ProfilePath } from "@/types/profile";
+import { pickProfileColor } from "@/lib/avatar";
 
 let db: Database | null = null;
 
@@ -61,6 +62,80 @@ export async function initDatabase(): Promise<void> {
     );
   } catch {
     // Column already exists — ignore
+  }
+
+  // Add color column to profiles (migration)
+  try {
+    await db.execute(
+      `ALTER TABLE profiles ADD COLUMN color TEXT NOT NULL DEFAULT '#3b82f6'`,
+    );
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // Add icon column to profiles (migration)
+  try {
+    await db.execute(
+      `ALTER TABLE profiles ADD COLUMN icon TEXT DEFAULT NULL`,
+    );
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // Add avatar_url column to profiles (migration)
+  try {
+    await db.execute(
+      `ALTER TABLE profiles ADD COLUMN avatar_url TEXT DEFAULT NULL`,
+    );
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // Backfill existing profiles that got the default color
+  await backfillProfileColors();
+
+  // Migrate old vivid palette → new muted palette
+  await migrateProfilePalette();
+}
+
+async function backfillProfileColors(): Promise<void> {
+  const profiles = await getDb().select<{ id: string; color: string }[]>(
+    "SELECT id, color FROM profiles ORDER BY created_at ASC",
+  );
+  for (let i = 0; i < profiles.length; i++) {
+    const expected = pickProfileColor(i);
+    if (profiles[i].color === "#3b82f6" && i > 0) {
+      await getDb().execute("UPDATE profiles SET color = $1 WHERE id = $2", [
+        expected,
+        profiles[i].id,
+      ]);
+    }
+  }
+}
+
+const OLD_TO_NEW_PALETTE: Record<string, string> = {
+  "#3b82f6": "#7c9cbf",
+  "#10b981": "#6ba892",
+  "#f59e0b": "#c4a054",
+  "#8b5cf6": "#9b85c4",
+  "#06b6d4": "#5ea8a8",
+  "#ec4899": "#c47d94",
+  "#f97316": "#c48a5e",
+  "#ef4444": "#b87070",
+};
+
+async function migrateProfilePalette(): Promise<void> {
+  const profiles = await getDb().select<{ id: string; color: string }[]>(
+    "SELECT id, color FROM profiles",
+  );
+  for (const p of profiles) {
+    const replacement = OLD_TO_NEW_PALETTE[p.color];
+    if (replacement) {
+      await getDb().execute("UPDATE profiles SET color = $1 WHERE id = $2", [
+        replacement,
+        p.id,
+      ]);
+    }
   }
 }
 
@@ -223,10 +298,21 @@ export async function createProfile(data: {
   user_name: string;
   user_email: string;
   ssh_key_path?: string | null;
+  color?: string;
+  icon?: string | null;
+  avatar_url?: string | null;
   is_default?: boolean;
 }): Promise<string> {
   const id = uuid();
   const now = Math.floor(Date.now() / 1000);
+
+  // Auto-assign color from palette if not provided
+  const existingCount = (
+    await getDb().select<{ cnt: number }[]>(
+      "SELECT COUNT(*) as cnt FROM profiles",
+    )
+  )[0].cnt;
+  const color = data.color ?? pickProfileColor(existingCount);
 
   // If this is set as default, unset any existing default first
   if (data.is_default) {
@@ -236,14 +322,17 @@ export async function createProfile(data: {
   }
 
   await getDb().execute(
-    `INSERT INTO profiles (id, name, user_name, user_email, ssh_key_path, is_default, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    `INSERT INTO profiles (id, name, user_name, user_email, ssh_key_path, color, icon, avatar_url, is_default, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       id,
       data.name,
       data.user_name,
       data.user_email,
       data.ssh_key_path ?? null,
+      color,
+      data.icon ?? null,
+      data.avatar_url ?? null,
       data.is_default ? 1 : 0,
       now,
       now,
@@ -260,6 +349,9 @@ export async function updateProfile(
     user_name: string;
     user_email: string;
     ssh_key_path: string | null;
+    color: string;
+    icon: string | null;
+    avatar_url: string | null;
     is_default: boolean;
   }>,
 ): Promise<void> {
@@ -295,6 +387,21 @@ export async function updateProfile(
   if (data.ssh_key_path !== undefined) {
     sets.push(`ssh_key_path = $${idx}`);
     params.push(data.ssh_key_path);
+    idx++;
+  }
+  if (data.color !== undefined) {
+    sets.push(`color = $${idx}`);
+    params.push(data.color);
+    idx++;
+  }
+  if (data.icon !== undefined) {
+    sets.push(`icon = $${idx}`);
+    params.push(data.icon);
+    idx++;
+  }
+  if (data.avatar_url !== undefined) {
+    sets.push(`avatar_url = $${idx}`);
+    params.push(data.avatar_url);
     idx++;
   }
   if (data.is_default !== undefined) {

@@ -88,6 +88,9 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         user_name: data.user_name,
         user_email: data.user_email,
         ssh_key_path: data.ssh_key_path ?? null,
+        color: data.color,
+        icon: data.icon ?? null,
+        avatar_url: data.avatar_url ?? null,
         is_default: data.is_default ?? false,
       });
       await get().loadProfiles();

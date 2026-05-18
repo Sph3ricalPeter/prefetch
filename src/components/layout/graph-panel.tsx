@@ -234,8 +234,22 @@ export function GraphPanel() {
   });
   const [columnVisibility, setColumnVisibility] = useState<GraphColumnVisibility>(DEFAULT_VISIBILITY);
   const [dateFormat, setDateFormat] = useState<DateFormatId>("short");
-  const graphContainerRef = useRef<HTMLDivElement>(null);
   const [graphContainerWidth, setGraphContainerWidth] = useState<number>(0);
+  const graphObserverRef = useRef<ResizeObserver | null>(null);
+  const graphContainerRef = useCallback((el: HTMLDivElement | null) => {
+    if (graphObserverRef.current) {
+      graphObserverRef.current.disconnect();
+      graphObserverRef.current = null;
+    }
+    if (el) {
+      setGraphContainerWidth(el.clientWidth);
+      const observer = new ResizeObserver(() => {
+        setGraphContainerWidth(el.clientWidth);
+      });
+      observer.observe(el);
+      graphObserverRef.current = observer;
+    }
+  }, []);
 
   // Restore persisted widths when the repo changes. If nothing's saved, derive
   // the graph column from the current lane count so the default fits.
@@ -293,17 +307,6 @@ export function GraphPanel() {
     date: columnWidths.date,
   };
 
-  // Track the canvas container's width so the date column can be right-anchored.
-  useEffect(() => {
-    const el = graphContainerRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => {
-      setGraphContainerWidth(el.clientWidth);
-    });
-    observer.observe(el);
-    setGraphContainerWidth(el.clientWidth);
-    return () => observer.disconnect();
-  }, []);
 
   // Auto-reopen checkbox state (welcome screen only)
   const [autoReopen, setAutoReopen] = useState(false);

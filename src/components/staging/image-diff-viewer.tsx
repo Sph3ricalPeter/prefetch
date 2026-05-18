@@ -350,7 +350,7 @@ function ImagePanel({
     const text = label === "Before" ? "File added" : "File deleted";
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4 min-w-0">
-        <span className="text-caption text-muted-foreground">{label}</span>
+        <span className="text-label text-muted-foreground">{label}</span>
         <div className="flex items-center justify-center rounded border border-dashed border-border p-8 text-xs text-muted-foreground">
           {text}
         </div>
@@ -448,7 +448,7 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-3 py-1.5 border-b border-border flex items-center justify-center gap-4 text-caption text-muted-foreground shrink-0">
+      <div className="px-3 py-1.5 border-b border-border flex items-center justify-center gap-4 text-label text-muted-foreground shrink-0">
         <ImageMeta label="Before" img={oldImg} accent="red" />
         <span>→</span>
         <ImageMeta label="After" img={newImg} accent="green" />
@@ -489,7 +489,7 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
             }}
           >
             <div className="absolute left-1/2 top-0 bottom-0 w-0.5 -translate-x-1/2 bg-foreground/60" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-foreground/80 flex items-center justify-center text-background text-[10px]">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-foreground/80 flex items-center justify-center text-background text-caption">
               ⇔
             </div>
           </div>

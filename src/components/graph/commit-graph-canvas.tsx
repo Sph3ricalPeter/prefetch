@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Monitor, ArrowUp, Tag, Archive } from "lucide-react";
+import { Check, Monitor, Cloud, Tag, Archive } from "lucide-react";
 import type {
   BranchInfo,
   CommitInfo,
@@ -9,7 +9,9 @@ import type {
 } from "@/types/git";
 import { gravatarUrl } from "@/lib/gravatar";
 import { searchUserAvatar } from "@/lib/commands";
+import { getInitials as authorInitials, getAvatarColor as authorColor, getContrastColor as contrastText, detectBot, type BotInfo, drawProfileIconOnCanvas, getProfileIcon, darkenHex } from "@/lib/avatar";
 import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
+import { useProfileStore } from "@/stores/profile-store";
 
 export const ROW_HEIGHT = 32;
 export const LANE_WIDTH = 20;
@@ -36,6 +38,28 @@ const fontCfg = {
   sizeBody: 12,
   sizeLabel: 11,
 };
+
+// Cached Intl.DateTimeFormat instances — toLocaleDateString() recreates one
+// internally on every call (~100x slower than reusing a formatter).
+const intlDateShort = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+const intlDateLong = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+const intlDateFull = new Intl.DateTimeFormat(undefined, {
+  year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+});
+
+// Per-frame text-width cache — avoids redundant ctx.measureText() calls for
+// identical font+text combos within a single draw pass. Cleared at the top of draw().
+let textWidthCache = new Map<string, number>();
+
+function cachedMeasureText(ctx: CanvasRenderingContext2D, text: string): number {
+  const key = `${ctx.font}\0${text}`;
+  let w = textWidthCache.get(key);
+  if (w === undefined) {
+    w = ctx.measureText(text).width;
+    textWidthCache.set(key, w);
+  }
+  return w;
+}
 
 // Graph colors are now provided by the active app theme via useThemeStore().
 // See AppThemeGraph in src/lib/themes.ts for the shape.
@@ -147,40 +171,76 @@ function laneColor(lane: number): string {
   return hslToHex({ h, s: 70, l: 60 });
 }
 
-// Module-level avatar image cache — persists across renders and remounts.
-// null = load attempted but failed (permanent fallback to initials).
-const avatarCache = new Map<string, HTMLImageElement | null>();
+function drawBotAvatar(
+  ctx: CanvasRenderingContext2D,
+  bot: BotInfo,
+  cx: number,
+  cy: number,
+  radius: number,
+): void {
+  // Filled circle background
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = bot.bgColor;
+  ctx.fill();
 
-// Tracks emails already tried for forge avatar lookup to avoid duplicate API calls.
-// true = forge lookup in progress or completed (no result).
-const forgeAvatarAttempted = new Set<string>();
+  // Icon — scaled to fit inside the circle
+  const iconSize = radius * 1.4;
+  const scale = iconSize / bot.iconViewBox;
+  ctx.save();
+  ctx.translate(cx - iconSize / 2, cy - iconSize / 2);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = bot.fgColor;
 
-/** Pick a readable text color (black or white) for a given hex background */
-function contrastText(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return 0.299 * r + 0.587 * g + 0.114 * b > 140 ? "#000000" : "#ffffff";
-}
-
-/** Two-letter initials from author name (e.g. "Vojtech Vavera" → "VV") */
-function authorInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  if (bot.iconStroke) {
+    ctx.strokeStyle = bot.fgColor;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
   }
-  return name.slice(0, 2).toUpperCase() || "?";
+
+  for (const [element, attrs] of bot.iconElements) {
+    switch (element) {
+      case "path": {
+        const p = new Path2D(attrs.d);
+        if (attrs.fill === "currentColor" || !bot.iconStroke) ctx.fill(p);
+        if (bot.iconStroke) ctx.stroke(p);
+        break;
+      }
+      case "rect": {
+        ctx.beginPath();
+        ctx.roundRect(
+          parseFloat(attrs.x || "0"),
+          parseFloat(attrs.y || "0"),
+          parseFloat(attrs.width),
+          parseFloat(attrs.height),
+          parseFloat(attrs.rx || "0"),
+        );
+        if (bot.iconStroke) ctx.stroke();
+        else ctx.fill();
+        break;
+      }
+      case "line": {
+        ctx.beginPath();
+        ctx.moveTo(parseFloat(attrs.x1), parseFloat(attrs.y1));
+        ctx.lineTo(parseFloat(attrs.x2), parseFloat(attrs.y2));
+        if (bot.iconStroke) ctx.stroke();
+        break;
+      }
+      case "circle": {
+        ctx.beginPath();
+        ctx.arc(parseFloat(attrs.cx), parseFloat(attrs.cy), parseFloat(attrs.r), 0, Math.PI * 2);
+        if (attrs.fill === "currentColor" || !bot.iconStroke) ctx.fill();
+        if (bot.iconStroke) ctx.stroke();
+        break;
+      }
+    }
+  }
+  ctx.restore();
 }
 
-/** Stable per-contributor color derived from email hash */
-function authorColor(email: string): string {
-  let hash = 0;
-  for (let i = 0; i < email.length; i++) {
-    hash = ((hash << 5) - hash + email.charCodeAt(i)) | 0;
-  }
-  const h = ((hash % 360) + 360) % 360;
-  return hslToHex({ h, s: 55, l: 50 });
-}
+import { avatarImageCache, forgeAvatarAttempted } from "@/lib/avatar-cache";
+
 
 
 // Change 3: Time-group classification for commit timestamps
@@ -208,48 +268,75 @@ function getTimeGroup(timestamp: number): TimeGroup {
 export type { DateFormatId } from "@/lib/date-format";
 import { type DateFormatId } from "@/lib/date-format";
 
-function formatRelativeDate(timestamp: number): string {
-  const now = Date.now() / 1000;
-  const diff = now - timestamp;
-  if (diff < 60) return "now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
-  const date = new Date(timestamp * 1000);
-  const thisYear = new Date().getFullYear();
-  if (date.getFullYear() === thisYear) {
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+// Pre-computed date parts cache — avoids Date allocation and Intl formatting
+// inside the draw loop entirely. Entries persist across frames; the cache grows
+// at most to the number of unique timestamps in the commit list.
+interface DateParts {
+  year: number;
+  short: string;
+  long: string;
+  iso: string;
+  time: string;
+  relative: string;
+  relativeAt: number;
+}
+const datePartsCache = new Map<number, DateParts>();
+
+function getDateParts(timestamp: number, nowSec: number): DateParts {
+  let p = datePartsCache.get(timestamp);
+  if (p && Math.abs(nowSec - p.relativeAt) < 30) return p;
+
+  if (!p) {
+    const d = new Date(timestamp * 1000);
+    p = {
+      year: d.getFullYear(),
+      short: intlDateShort.format(d),
+      long: intlDateLong.format(d),
+      iso: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+      time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+      relative: "",
+      relativeAt: 0,
+    };
   }
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+
+  const diff = nowSec - timestamp;
+  if (diff < 60) p.relative = "now";
+  else if (diff < 3600) p.relative = `${Math.floor(diff / 60)}m`;
+  else if (diff < 86400) p.relative = `${Math.floor(diff / 3600)}h`;
+  else if (diff < 604800) p.relative = `${Math.floor(diff / 86400)}d`;
+  else p.relative = p.year === drawThisYear ? p.short : p.long;
+  p.relativeAt = nowSec;
+
+  datePartsCache.set(timestamp, p);
+  return p;
 }
 
+// Set once at the start of each draw() frame so per-row helpers avoid
+// allocating Date objects or calling Date.now() repeatedly.
+let drawNowSec = 0;
+let drawThisYear = 0;
+
 function formatDate(timestamp: number, fmt: DateFormatId, availWidth: number, ctx: CanvasRenderingContext2D): string {
-  if (fmt === "relative") return formatRelativeDate(timestamp);
-  const date = new Date(timestamp * 1000);
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  const time = `${hh}:${mm}`;
-  const fits = (s: string) => ctx.measureText(s).width <= availWidth;
+  const p = getDateParts(timestamp, drawNowSec);
+  if (fmt === "relative") return p.relative;
+
+  const fits = (s: string) => cachedMeasureText(ctx, s) <= availWidth;
 
   if (fmt === "iso") {
-    const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    const isoTime = `${iso} ${time}`;
+    const isoTime = `${p.iso} ${p.time}`;
     if (fits(isoTime)) return isoTime;
-    return iso;
+    return p.iso;
   }
-  const thisYear = new Date().getFullYear();
-  const short = date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-  const long = date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
-  if (fmt === "long" || (fmt === "short" && date.getFullYear() !== thisYear)) {
-    const longTime = `${long} ${time}`;
+  if (fmt === "long" || (fmt === "short" && p.year !== drawThisYear)) {
+    const longTime = `${p.long} ${p.time}`;
     if (fits(longTime)) return longTime;
-    if (fits(long)) return long;
-    return short;
+    if (fits(p.long)) return p.long;
+    return p.short;
   }
-  const shortTime = `${short} ${time}`;
+  const shortTime = `${p.short} ${p.time}`;
   if (fits(shortTime)) return shortTime;
-  return short;
+  return p.short;
 }
 
 function truncateText(
@@ -258,7 +345,7 @@ function truncateText(
   maxWidth: number,
 ): string {
   if (maxWidth <= 0) return "";
-  if (ctx.measureText(text).width <= maxWidth) return text;
+  if (cachedMeasureText(ctx, text) <= maxWidth) return text;
   // Binary search for the longest prefix that fits with ellipsis — O(log n) measureText calls
   let lo = 0;
   let hi = text.length;
@@ -273,38 +360,121 @@ function truncateText(
   return lo > 0 ? text.slice(0, lo) + "\u2026" : "\u2026";
 }
 
-/** Draw a small tag icon (matches lucide Tag shape) */
+// -- Lucide icon data (extracted from lucide-react for 1:1 canvas parity) ----
+
+type LucideNodeData = readonly (readonly [string, Record<string, string>])[];
+
+const ICON_TAG: LucideNodeData = [
+  ["path", { d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" }],
+  ["circle", { cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor" }],
+];
+
+const ICON_MONITOR: LucideNodeData = [
+  ["rect", { width: "20", height: "14", x: "2", y: "3", rx: "2" }],
+  ["line", { x1: "8", x2: "16", y1: "21", y2: "21" }],
+  ["line", { x1: "12", x2: "12", y1: "17", y2: "21" }],
+];
+
+const ICON_CLOUD: LucideNodeData = [
+  ["path", { d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" }],
+];
+
+const ICON_CHECK: LucideNodeData = [
+  ["path", { d: "M20 6 9 17l-5-5" }],
+];
+
+const ICON_ARCHIVE: LucideNodeData = [
+  ["rect", { width: "20", height: "5", x: "2", y: "3", rx: "1" }],
+  ["path", { d: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" }],
+  ["path", { d: "M10 12h4" }],
+];
+
+const ICON_FILE_DIFF: LucideNodeData = [
+  ["path", { d: "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" }],
+  ["path", { d: "M9 10h6" }],
+  ["path", { d: "M12 13V7" }],
+  ["path", { d: "M9 17h6" }],
+];
+
+function drawLucideIcon(
+  ctx: CanvasRenderingContext2D,
+  nodes: LucideNodeData,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+): void {
+  const scale = size / 24;
+  ctx.save();
+  ctx.translate(x, y - size / 2);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (const [element, attrs] of nodes) {
+    switch (element) {
+      case "path": {
+        const p = new Path2D(attrs.d);
+        if (attrs.fill === "currentColor") {
+          ctx.fillStyle = color;
+          ctx.fill(p);
+        }
+        ctx.stroke(p);
+        break;
+      }
+      case "rect": {
+        ctx.beginPath();
+        ctx.roundRect(
+          parseFloat(attrs.x || "0"),
+          parseFloat(attrs.y || "0"),
+          parseFloat(attrs.width),
+          parseFloat(attrs.height),
+          parseFloat(attrs.rx || "0"),
+        );
+        ctx.stroke();
+        break;
+      }
+      case "line": {
+        ctx.beginPath();
+        ctx.moveTo(parseFloat(attrs.x1), parseFloat(attrs.y1));
+        ctx.lineTo(parseFloat(attrs.x2), parseFloat(attrs.y2));
+        ctx.stroke();
+        break;
+      }
+      case "circle": {
+        ctx.beginPath();
+        ctx.arc(
+          parseFloat(attrs.cx),
+          parseFloat(attrs.cy),
+          parseFloat(attrs.r),
+          0,
+          Math.PI * 2,
+        );
+        if (attrs.fill === "currentColor") {
+          ctx.fillStyle = color;
+          ctx.fill();
+        }
+        ctx.stroke();
+        break;
+      }
+    }
+  }
+  ctx.restore();
+}
+
+// -- Icon wrappers (same signatures as before, backed by lucide data) ---------
+
 function drawTagIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
 ): number {
-  const w = 13;
-  const h = 9;
-  const cx = x + w / 2;
-  const cy = y;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  // Tag body: rectangle with pointed left edge
-  ctx.moveTo(cx - w / 2 + 1, cy);           // left point
-  ctx.lineTo(cx - w / 2 + 3, cy - h / 2);   // top-left
-  ctx.lineTo(cx + w / 2, cy - h / 2);        // top-right
-  ctx.lineTo(cx + w / 2, cy + h / 2);        // bottom-right
-  ctx.lineTo(cx - w / 2 + 3, cy + h / 2);   // bottom-left
-  ctx.closePath();
-  ctx.stroke();
-  // Small circle (tag hole)
-  ctx.beginPath();
-  ctx.arc(cx + w / 2 - 3, cy, 1, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-  ctx.restore();
-  return w + 5;
+  const size = 16;
+  drawLucideIcon(ctx, ICON_TAG, x, y, size, color);
+  return size + 4;
 }
 
 /** Draw a rounded rect pill and return its width. Pass `maxContentWidth` to
@@ -322,14 +492,15 @@ function drawPill(
 ): number {
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   const iconWidth = drawIcon ? drawIcon(ctx, 0, -1000, textColor) : 0; // dry-run to measure width
+  const trailingW = iconWidth > 0 ? TRAILING_ICON_GAP + iconWidth : 0;
   let displayText = text;
   if (maxContentWidth !== undefined) {
-    const availTextW = maxContentWidth - LABEL_PAD_X * 2 - iconWidth;
+    const availTextW = maxContentWidth - LABEL_PAD_X * 2 - trailingW;
     if (availTextW <= 0) return 0;
     displayText = truncateText(ctx, text, availTextW);
   }
-  const textWidth = ctx.measureText(displayText).width;
-  const pillWidth = textWidth + iconWidth + LABEL_PAD_X * 2;
+  const textWidth = cachedMeasureText(ctx, displayText);
+  const pillWidth = LABEL_PAD_X + textWidth + trailingW + LABEL_PAD_X;
   const pillY = y - LABEL_HEIGHT / 2;
 
   // Background
@@ -338,128 +509,59 @@ function drawPill(
   ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, LABEL_RADIUS);
   ctx.fill();
 
-  // Icon + text
+  // Text + trailing icon
   ctx.fillStyle = textColor;
-  if (drawIcon) {
-    drawIcon(ctx, x + LABEL_PAD_X, y, textColor);
-  }
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
-  ctx.fillStyle = textColor;
-  ctx.fillText(displayText, x + LABEL_PAD_X + iconWidth, y);
+  ctx.fillText(displayText, x + LABEL_PAD_X, y);
+  if (drawIcon) {
+    drawIcon(ctx, x + LABEL_PAD_X + textWidth + TRAILING_ICON_GAP, y, textColor);
+  }
 
   return pillWidth;
 }
 
-/** Draw a small monitor/screen icon (local branch indicator) */
 function drawLocalIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
 ): number {
-  const iconW = 11;
-  const halfH = 6;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.4;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  // Monitor screen (rounded rect)
-  ctx.roundRect(x, y - halfH, iconW, halfH * 2 - 3, 1.5);
-  ctx.stroke();
-  // Stand
-  ctx.beginPath();
-  ctx.moveTo(x + iconW / 2, y + halfH - 3);
-  ctx.lineTo(x + iconW / 2, y + halfH - 1);
-  // Base
-  ctx.moveTo(x + 2, y + halfH - 1);
-  ctx.lineTo(x + iconW - 2, y + halfH - 1);
-  ctx.stroke();
-  ctx.restore();
-  return iconW + 3;
+  const size = 14;
+  drawLucideIcon(ctx, ICON_MONITOR, x, y, size, color);
+  return size + 1;
 }
 
-/** Draw a small up-arrow icon (remote branch indicator) */
 function drawRemoteIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
 ): number {
-  const iconW = 9;
-  const halfH = 5;    // shorter vertically
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.6; // Change 2: was 1.4
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  // Vertical stem
-  ctx.moveTo(x + iconW / 2, y + halfH);
-  ctx.lineTo(x + iconW / 2, y - halfH);
-  // Arrow head
-  ctx.moveTo(x + 1, y - halfH + 3);
-  ctx.lineTo(x + iconW / 2, y - halfH);
-  ctx.lineTo(x + iconW - 1, y - halfH + 3);
-  ctx.stroke();
-  ctx.restore();
-  return iconW + 3;
+  const size = 14;
+  drawLucideIcon(ctx, ICON_CLOUD, x, y, size, color);
+  return size;
 }
 
-/** Draw a small checkmark icon — used to mark the current (HEAD) branch */
 function drawCheckIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
 ): number {
-  const w = 10;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.7;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(x + 1, y);
-  ctx.lineTo(x + 4, y + 3);
-  ctx.lineTo(x + w - 1, y - 4);
-  ctx.stroke();
-  ctx.restore();
-  return w + 4; // icon + trailing gap
+  const size = 14;
+  drawLucideIcon(ctx, ICON_CHECK, x, y, size, color);
+  return size + 2;
 }
 
-/** Draw a small file-edit icon for WIP row */
 function drawFileEditIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
 ): number {
-  const iconW = 10;
-  const halfH = 5;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  // Paper outline
-  ctx.moveTo(x + 1, y - halfH);
-  ctx.lineTo(x + iconW - 2, y - halfH);
-  ctx.lineTo(x + iconW - 2, y + halfH);
-  ctx.lineTo(x + 1, y + halfH);
-  ctx.closePath();
-  ctx.stroke();
-  // Lines on paper
-  ctx.beginPath();
-  ctx.moveTo(x + 3, y - 2);
-  ctx.lineTo(x + iconW - 4, y - 2);
-  ctx.moveTo(x + 3, y + 1);
-  ctx.lineTo(x + iconW - 4, y + 1);
-  ctx.stroke();
-  ctx.restore();
-  return iconW + 3;
+  const size = 14;
+  drawLucideIcon(ctx, ICON_FILE_DIFF, x, y, size, color);
+  return size + 1;
 }
 
 interface MergedBranchGroup {
@@ -498,9 +600,10 @@ function groupBranches(branches: BranchInfo[]): MergedBranchGroup[] {
 
 // Icon widths used during pill layout — kept as constants so dry-run measurement
 // matches the actual draw.
-const CHECK_ICON_W = 14;   // 10px glyph + 4px trailing gap
-const LOCAL_ICON_W = 15;   // 11px glyph + 4px leading gap
-const REMOTE_ICON_W = 12;  // 9px glyph + 3px leading gap
+const CHECK_ICON_W = 16;          // 14px icon + 2px gap
+const TRAILING_ICON_GAP = 3;      // left margin before trailing icons
+const LOCAL_ICON_W = 15;          // 14px icon + 1px gap
+const REMOTE_ICON_W = 14;         // 14px icon
 
 /** Layout: [check?] [name] [local?] [remote?]
  *  HEAD branch gets a leading checkmark; local / remote indicators sit on the
@@ -527,8 +630,8 @@ function drawMergedBranchPill(
 
   const checkW = group.isHead ? CHECK_ICON_W : 0;
   let trailingIconsW = 0;
-  if (group.local) trailingIconsW += LOCAL_ICON_W;
-  if (group.remote) trailingIconsW += REMOTE_ICON_W;
+  if (group.local) trailingIconsW += TRAILING_ICON_GAP + LOCAL_ICON_W;
+  if (group.remote) trailingIconsW += TRAILING_ICON_GAP + REMOTE_ICON_W;
 
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   let displayName = group.baseName;
@@ -538,7 +641,7 @@ function drawMergedBranchPill(
     if (availTextW <= 0) return 0;
     displayName = truncateText(ctx, group.baseName, availTextW);
   }
-  const textWidth = ctx.measureText(displayName).width;
+  const textWidth = cachedMeasureText(ctx, displayName);
 
   const pillWidth =
     LABEL_PAD_X + checkW + textWidth + trailingIconsW + LABEL_PAD_X;
@@ -558,10 +661,12 @@ function drawMergedBranchPill(
   ctx.fillText(displayName, cursorX, y);
   cursorX += textWidth;
   if (group.local) {
+    cursorX += TRAILING_ICON_GAP;
     drawLocalIcon(ctx, cursorX, y, textCol);
     cursorX += LOCAL_ICON_W;
   }
   if (group.remote) {
+    cursorX += TRAILING_ICON_GAP;
     drawRemoteIcon(ctx, cursorX, y, textCol);
     cursorX += REMOTE_ICON_W;
   }
@@ -569,37 +674,15 @@ function drawMergedBranchPill(
   return pillWidth;
 }
 
-/** Draw a small stash/archive icon (layers/stack) */
 function drawStashIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   color: string,
 ): number {
-  const w = 12;
-  const h = 9;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  // Three stacked horizontal lines (archive/layers icon)
-  ctx.beginPath();
-  // Top layer (diamond shape)
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + w / 2, y - h / 2);
-  ctx.lineTo(x + w, y);
-  ctx.lineTo(x + w / 2, y + h / 2);
-  ctx.closePath();
-  ctx.stroke();
-  // Middle line
-  ctx.beginPath();
-  ctx.moveTo(x, y + 2);
-  ctx.lineTo(x + w / 2, y + h / 2 + 2);
-  ctx.lineTo(x + w, y + 2);
-  ctx.stroke();
-  ctx.restore();
-  return w + 5;
+  const size = 16;
+  drawLucideIcon(ctx, ICON_ARCHIVE, x, y, size, color);
+  return size + 3;
 }
 
 /** A ref shown in the hover dropdown when multiple refs sit on one commit (#39). */
@@ -743,9 +826,11 @@ export function CommitGraphCanvas({
   const graphColors = useThemeStore((s) => s.appTheme.graph);
   const fontFamilyId = useThemeStore((s) => s.fontFamilyId);
   const fontScale = useThemeStore((s) => s.fontScale);
+  const activeProfile = useProfileStore((s) => s.activeProfile);
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredRowRef = useRef<number | null>(null);
+  const hoveredBadgeRowRef = useRef<number | null>(null);
   const rafRef = useRef<number>(0);
   const badgeHitAreasRef = useRef<BadgeHitArea[]>([]);
   const bodyHitAreasRef = useRef<BodyHitArea[]>([]);       // Change 6
@@ -851,31 +936,64 @@ export function CommitGraphCanvas({
     const commitIndex = new Map<string, number>();
     commits.forEach((c, i) => commitIndex.set(c.id, i));
 
-    // Sort branches: HEAD branch first so it claims the main line
-    const sorted = [...branches]
-      .filter((b) => !b.is_remote)
-      .sort((a, b) => (b.is_head ? 1 : 0) - (a.is_head ? 1 : 0));
+    // Build one walker per unique branch-tip commit (local + remote).
+    // When local and remote share a commit, prefer local. HEAD always wins.
+    const walkerByCommit = new Map<string, { color: string; row: number; isHead: boolean; isRemote: boolean }>();
+    for (const b of branches) {
+      const baseName = b.is_remote ? b.name.replace(/^[^/]+\//, "") : b.name;
+      const commit = commits.find((c) => c.id.startsWith(b.commit_id));
+      if (!commit) continue;
+      const row = commitIndex.get(commit.id) ?? 0;
+      const existing = walkerByCommit.get(commit.id);
+      if (!existing || b.is_head || (!b.is_remote && existing.isRemote)) {
+        walkerByCommit.set(commit.id, {
+          color: branchColor(baseName),
+          row,
+          isHead: b.is_head || (existing?.isHead ?? false),
+          isRemote: b.is_remote && (!existing || existing.isRemote),
+        });
+      }
+    }
 
-    for (const branch of sorted) {
-      const brColor = branchColor(branch.name);
-      // Find the commit this branch points to
-      const headCommit = commits.find((c) => c.id.startsWith(branch.commit_id));
-      if (!headCommit) continue;
+    const tipCommits = new Set(walkerByCommit.keys());
 
-      // Walk backwards through parents
-      const queue = [headCommit.id];
+    // Oldest (highest row) first so downstream branches paint first;
+    // HEAD last so it paints on top of shared segments.
+    const sorted = [...walkerByCommit.entries()].sort((a, b) => {
+      if (a[1].isHead !== b[1].isHead) return a[1].isHead ? 1 : -1;
+      return b[1].row - a[1].row;
+    });
+
+    // Pass 1 — first-parents only; stop at other branch tips so each
+    // segment of a shared linear chain gets its own branch color.
+    for (const [tipId, { color }] of sorted) {
+      let cid: string | undefined = tipId;
+      let first = true;
+      while (cid) {
+        if (!first && tipCommits.has(cid)) break;
+        first = false;
+        colorMap.set(cid, color);
+        const idx = commitIndex.get(cid);
+        if (idx === undefined) break;
+        cid = commits[idx].parent_ids[0];
+      }
+    }
+
+    // Pass 2 — walk all parents to pick up merge-parent commits (e.g.
+    // the remote side of a git-pull merge) that aren't on any branch's
+    // first-parent spine.
+    const visited = new Set<string>();
+    for (const [tipId, { color }] of sorted) {
+      const queue = [tipId];
       while (queue.length > 0) {
         const cid = queue.shift()!;
-        if (colorMap.has(cid)) continue; // already owned
-        colorMap.set(cid, brColor);
-
+        if (visited.has(cid)) continue;
+        visited.add(cid);
+        if (!colorMap.has(cid)) colorMap.set(cid, color);
         const idx = commitIndex.get(cid);
         if (idx === undefined) continue;
-        const commit = commits[idx];
-        // Follow all parents so merge-parent commits (e.g. remote
-        // side of a git-pull merge) get the correct branch color.
-        for (const pid of commit.parent_ids) {
-          queue.push(pid);
+        for (const pid of commits[idx].parent_ids) {
+          if (!visited.has(pid)) queue.push(pid);
         }
       }
     }
@@ -959,6 +1077,9 @@ export function CommitGraphCanvas({
       canvas.style.height = `${height}px`;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    textWidthCache = new Map();
+    drawNowSec = Date.now() / 1000;
+    drawThisYear = new Date().getFullYear();
 
     const firstVisibleRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1);
     const lastVisibleRow = Math.min(
@@ -1057,7 +1178,7 @@ export function CommitGraphCanvas({
     }
 
     // --- Edges (offset by rowOffset) — batched by color to minimize stroke() calls ---
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     const edgesByColor = new Map<string, { fX: number; fY: number; tX: number; tY: number; sameLane: boolean }[]>();
     for (const edge of edges) {
       const fromRow = edge.from_row + rowOffset;
@@ -1148,7 +1269,7 @@ export function CommitGraphCanvas({
 
       // Empty circle node (subtle fill when selected)
       ctx.strokeStyle = graphColors.dim;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(nodeX, wipY, NODE_RADIUS, 0, Math.PI * 2);
       if (isWipSelected) {
@@ -1177,76 +1298,128 @@ export function CommitGraphCanvas({
       const y = visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
       const color = getCommitColor(commit);
 
-      // Node -- avatar image or fallback initial circle
+      // Node -- bot icon, avatar image, profile icon, or fallback initial circle
       {
         const email = commit.author_email;
-        let img = avatarCache.get(email);
-        if (img === undefined) {
-          // First encounter -- start loading gravatar
-          avatarCache.set(email, null);
-          const loadImg = new Image();
-          loadImg.crossOrigin = "anonymous";
-          loadImg.src = gravatarUrl(email, NODE_RADIUS * 4); // 2x for retina
-          loadImg.onload = () => {
-            avatarCache.set(email, loadImg);
-            requestDrawRef.current();
-          };
-          loadImg.onerror = () => {
-            // Gravatar failed -- try forge API as fallback
-            if (!forgeAvatarAttempted.has(email)) {
-              forgeAvatarAttempted.add(email);
-              searchUserAvatar(email).then((url) => {
-                if (url) {
-                  const forgeImg = new Image();
-                  forgeImg.crossOrigin = "anonymous";
-                  forgeImg.src = url;
-                  forgeImg.onload = () => {
-                    avatarCache.set(email, forgeImg);
-                    requestDrawRef.current();
-                  };
-                }
-              }).catch(() => {});
+        const bot = detectBot(commit.author_name, email);
+        const isProfileMatch = activeProfile && activeProfile.user_email.toLowerCase() === email.toLowerCase();
+
+        if (bot) {
+          drawBotAvatar(ctx, bot, x, y, NODE_RADIUS);
+        } else if (isProfileMatch) {
+          const isForgeAvatar = activeProfile.icon?.startsWith("forge:");
+          const hasCustomIcon = activeProfile.icon && !isForgeAvatar && getProfileIcon(activeProfile.icon);
+
+          if (isForgeAvatar && activeProfile.avatar_url) {
+            const cacheKey = `profile:${activeProfile.id}`;
+            let img = avatarImageCache.get(cacheKey);
+            if (img === undefined) {
+              avatarImageCache.set(cacheKey, null);
+              const loadImg = new Image();
+              loadImg.crossOrigin = "anonymous";
+              loadImg.src = activeProfile.avatar_url;
+              loadImg.onload = () => {
+                avatarImageCache.set(cacheKey, loadImg);
+                requestDrawRef.current();
+              };
+              img = null;
             }
-          };
-          img = null;
-        }
-
-        if (img) {
-          // Gravatar -- draw circular clipped image
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
-          ctx.clip();
-          ctx.drawImage(
-            img,
-            x - NODE_RADIUS,
-            y - NODE_RADIUS,
-            NODE_RADIUS * 2,
-            NODE_RADIUS * 2,
-          );
-          ctx.restore();
+            if (img) {
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+              ctx.clip();
+              ctx.drawImage(img, x - NODE_RADIUS, y - NODE_RADIUS, NODE_RADIUS * 2, NODE_RADIUS * 2);
+              ctx.restore();
+            } else {
+              const avatarBg = darkenHex(activeProfile.color, 0.45);
+              ctx.beginPath();
+              ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+              ctx.fillStyle = avatarBg;
+              ctx.fill();
+            }
+          } else if (hasCustomIcon) {
+            drawProfileIconOnCanvas(ctx, activeProfile.icon!, x, y, NODE_RADIUS, darkenHex(activeProfile.color, 0.45));
+          } else {
+            const avatarBg = darkenHex(activeProfile.color, 0.45);
+            ctx.beginPath();
+            ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = avatarBg;
+            ctx.fill();
+            ctx.save();
+            ctx.fillStyle = contrastText(avatarBg);
+            const initials = authorInitials(commit.author_name);
+            const fontSize = initials.length > 1 ? Math.round(NODE_RADIUS * 0.95) : Math.round(NODE_RADIUS * 1.2);
+            ctx.font = `bold ${fontSize}px ${fontCfg.sans}`;
+            ctx.textAlign = "center";
+            ctx.fillText(initials, x, y);
+            ctx.restore();
+          }
         } else {
-          // Fallback -- stable-color circle with two-letter initials
-          const avatarBg = authorColor(email);
-          ctx.beginPath();
-          ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
-          ctx.fillStyle = avatarBg;
-          ctx.fill();
-          ctx.save();
-          ctx.fillStyle = contrastText(avatarBg);
-          const initials = authorInitials(commit.author_name);
-          const fontSize = initials.length > 1 ? Math.round(NODE_RADIUS * 0.95) : Math.round(NODE_RADIUS * 1.2);
-          ctx.font = `bold ${fontSize}px ${fontCfg.sans}`;
-          ctx.textAlign = "center";
-          ctx.fillText(initials, x, y);
-          ctx.restore();
+          let img = avatarImageCache.get(email);
+          if (img === undefined) {
+            avatarImageCache.set(email, null);
+            const loadImg = new Image();
+            loadImg.crossOrigin = "anonymous";
+            loadImg.src = gravatarUrl(email, NODE_RADIUS * 4);
+            loadImg.onload = () => {
+              avatarImageCache.set(email, loadImg);
+              requestDrawRef.current();
+            };
+            loadImg.onerror = () => {
+              if (!forgeAvatarAttempted.has(email)) {
+                forgeAvatarAttempted.add(email);
+                searchUserAvatar(email).then((url) => {
+                  if (url) {
+                    const forgeImg = new Image();
+                    forgeImg.crossOrigin = "anonymous";
+                    forgeImg.src = url;
+                    forgeImg.onload = () => {
+                      avatarImageCache.set(email, forgeImg);
+                      requestDrawRef.current();
+                    };
+                  }
+                }).catch(() => {});
+              }
+            };
+            img = null;
+          }
+
+          if (img) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.drawImage(img, x - NODE_RADIUS, y - NODE_RADIUS, NODE_RADIUS * 2, NODE_RADIUS * 2);
+            ctx.restore();
+          } else {
+            const avatarBg = authorColor(email);
+            ctx.beginPath();
+            ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = avatarBg;
+            ctx.fill();
+            ctx.save();
+            ctx.fillStyle = contrastText(avatarBg);
+            const initials = authorInitials(commit.author_name);
+            const fontSize = initials.length > 1 ? Math.round(NODE_RADIUS * 0.95) : Math.round(NODE_RADIUS * 1.2);
+            ctx.font = `bold ${fontSize}px ${fontCfg.sans}`;
+            ctx.textAlign = "center";
+            ctx.fillText(initials, x, y);
+            ctx.restore();
+          }
         }
 
-        // Thin ring in branch color for visual separation from edges
+        // Dark separator ring then branch color ring
+        ctx.beginPath();
+        ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+        ctx.strokeStyle = "#09090b";
+        ctx.lineWidth = 3.5;
+        ctx.stroke();
+
         ctx.beginPath();
         ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 2;
         ctx.stroke();
 
         // Store avatar hit area for tooltip
@@ -1302,7 +1475,7 @@ export function CommitGraphCanvas({
         let nChipW = 0;
         if (extra > 0) {
           ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
-          nChipW = ctx.measureText(`+${extra}`).width + LABEL_PAD_X * 2;
+          nChipW = cachedMeasureText(ctx, `+${extra}`) + LABEL_PAD_X * 2;
         }
         const gapBeforeChip = extra > 0 ? LABEL_GAP : 0;
         const maxPrimaryW = Math.max(0, totalAvail - nChipW - gapBeforeChip);
@@ -1342,7 +1515,7 @@ export function CommitGraphCanvas({
         // Build dropdown ref list when there are stacked refs (drives #39).
         let dropdownItems: DropdownRef[] | undefined;
         if (extra > 0) {
-          dropdownItems = badgeItems.map((it): DropdownRef => {
+          dropdownItems = badgeItems.slice(1).map((it): DropdownRef => {
             if (it.kind === "branch") {
               const g = it.group;
               return {
@@ -1414,6 +1587,17 @@ export function CommitGraphCanvas({
           );
         }
 
+        // Hover highlight overlay on badge
+        if (primaryW > 0 && hoveredBadgeRowRef.current === visRow) {
+          const hlW = primaryW + (extra > 0 ? LABEL_GAP + nChipW : 0);
+          ctx.save();
+          ctx.fillStyle = "rgba(255,255,255,0.04)";
+          ctx.beginPath();
+          ctx.roundRect(badgeColLeft, y - LABEL_HEIGHT / 2, hlW, LABEL_HEIGHT, LABEL_RADIUS);
+          ctx.fill();
+          ctx.restore();
+        }
+
         // Link from right edge of badge content to the commit node, colored
         // by the primary badge so lineage is visible.
         if (primaryW > 0) {
@@ -1424,7 +1608,7 @@ export function CommitGraphCanvas({
             ctx.save();
             ctx.strokeStyle = primaryColor;
             ctx.globalAlpha = 0.7;
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(linkStartX, y);
             ctx.lineTo(linkEndX, y);
@@ -1453,7 +1637,7 @@ export function CommitGraphCanvas({
       const msgAvail = Math.max(0, msgRight - msgLeft);
       ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
 
-      const fullMsgWidth = ctx.measureText(commit.message).width;
+      const fullMsgWidth = cachedMeasureText(ctx, commit.message);
       if (fullMsgWidth <= msgAvail) {
         ctx.fillStyle = graphColors.fg;
         ctx.fillText(commit.message, msgLeft, y);
@@ -1468,7 +1652,7 @@ export function CommitGraphCanvas({
             const bodyText = truncateText(ctx, bodyOneLine, bodyAvailW);
             ctx.fillText(bodyText, bodyX, y);
 
-            const drawnBodyWidth = ctx.measureText(bodyText).width;
+            const drawnBodyWidth = cachedMeasureText(ctx, bodyText);
             bodyHitAreas.push({
               x: bodyX,
               y: visRow * ROW_HEIGHT - scrollTop,
@@ -1492,7 +1676,7 @@ export function CommitGraphCanvas({
         const authorX = authorColLeft + authorPad;
         let emailShown = false;
         if (authorAvail > 10) {
-          const nameW = ctx.measureText(commit.author_name).width;
+          const nameW = cachedMeasureText(ctx, commit.author_name);
           const emailGap = 6;
           const remaining = authorAvail - nameW - emailGap;
 
@@ -1502,7 +1686,7 @@ export function CommitGraphCanvas({
             ctx.fillStyle = graphColors.dim;
             const emailText = truncateText(ctx, commit.author_email, remaining);
             ctx.fillText(emailText, authorX + nameW + emailGap, y);
-            emailShown = ctx.measureText(commit.author_email).width <= remaining;
+            emailShown = cachedMeasureText(ctx, commit.author_email) <= remaining;
           } else {
             ctx.fillStyle = graphColors.fg;
             ctx.fillText(truncateText(ctx, commit.author_name, authorAvail), authorX, y);
@@ -1554,7 +1738,7 @@ export function CommitGraphCanvas({
 
       // Right-aligned label within the message column area
       const label = group;
-      const labelWidth = ctx.measureText(label).width;
+      const labelWidth = cachedMeasureText(ctx, label);
       const labelPad = 6;
       const labelDrawX = tgMsgRight - labelWidth - 8;
 
@@ -1569,7 +1753,7 @@ export function CommitGraphCanvas({
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
     authorHitAreasRef.current = authorHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale]);
+  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale, activeProfile]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -1685,6 +1869,11 @@ export function CommitGraphCanvas({
       );
       const overBadge = !!overBadgeArea;
       scroll.style.cursor = overBadge ? "pointer" : "";
+      const newBadgeRow = overBadgeArea ? overBadgeArea.row : null;
+      if (newBadgeRow !== hoveredBadgeRowRef.current) {
+        hoveredBadgeRowRef.current = newBadgeRow;
+        requestDrawRef.current();
+      }
 
       // Hover dropdown (#39): open after 150ms over a badge with stacked refs;
       // close after 200ms when pointer leaves the badge (cancelled if it enters
@@ -1752,13 +1941,7 @@ export function CommitGraphCanvas({
         if (commit && (!canvasHover || canvasHover.row !== overAvatar.row || canvasHover.type !== "avatar")) {
           if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
           const date = new Date(commit.timestamp * 1000);
-          const dateStr = date.toLocaleDateString(undefined, {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          });
+          const dateStr = intlDateFull.format(date);
           hoverTimerRef.current = setTimeout(() => {
             setCanvasHover({
               type: "avatar",
@@ -1792,6 +1975,7 @@ export function CommitGraphCanvas({
 
   const handleMouseLeave = useCallback(() => {
     hoveredRowRef.current = null;
+    hoveredBadgeRowRef.current = null;
     requestDrawRef.current();
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     setCanvasHover(null);
@@ -1906,7 +2090,7 @@ export function CommitGraphCanvas({
       {/* Hover dropdown listing every ref on a multi-ref commit (#39). */}
       {hoverDropdown && (
         <div
-          className="absolute z-40 min-w-[180px] border border-border bg-card shadow-lg overflow-hidden p-px"
+          className="absolute z-40 min-w-[120px] flex flex-col gap-px border border-border bg-card shadow-lg overflow-hidden"
           style={{ borderRadius: LABEL_RADIUS, left: hoverDropdown.x, top: hoverDropdown.y }}
           onMouseEnter={() => {
             if (closeHoverTimer.current) {
@@ -1990,12 +2174,6 @@ function DropdownItemRow({
   const isStash = item.kind === "stash";
   const isTag = item.kind === "tag";
   const isBranch = item.kind === "branch";
-  // Tint matches the canvas pill — 0.3 alpha for HEAD, 0.15 otherwise. Stashes
-  // and tags share a neutral muted background.
-  const bgStyle =
-    isBranch && !item.isRemoteOnly
-      ? { backgroundColor: `${item.color}${item.isHead ? "4d" : "26"}` } // hex alpha 4d≈0.3, 26≈0.15
-      : { backgroundColor: "rgba(255,255,255,0.06)" };
   const colorStyle = { color: isBranch ? item.color : undefined };
 
   return (
@@ -2003,17 +2181,11 @@ function DropdownItemRow({
       onClick={onSingleClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      className="flex cursor-pointer select-none items-center gap-1.5 px-2.5 text-xs hover:brightness-125"
-      style={{ ...bgStyle, height: LABEL_HEIGHT, borderRadius: LABEL_RADIUS }}
+      className="flex cursor-pointer select-none items-center gap-1.5 px-3 text-xs transition-colors hover:bg-secondary"
+      style={{ height: LABEL_HEIGHT }}
     >
       {item.isHead && (
         <Check className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
-      )}
-      {isTag && (
-        <Tag className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-      )}
-      {isStash && (
-        <Archive className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       )}
       <span
         className={`truncate ${isBranch ? "" : "text-muted-foreground"}`}
@@ -2021,11 +2193,17 @@ function DropdownItemRow({
       >
         {item.displayName}
       </span>
+      {isTag && (
+        <Tag className="ml-auto h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+      )}
+      {isStash && (
+        <Archive className="ml-auto h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+      )}
       {item.hasLocal && (
         <Monitor className="ml-auto h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
       )}
       {item.hasRemote && (
-        <ArrowUp className={`h-3 w-3 shrink-0 ${item.hasLocal ? "" : "ml-auto"}`} style={colorStyle} aria-hidden="true" />
+        <Cloud className={`h-3 w-3 shrink-0 ${item.hasLocal ? "" : "ml-auto"}`} style={colorStyle} aria-hidden="true" />
       )}
     </div>
   );

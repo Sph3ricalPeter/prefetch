@@ -1,59 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Check, User, Settings2 } from "lucide-react";
+import { ChevronDown, Check, User, Settings2, Star } from "lucide-react";
 import { toast } from "sonner";
 import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
-import { gravatarUrl } from "@/lib/gravatar";
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase() || "?";
-}
-
-/** Tiny avatar — tries gravatar, falls back to initials. */
-function MiniAvatar({ name, email, size = 16 }: { name: string; email: string; size?: number }) {
-  const src = gravatarUrl(email, size * 2);
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const img = new Image();
-    img.onload = () => { if (!cancelled) setLoadedSrc(src); };
-    img.onerror = () => {};
-    img.src = src;
-    return () => { cancelled = true; };
-  }, [src]);
-
-  const px = `${size}px`;
-
-  if (loadedSrc === src) {
-    return (
-      <img
-        src={src}
-        alt={name}
-        className="shrink-0 rounded-full"
-        style={{ width: px, height: px }}
-      />
-    );
-  }
-
-  return (
-    <div
-      className="shrink-0 flex items-center justify-center rounded-full bg-primary/20 text-primary font-bold"
-      style={{ width: px, height: px, fontSize: `${Math.max(size * 0.45, 7)}px` }}
-    >
-      {getInitials(name)}
-    </div>
-  );
-}
+import { ProfileAvatar } from "@/components/ui/avatar";
 
 interface ProfileSwitcherProps {
   onManageProfiles: () => void;
@@ -105,37 +55,28 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
 
   return (
     <div className="relative" ref={dropdownRef}>
-      {/* Trigger button */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            className="flex items-center gap-1.5 rounded px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors max-w-[140px]"
-          >
-            {activeProfile ? (
-              <>
-                <MiniAvatar name={activeProfile.user_name} email={activeProfile.user_email} size={14} />
-                <span className="truncate">{activeProfile.name}</span>
-              </>
-            ) : (
-              <>
-                <User className="h-3 w-3 shrink-0 text-faint" />
-                <span className="truncate text-dim">No Profile</span>
-              </>
-            )}
-            <ChevronDown className="h-2.5 w-2.5 shrink-0 text-faint" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {activeProfile
-            ? `Profile: ${activeProfile.name} (${activeProfile.user_email})`
-            : "No profile active — using git config identity"}
-        </TooltipContent>
-      </Tooltip>
+      {/* Trigger button — styled to match repo switcher */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex h-7 min-w-0 items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+      >
+        {activeProfile ? (
+          <>
+            <ProfileAvatar name={activeProfile.user_name} email={activeProfile.user_email} size={20} color={activeProfile.color} icon={activeProfile.icon} avatarUrl={activeProfile.avatar_url} />
+            <span className="truncate font-medium text-foreground">{activeProfile.name}</span>
+          </>
+        ) : (
+          <>
+            <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">No Profile</span>
+          </>
+        )}
+        <ChevronDown className="h-3 w-3 shrink-0 text-faint" />
+      </button>
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
+        <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
           {/* No profile option */}
           <button
             onClick={() => handleSwitch(null)}
@@ -156,19 +97,23 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
               key={profile.id}
               onClick={() => handleSwitch(profile)}
               className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              style={{ borderLeftWidth: 3, borderLeftColor: profile.color }}
             >
-              <MiniAvatar name={profile.user_name} email={profile.user_email} size={16} />
+              <ProfileAvatar name={profile.user_name} email={profile.user_email} size={20} color={profile.color} icon={profile.icon} avatarUrl={profile.avatar_url} />
               <div className="flex-1 min-w-0 text-left">
-                <span className="block truncate text-foreground">{profile.name}</span>
-                <span className="block truncate text-caption text-dim">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-foreground">{profile.name}</span>
+                  {profile.is_default && (
+                    <span className="flex items-center gap-0.5 rounded-sm bg-secondary px-1.5 py-0.5 text-label font-medium text-muted-foreground shrink-0">
+                      default
+                      <Star className="h-2.5 w-2.5 fill-muted-foreground" />
+                    </span>
+                  )}
+                </div>
+                <span className="block truncate text-label text-dim">
                   {profile.user_email}
                 </span>
               </div>
-              {profile.is_default && (
-                <span className="rounded bg-accent px-1 py-0.5 text-caption text-dim shrink-0">
-                  default
-                </span>
-              )}
               {activeProfile?.id === profile.id && (
                 <Check className="h-3 w-3 shrink-0 text-primary" />
               )}

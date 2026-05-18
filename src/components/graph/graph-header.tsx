@@ -168,8 +168,13 @@ export function GraphHeader({
         </div>
       )}
       <div
-        className={`absolute inset-y-0 flex items-center pl-3 ${labelClasses}`}
-        style={{ left: shaRight, right: rightColsWidth + 28 }}
+        className={`absolute inset-y-0 flex items-center pl-3 overflow-hidden whitespace-nowrap ${labelClasses}`}
+        style={{
+          left: shaRight,
+          right: rightColsWidth > 0
+            ? Math.max(28, containerWidth - authorLeft + 4)
+            : 28,
+        }}
       >
         Commit Message
       </div>

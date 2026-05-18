@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type ContextMenuItem =
   | { label: string; onClick: () => void; destructive?: boolean; disabled?: boolean }
@@ -13,6 +13,23 @@ interface ContextMenuProps {
 
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pad = 4;
+    let left = x;
+    let top = y;
+    if (left + rect.width > vw - pad) left = vw - rect.width - pad;
+    if (top + rect.height > vh - pad) top = vh - rect.height - pad;
+    if (left < pad) left = pad;
+    if (top < pad) top = pad;
+    setPos({ left, top });
+  }, [x, y]);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -31,17 +48,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
-  // Adjust position to stay within viewport
-  const style: React.CSSProperties = {
-    left: `${x}px`,
-    top: `${y}px`,
-  };
-
   return (
     <div
       ref={ref}
       className="fixed z-50 min-w-44 rounded-md border border-border bg-card py-1 shadow-lg"
-      style={style}
+      style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
     >
       {items.map((item, i) =>
         "separator" in item ? (

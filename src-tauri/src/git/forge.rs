@@ -1,9 +1,15 @@
 //! GitHub / GitLab integration — remote detection, OS keychain token storage,
 //! and pull-request / merge-request lookup via REST APIs.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use crate::error::AppError;
 use crate::git::repository::run_git;
 use crate::git::types::{ForgeConfig, ForgeKind, ForgeRepo, PrInfo};
+
+static HOST_KIND_CACHE: std::sync::LazyLock<Mutex<HashMap<String, ForgeKind>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ── Remote detection ─────────────────────────────────────────────────────────
 
@@ -88,11 +94,49 @@ fn split_owner_repo(path: &str) -> Result<(String, String), AppError> {
 }
 
 fn classify_host(host: &str) -> ForgeKind {
-    if host.contains("gitlab") {
-        ForgeKind::GitLab
+    let lower = host.to_lowercase();
+    if lower.contains("github") {
+        return ForgeKind::GitHub;
+    }
+    if lower.contains("gitlab") {
+        return ForgeKind::GitLab;
+    }
+
+    if let Ok(cache) = HOST_KIND_CACHE.lock() {
+        if let Some(kind) = cache.get(host) {
+            return kind.clone();
+        }
+    }
+
+    let kind = probe_gitlab_api(host).unwrap_or(ForgeKind::GitHub);
+
+    if let Ok(mut cache) = HOST_KIND_CACHE.lock() {
+        cache.insert(host.to_string(), kind.clone());
+    }
+
+    kind
+}
+
+/// Probe `GET https://{host}/api/v4/version` to detect GitLab instances.
+/// Self-hosted GitLab always exposes this endpoint (even unauthenticated).
+fn probe_gitlab_api(host: &str) -> Option<ForgeKind> {
+    let url = format!("https://{host}/api/v4/version");
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "prefetch-git-client/0.1")
+        .send()
+        .ok()?;
+    // GitLab returns 200 (public) or 401 (auth required) — both confirm it's GitLab.
+    // A non-GitLab host would 404 or connection-refuse.
+    let status = resp.status().as_u16();
+    if status == 200 || status == 401 {
+        Some(ForgeKind::GitLab)
     } else {
-        // Default to GitHub for github.com and any other host
-        ForgeKind::GitHub
+        None
     }
 }
 
@@ -158,17 +202,31 @@ pub fn load_token_for_profile(
     }
 }
 
-/// Delete a forge PAT from the OS keychain (profile-scoped or legacy).
+/// Delete a forge PAT from the OS keychain (profile-scoped AND legacy).
+///
+/// Mirrors `load_token_for_profile`'s fallback: deletes both the profile-scoped
+/// key and the legacy key so the token can't reappear via the fallback path.
 pub fn delete_token_for_profile(profile_id: Option<&str>, host: &str) -> Result<(), AppError> {
     let user = keyring_user(profile_id, host);
     let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &user)
         .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()), // already gone — not an error
+        Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(AppError::Other(format!("Failed to delete token: {e}"))),
     }?;
-    // Also remove any associated refresh token
+
+    // Also delete the legacy (unscoped) key if we were using a profile-scoped one,
+    // so the token doesn't reappear via load_token_for_profile's fallback.
+    if profile_id.is_some() {
+        let legacy_entry = keyring::Entry::new(KEYCHAIN_SERVICE, host)
+            .map_err(|e| AppError::Other(format!("Keyring error: {e}")))?;
+        match legacy_entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(AppError::Other(format!("Failed to delete legacy token: {e}"))),
+        }
+    }
+
     delete_refresh_token_for_profile(profile_id, host).ok();
     Ok(())
 }
@@ -340,22 +398,22 @@ pub struct TokenInfo {
 
 /// Detect token type from its prefix.
 fn detect_token_type(host: &str, token: &str) -> TokenType {
-    match host {
-        "github.com" => {
+    let kind = classify_host(host);
+    match kind {
+        ForgeKind::GitHub => {
             if token.starts_with("ghp_") || token.starts_with("github_pat_") {
                 TokenType::Pat
             } else {
                 TokenType::OAuth
             }
         }
-        "gitlab.com" => {
+        ForgeKind::GitLab => {
             if token.starts_with("glpat-") {
                 TokenType::Pat
             } else {
                 TokenType::OAuth
             }
         }
-        _ => TokenType::Pat, // assume PAT for unknown hosts
     }
 }
 
@@ -364,26 +422,26 @@ fn detect_token_type(host: &str, token: &str) -> TokenType {
 pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo> {
     let token = load_token_for_profile(profile_id, host).ok()??;
     let token_type = detect_token_type(host, &token);
+    let kind = classify_host(host);
 
-    let (url, auth_header, auth_value) = match host {
-        "github.com" => (
-            "https://api.github.com/user".to_string(),
+    let (url, auth_header, auth_value) = match kind {
+        ForgeKind::GitHub => (
+            format!("https://api.{host}/user"),
             "Authorization",
             format!("Bearer {token}"),
         ),
-        "gitlab.com" => match token_type {
+        ForgeKind::GitLab => match token_type {
             TokenType::Pat => (
-                "https://gitlab.com/api/v4/user".to_string(),
+                format!("https://{host}/api/v4/user"),
                 "PRIVATE-TOKEN",
                 token.clone(),
             ),
             TokenType::OAuth => (
-                "https://gitlab.com/api/v4/user".to_string(),
+                format!("https://{host}/api/v4/user"),
                 "Authorization",
                 format!("Bearer {token}"),
             ),
         },
-        _ => return None,
     };
 
     let client = reqwest::blocking::Client::new();
@@ -400,10 +458,9 @@ pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo>
 
     let json: serde_json::Value = resp.json().ok()?;
 
-    let username = match host {
-        "github.com" => json["login"].as_str()?.to_string(),
-        "gitlab.com" => json["username"].as_str()?.to_string(),
-        _ => return None,
+    let username = match kind {
+        ForgeKind::GitHub => json["login"].as_str()?.to_string(),
+        ForgeKind::GitLab => json["username"].as_str()?.to_string(),
     };
 
     let avatar_url = json["avatar_url"].as_str().unwrap_or("").to_string();
@@ -421,56 +478,80 @@ pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo>
 /// Returns `None` if no user is found or the API call fails.
 pub fn search_user_avatar(host: &str, token: &Option<String>, email: &str) -> Option<String> {
     let client = reqwest::blocking::Client::new();
+    let kind = classify_host(host);
 
-    if host.contains("github") {
-        let url = format!(
-            "https://api.{}/search/users?q={}+in:email&per_page=1",
-            host,
-            urlencoding::encode(email)
-        );
-        let mut req = client
-            .get(&url)
-            .header("User-Agent", "prefetch-git-client/0.1")
-            .header("Accept", "application/vnd.github+json");
-        if let Some(t) = token {
-            req = req.header("Authorization", format!("Bearer {t}"));
-        }
-        let resp = req.send().ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        let json: serde_json::Value = resp.json().ok()?;
-        let items = json["items"].as_array()?;
-        let user = items.first()?;
-        return user["avatar_url"].as_str().map(|s| s.to_string());
-    }
-
-    if host.contains("gitlab") {
-        let url = format!(
-            "https://{}/api/v4/users?search={}",
-            host,
-            urlencoding::encode(email)
-        );
-        let mut req = client
-            .get(&url)
-            .header("User-Agent", "prefetch-git-client/0.1");
-        if let Some(t) = token {
-            if t.starts_with("glpat-") {
-                req = req.header("PRIVATE-TOKEN", t.as_str());
-            } else {
+    match kind {
+        ForgeKind::GitHub => {
+            let url = format!(
+                "https://api.{}/search/users?q={}+in:email&per_page=1",
+                host,
+                urlencoding::encode(email)
+            );
+            let mut req = client
+                .get(&url)
+                .header("User-Agent", "prefetch-git-client/0.1")
+                .header("Accept", "application/vnd.github+json");
+            if let Some(t) = token {
                 req = req.header("Authorization", format!("Bearer {t}"));
             }
+            let resp = req.send().ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let json: serde_json::Value = resp.json().ok()?;
+            let items = json["items"].as_array()?;
+            let user = items.first()?;
+            user["avatar_url"].as_str().map(|s| s.to_string())
         }
-        let resp = req.send().ok()?;
-        if !resp.status().is_success() {
-            return None;
+        ForgeKind::GitLab => {
+            // Use the dedicated Avatar API — works without auth for public
+            // accounts and returns a direct avatar URL for any email.
+            let url = format!(
+                "https://{}/api/v4/avatar?email={}&size=128",
+                host,
+                urlencoding::encode(email)
+            );
+            tracing::debug!(url = %url, has_token = token.is_some(), "gitlab avatar API request");
+            let mut req = client
+                .get(&url)
+                .header("User-Agent", "prefetch-git-client/0.1");
+            if let Some(t) = token {
+                if t.starts_with("glpat-") {
+                    req = req.header("PRIVATE-TOKEN", t.as_str());
+                } else {
+                    req = req.header("Authorization", format!("Bearer {t}"));
+                }
+            }
+            let resp = match req.send() {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %e, "gitlab avatar API request failed");
+                    return None;
+                }
+            };
+            let status = resp.status();
+            if !status.is_success() {
+                tracing::debug!(status = %status, "gitlab avatar API non-success status");
+                return None;
+            }
+            let json: serde_json::Value = match resp.json() {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::warn!(error = %e, "gitlab avatar API JSON parse failed");
+                    return None;
+                }
+            };
+            tracing::debug!(response = %json, "gitlab avatar API response");
+            let avatar = match json["avatar_url"].as_str() {
+                Some(a) => a,
+                None => {
+                    tracing::debug!("gitlab avatar API: no avatar_url in response");
+                    return None;
+                }
+            };
+            Some(avatar.to_string())
         }
-        let users: Vec<serde_json::Value> = resp.json().ok()?;
-        let user = users.first()?;
-        return user["avatar_url"].as_str().map(|s| s.to_string());
     }
-
-    None
 }
 
 // ── PR / MR lookup ────────────────────────────────────────────────────────────

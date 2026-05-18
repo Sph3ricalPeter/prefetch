@@ -584,11 +584,11 @@ function InteractiveDiffLineImpl({
         )}
       </span>
       {/* Old line number */}
-      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-caption">
         {line.old_lineno ?? ""}
       </span>
       {/* New line number */}
-      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
         {line.new_lineno ?? ""}
       </span>
       {/* Origin column */}
@@ -805,7 +805,7 @@ function SideBySideCellImpl({
           )}
           {!isChangeLine && <span className="w-5 shrink-0" />}
           {/* Line number */}
-          <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-[10px]">
+          <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-caption">
             {side === "left" ? (line.old_lineno ?? "") : (line.new_lineno ?? "")}
           </span>
           {/* Origin */}
@@ -838,10 +838,10 @@ function InteractiveContextLine({ line, tokens, wrapClass }: InteractiveContextL
   return (
     <div className="flex opacity-80">
       <span className="w-5 shrink-0" />
-      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-caption">
         {line.old_lineno ?? ""}
       </span>
-      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
         {line.new_lineno ?? ""}
       </span>
       <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />
@@ -873,7 +873,7 @@ function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: Int
           <div key={i} className="flex opacity-80">
             <div className="flex flex-1 min-w-0 overflow-hidden border-r border-border">
               <span className="w-5 shrink-0" />
-              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
                 {line.old_lineno ?? ""}
               </span>
               <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
@@ -887,7 +887,7 @@ function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: Int
             </div>
             <div className="flex flex-1 min-w-0 overflow-hidden">
               <span className="w-5 shrink-0" />
-              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-[10px]">
+              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
                 {line.new_lineno ?? ""}
               </span>
               <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
@@ -920,7 +920,7 @@ function InteractiveExpandSeparator({ remainingCount, onExpandAll }: Interactive
       <button
         onClick={onExpandAll}
         title="Expand all hidden lines"
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground transition-colors"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption hover:bg-accent hover:text-foreground transition-colors"
       >
         <UnfoldVertical className="w-3 h-3" />
         <span>{remainingCount} hidden lines</span>

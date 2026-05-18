@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Archive,
   ChevronDown,
@@ -21,53 +21,8 @@ import { FileList } from "@/components/staging/file-list";
 import { buildFileTree } from "@/lib/file-tree";
 import type { FileTreeNode } from "@/lib/file-tree";
 import { CommitBox } from "@/components/staging/commit-box";
-import { gravatarUrl } from "@/lib/gravatar";
+import { AuthorAvatar } from "@/components/ui/avatar";
 import type { FileStatus } from "@/types/git";
-
-// Claude Code orange — used for CC co-author avatar
-const CLAUDE_ORANGE = "#E8734A";
-
-function isClaudeCoAuthor(email: string): boolean {
-  return email.includes("anthropic.com") || email.includes("claude");
-}
-
-/** Avatar with gravatar fetch + initial fallback. Shares the same URL scheme as the canvas graph. */
-function AuthorAvatar({ name, email, size = 20 }: { name: string; email: string; size?: number }) {
-  const url = useMemo(() => gravatarUrl(email, size * 2), [email, size]); // 2x for retina
-  const [imgSrc, setImgSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = url;
-    img.onload = () => { if (!cancelled) setImgSrc(url); };
-    img.onerror = () => {}; // stays null → shows initials
-    return () => { cancelled = true; };
-  }, [url]);
-
-  if (imgSrc && imgSrc === url) {
-    return (
-      <img
-        src={imgSrc}
-        alt={name}
-        className="shrink-0 rounded-full"
-        style={{ width: size, height: size }}
-      />
-    );
-  }
-
-  return (
-    <div
-      className="shrink-0 rounded-full bg-secondary flex items-center justify-center"
-      style={{ width: size, height: size }}
-    >
-      <span className="text-xs font-medium text-foreground">
-        {name.charAt(0).toUpperCase()}
-      </span>
-    </div>
-  );
-}
 
 export function DetailPanel() {
   const commits = useRepoStore((s) => s.commits);
@@ -338,29 +293,17 @@ function CommitDetailView({
             </Tooltip>
 
             {/* Co-authors inline */}
-            {commit.co_authors.map((ca, i) => {
-              const isClaude = isClaudeCoAuthor(ca.email);
-              return (
-                <Tooltip key={i}>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1.5 cursor-default">
-                      {isClaude ? (
-                        <div
-                          className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
-                          style={{ backgroundColor: CLAUDE_ORANGE }}
-                        >
-                          <ClaudeIcon />
-                        </div>
-                      ) : (
-                        <AuthorAvatar name={ca.name} email={ca.email} size={20} />
-                      )}
-                      <p className="text-xs text-foreground">{ca.name}</p>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent>{ca.email || ca.name}</TooltipContent>
-                </Tooltip>
-              );
-            })}
+            {commit.co_authors.map((ca, i) => (
+              <Tooltip key={i}>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 cursor-default">
+                    <AuthorAvatar name={ca.name} email={ca.email} size={20} />
+                    <p className="text-xs text-foreground">{ca.name}</p>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>{ca.email || ca.name}</TooltipContent>
+              </Tooltip>
+            ))}
           </div>
 
           {/* Date */}
@@ -767,23 +710,5 @@ function CommitTreeNode({
         )}
       </span>
     </button>
-  );
-}
-
-/** Claude logomark — the Anthropic calligraphy asterisk */
-function ClaudeIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 256 256"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M166.04 86.272L128.854 180.096H153.174L190.232 86.272H166.04ZM89.954 86.272L52.768 180.096H77.088L114.274 86.272H89.954Z"
-        fill="white"
-      />
-    </svg>
   );
 }
