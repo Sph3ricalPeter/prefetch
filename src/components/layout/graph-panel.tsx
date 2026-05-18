@@ -29,15 +29,46 @@ import {
 } from "@/components/ui/tooltip";
 
 // ── Graph column layout (badge / graph / sha / message / author / date) ──────
-const COL_BADGE_DEFAULT = 190;
+// Static columns (user-resizable pixels, or fixed constants):
+//   - badge (branch/tag): pixels, user-resizable
+//   - graph:              pixels, user-resizable (floored by lane count)
+//   - sha:                fixed constant (not resizable, not persisted)
+//   - date:               fixed constant (not resizable, not persisted)
+// Flexible columns: message + author share the remaining ("flex") width in a
+// persisted ratio so each scales with the middle pane while preserving the
+// visible-text ratio between them.
 const COL_BADGE_MIN = 120;
 const COL_BADGE_MAX = 420;
 const COL_GRAPH_MIN = 80;
 const COL_GRAPH_MAX = 800;
-const COL_SHA_DEFAULT = 70;
-const COL_AUTHOR_DEFAULT = 120;
-const COL_DATE_DEFAULT = 80;
-const COL_GRAPH_PAD_RIGHT = 24; // breathing room past the last lane
+const COL_AUTHOR_MIN = 80;
+const COL_AUTHOR_MAX = 400;
+
+const COL_BADGE_DEFAULT = 190;
+const COL_GRAPH_PAD_RIGHT = 24;
+/** Fixed pixel width of the SHA column — sized to fit a 7-char short SHA at
+ *  body font size (incl. up to ~110% font scale). Not persisted, not resizable. */
+const COL_SHA = 70;
+/** Fixed pixel width of the date column. Not persisted, not resizable. */
+const COL_DATE = 100;
+/** Default share of the flexible (message + author) area allocated to author.
+ *  Message gets the remaining (1 − ratio). */
+const AUTHOR_RATIO_DEFAULT = 0.25;
+
+interface GraphLayout {
+  /** Badge (branch/tag) column width in pixels. */
+  badge: number;
+  /** Graph column width in pixels (floored by lane count at render time). */
+  graph: number;
+  /** Author's share (0..1) of the flexible message+author area. */
+  authorRatio: number;
+}
+
+const LAYOUT_DEFAULT: GraphLayout = {
+  badge: COL_BADGE_DEFAULT,
+  graph: COL_GRAPH_MIN,
+  authorRatio: AUTHOR_RATIO_DEFAULT,
+};
 
 /** Default graph column width derived from the topology's lane count. */
 function defaultGraphWidth(totalLanes: number): number {
@@ -52,26 +83,88 @@ function minGraphWidth(totalLanes: number): number {
   return Math.max(COL_GRAPH_MIN, totalLanes * LANE_WIDTH + 8);
 }
 
-/** Parse a persisted widths blob; falls back to defaults on any malformed input. */
-function parseStoredWidths(
-  raw: string | null,
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+/** Compute the pixel width available to the message+author pair. */
+function flexAreaPx(
+  layout: GraphLayout,
+  containerWidth: number,
   totalLanes: number,
-): GraphColumnWidths | null {
+  visibility: { sha: boolean; date: boolean },
+): number {
+  const badge = clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX);
+  const graph = clamp(layout.graph, minGraphWidth(totalLanes), COL_GRAPH_MAX);
+  const sha = visibility.sha ? COL_SHA : 0;
+  const date = visibility.date ? COL_DATE : 0;
+  return Math.max(0, containerWidth - badge - graph - sha - date);
+}
+
+/** Project the persisted layout onto the current container, clamped to pixel
+ *  min/max. The author column is derived from `authorRatio × flexArea`. */
+function deriveWidths(
+  layout: GraphLayout,
+  containerWidth: number,
+  totalLanes: number,
+  visibility: { sha: boolean; author: boolean; date: boolean },
+): GraphColumnWidths {
+  const badge = clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX);
+  const graph = clamp(layout.graph, minGraphWidth(totalLanes), COL_GRAPH_MAX);
+  const flex = flexAreaPx(layout, containerWidth, totalLanes, visibility);
+  const author = clamp(layout.authorRatio * flex, COL_AUTHOR_MIN, COL_AUTHOR_MAX);
+  return { badge, graph, sha: COL_SHA, author, date: COL_DATE };
+}
+
+/** Convert the pixel widths reported by the header (after a drag) back into
+ *  the persistable layout. Badge/graph stay in pixels; author becomes its
+ *  ratio of the resulting flex area. SHA and date are fixed constants and
+ *  not part of the persisted layout. */
+function pxWidthsToLayout(
+  w: GraphColumnWidths,
+  containerWidth: number,
+  totalLanes: number,
+  visibility: { sha: boolean; date: boolean },
+  prev: GraphLayout,
+): GraphLayout {
+  const next: GraphLayout = {
+    badge: w.badge,
+    graph: w.graph,
+    authorRatio: prev.authorRatio,
+  };
+  if (containerWidth > 0) {
+    const flex = flexAreaPx(next, containerWidth, totalLanes, visibility);
+    if (flex > 0) {
+      next.authorRatio = clamp(w.author / flex, 0.05, 0.9);
+    }
+  }
+  return next;
+}
+
+/** Parse the persisted layout blob `{ badge, graph, authorRatio }`. Invalid
+ *  or missing entries reject so callers fall back to defaults — there is no
+ *  migration from older formats. */
+function parseStoredLayout(raw: string | null, totalLanes: number): GraphLayout | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const badge = typeof parsed.badge === "number" ? parsed.badge : NaN;
-    const graph = typeof parsed.graph === "number" ? parsed.graph : NaN;
-    if (!Number.isFinite(badge) || !Number.isFinite(graph)) return null;
-    const sha = typeof parsed.sha === "number" ? parsed.sha : COL_SHA_DEFAULT;
-    const author = typeof parsed.author === "number" ? parsed.author : COL_AUTHOR_DEFAULT;
-    const date = typeof parsed.date === "number" ? parsed.date : COL_DATE_DEFAULT;
+    const num = (k: string): number =>
+      typeof parsed[k] === "number" && Number.isFinite(parsed[k]) ? (parsed[k] as number) : NaN;
+
+    const badge = num("badge");
+    const graph = num("graph");
+    const authorRatio = num("authorRatio");
+    if (
+      !Number.isFinite(badge) ||
+      !Number.isFinite(graph) ||
+      !Number.isFinite(authorRatio)
+    ) {
+      return null;
+    }
     return {
-      badge: Math.max(COL_BADGE_MIN, Math.min(COL_BADGE_MAX, badge)),
-      graph: Math.max(minGraphWidth(totalLanes), Math.min(COL_GRAPH_MAX, graph)),
-      sha: Math.max(50, Math.min(150, sha)),
-      author: Math.max(80, Math.min(400, author)),
-      date: Math.max(60, Math.min(170, date)),
+      badge: clamp(badge, COL_BADGE_MIN, COL_BADGE_MAX),
+      graph: clamp(graph, minGraphWidth(totalLanes), COL_GRAPH_MAX),
+      authorRatio: clamp(authorRatio, 0.05, 0.9),
     };
   } catch {
     return null;
@@ -205,19 +298,27 @@ export function GraphPanel() {
   const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
 
   // ── Graph column widths ───────────────────────────────────────────────
-  // Stored per-repo as JSON under ui_state key `graph_layout:{path}`.
-  // Defaults: badge=190, graph derived from totalLanes, date=80.
-  const [columnWidths, setColumnWidths] = useState<GraphColumnWidths>({
-    badge: COL_BADGE_DEFAULT,
+  // Stored per-repo as JSON under ui_state key `graph_layout:{path}`. Badge,
+  // graph and author scale proportionally with the middle pane; sha is a
+  // fixed constant; date is a static pixel width.
+  const [layout, setLayout] = useState<GraphLayout>({
+    ...LAYOUT_DEFAULT,
     graph: defaultGraphWidth(totalLanes),
-    sha: COL_SHA_DEFAULT,
-    author: COL_AUTHOR_DEFAULT,
-    date: COL_DATE_DEFAULT,
   });
   const columnVisibility = useRepoStore((s) => s.graphColumnVisibility);
   const setColumnVisibility = useRepoStore((s) => s.setGraphColumnVisibility);
   const dateFormat = useRepoStore((s) => s.graphDateFormat);
   const [graphContainerWidth, setGraphContainerWidth] = useState<number>(0);
+  // Keep refs alongside the state so async load + drag-end callbacks can read
+  // the latest container width and visibility without needing them in deps.
+  const containerWidthRef = useRef(0);
+  useEffect(() => {
+    containerWidthRef.current = graphContainerWidth;
+  }, [graphContainerWidth]);
+  const visibilityRef = useRef(columnVisibility);
+  useEffect(() => {
+    visibilityRef.current = columnVisibility;
+  }, [columnVisibility]);
   const graphObserverRef = useRef<ResizeObserver | null>(null);
   const graphContainerRef = useCallback((el: HTMLDivElement | null) => {
     if (graphObserverRef.current) {
@@ -234,41 +335,37 @@ export function GraphPanel() {
     }
   }, []);
 
-  // Restore persisted widths when the repo changes. If nothing's saved, derive
-  // the graph column from the current lane count so the default fits.
+  // Restore the persisted layout when the repo changes. Invalid or missing
+  // entries fall back to defaults — there is no migration from older formats.
   useEffect(() => {
     if (!repoPath) return;
     let cancelled = false;
-    const defaultWidths: GraphColumnWidths = {
-      badge: COL_BADGE_DEFAULT,
+    const defaults: GraphLayout = {
+      ...LAYOUT_DEFAULT,
       graph: defaultGraphWidth(totalLanes),
-      sha: COL_SHA_DEFAULT,
-      author: COL_AUTHOR_DEFAULT,
-      date: COL_DATE_DEFAULT,
     };
     getUiState(`graph_layout:${repoPath}`)
       .then((raw) => {
         if (cancelled) return;
-        setColumnWidths(parseStoredWidths(raw, totalLanes) ?? defaultWidths);
+        setLayout(parseStoredLayout(raw, totalLanes) ?? defaults);
       })
       .catch(() => {
-        if (!cancelled) setColumnWidths(defaultWidths);
+        if (!cancelled) setLayout(defaults);
       });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoPath]);
 
 
-  // Effective widths fed to header + canvas. The graph column is clamped up if the
-  // topology grew wider than the stored value (e.g. after a fetch). Derived rather
-  // than synced via setState-in-effect to keep the user's stored preference intact.
-  const effectiveWidths: GraphColumnWidths = {
-    badge: columnWidths.badge,
-    graph: Math.max(columnWidths.graph, minGraphWidth(totalLanes)),
-    sha: columnWidths.sha,
-    author: columnWidths.author,
-    date: columnWidths.date,
-  };
+  // Effective pixel widths fed to header + canvas — derived each render from
+  // the persisted layout, the current container width, the topology's lane
+  // count (which floors the graph column), and which optional columns are on.
+  const effectiveWidths: GraphColumnWidths = deriveWidths(
+    layout,
+    graphContainerWidth,
+    totalLanes,
+    columnVisibility,
+  );
 
 
   // Auto-reopen checkbox state (welcome screen only)
@@ -477,14 +574,15 @@ export function GraphPanel() {
               graphMin={minGraphWidth(totalLanes)}
               graphMax={COL_GRAPH_MAX}
               visibility={columnVisibility}
-              onResize={setColumnWidths}
+              onResize={(w) => {
+                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, visibilityRef.current, layout);
+                setLayout(next);
+              }}
               onResizeEnd={(w) => {
-                setColumnWidths(w);
+                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, visibilityRef.current, layout);
+                setLayout(next);
                 if (repoPath) {
-                  setUiState(
-                    `graph_layout:${repoPath}`,
-                    JSON.stringify({ badge: w.badge, graph: w.graph, sha: w.sha, author: w.author, date: w.date }),
-                  ).catch(() => {});
+                  setUiState(`graph_layout:${repoPath}`, JSON.stringify(next)).catch(() => {});
                 }
               }}
               onVisibilityChange={setColumnVisibility}

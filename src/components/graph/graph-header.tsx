@@ -5,12 +5,8 @@ import type { GraphColumnWidths, GraphColumnVisibility } from "./commit-graph-ca
 const HEADER_HEIGHT = 24;
 const HANDLE_HIT = 6;
 
-const COL_SHA_MIN = 50;
-const COL_SHA_MAX = 150;
 const COL_AUTHOR_MIN = 80;
 const COL_AUTHOR_MAX = 400;
-const COL_DATE_MIN = 60;
-const COL_DATE_MAX = 170;
 
 interface GraphHeaderProps {
   widths: GraphColumnWidths;
@@ -25,7 +21,7 @@ interface GraphHeaderProps {
   onVisibilityChange: (visibility: GraphColumnVisibility) => void;
 }
 
-type DragKind = "badge" | "graph" | "sha" | "author" | "date";
+type DragKind = "badge" | "graph" | "author";
 
 export function GraphHeader({
   widths,
@@ -76,12 +72,8 @@ export function GraphHeader({
         onResizeRef.current({ ...current, badge: clamp(start.badge + delta, badgeMin, badgeMax) });
       } else if (dragging === "graph") {
         onResizeRef.current({ ...current, graph: clamp(start.graph + delta, graphMin, graphMax) });
-      } else if (dragging === "sha") {
-        onResizeRef.current({ ...current, sha: clamp(start.sha + delta, COL_SHA_MIN, COL_SHA_MAX) });
       } else if (dragging === "author") {
         onResizeRef.current({ ...current, author: clamp(start.author - delta, COL_AUTHOR_MIN, COL_AUTHOR_MAX) });
-      } else if (dragging === "date") {
-        onResizeRef.current({ ...current, date: clamp(start.date - delta, COL_DATE_MIN, COL_DATE_MAX) });
       }
     };
 
@@ -131,7 +123,11 @@ export function GraphHeader({
   const authorWidth = visibility.author ? widths.author : 0;
   const rightColsWidth = dateWidth + authorWidth;
   const authorLeft = Math.max(shaRight, containerWidth - rightColsWidth);
-  const dateLeft = Math.max(shaRight, containerWidth - dateWidth);
+  // Date sits immediately after author when author is visible — otherwise the
+  // pure right-anchored position can overlap author at narrow widths.
+  const dateLeft = visibility.author
+    ? authorLeft + authorWidth
+    : Math.max(shaRight, containerWidth - dateWidth);
 
   const labelClasses =
     "text-caption uppercase tracking-widest text-faint select-none";
@@ -225,14 +221,6 @@ export function GraphHeader({
           active={dragging === "author"}
           onMouseDown={startDrag("author")}
           ariaLabel="Resize author column"
-        />
-      )}
-      {visibility.date && (
-        <ResizeDivider
-          x={dateLeft}
-          active={dragging === "date"}
-          onMouseDown={startDrag("date")}
-          ariaLabel="Resize date column"
         />
       )}
 
