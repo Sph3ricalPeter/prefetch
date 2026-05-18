@@ -3,8 +3,9 @@ import { Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getUiState, setUiState } from "@/lib/database";
 import { useUpdaterStore } from "@/stores/updater-store";
+import { useRepoStore } from "@/stores/repo-store";
 import { setFetchInterval as setFetchIntervalCmd } from "@/lib/commands";
-import { DATE_FORMATS, type DateFormatId } from "@/lib/date-format";
+import { DATE_FORMATS } from "@/lib/date-format";
 
 const FETCH_INTERVALS = [
   { label: "1 minute", value: "60" },
@@ -22,7 +23,8 @@ const VIEW_MODES = [
 export function GeneralSection() {
   const [fetchInterval, setFetchInterval] = useState("300");
   const [fileViewMode, setFileViewMode] = useState("flat");
-  const [dateFormat, setDateFormat] = useState<DateFormatId>("short");
+  const dateFormat = useRepoStore((s) => s.graphDateFormat);
+  const setGraphDateFormat = useRepoStore((s) => s.setGraphDateFormat);
   const [autoReopen, setAutoReopen] = useState(false);
   const [conflictAutoResolve, setConflictAutoResolve] = useState(false);
 
@@ -42,11 +44,6 @@ export function GeneralSection() {
     getUiState("conflict_auto_resolve").then((v) => {
       if (v === "true") setConflictAutoResolve(true);
     }).catch(() => {});
-    getUiState("graph_date_format").then((v) => {
-      if (v && (v === "relative" || v === "short" || v === "long" || v === "iso")) {
-        setDateFormat(v as DateFormatId);
-      }
-    }).catch(() => {});
   }, []);
 
   const handleFetchIntervalChange = (value: string) => {
@@ -60,9 +57,10 @@ export function GeneralSection() {
     setUiState("file_view_mode", value).catch(() => {});
   };
 
-  const handleDateFormatChange = (value: DateFormatId) => {
-    setDateFormat(value);
-    setUiState("graph_date_format", value).catch(() => {});
+  const handleDateFormatChange = (value: string) => {
+    if (value === "relative" || value === "short" || value === "long" || value === "iso") {
+      setGraphDateFormat(value);
+    }
   };
 
   return (

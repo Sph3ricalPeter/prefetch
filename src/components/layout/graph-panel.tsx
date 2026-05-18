@@ -15,9 +15,7 @@ import {
   CommitGraphCanvas,
   LANE_WIDTH,
   type GraphColumnWidths,
-  type GraphColumnVisibility,
 } from "@/components/graph/commit-graph-canvas";
-import type { DateFormatId } from "@/lib/date-format";
 import { GraphHeader } from "@/components/graph/graph-header";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
@@ -40,8 +38,6 @@ const COL_SHA_DEFAULT = 70;
 const COL_AUTHOR_DEFAULT = 120;
 const COL_DATE_DEFAULT = 80;
 const COL_GRAPH_PAD_RIGHT = 24; // breathing room past the last lane
-
-const DEFAULT_VISIBILITY: GraphColumnVisibility = { sha: false, author: false, date: false };
 
 /** Default graph column width derived from the topology's lane count. */
 function defaultGraphWidth(totalLanes: number): number {
@@ -76,20 +72,6 @@ function parseStoredWidths(
       sha: Math.max(50, Math.min(150, sha)),
       author: Math.max(80, Math.min(400, author)),
       date: Math.max(60, Math.min(170, date)),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseStoredVisibility(raw: string | null): GraphColumnVisibility | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      sha: parsed.sha === true,
-      author: parsed.author === true,
-      date: parsed.date === true,
     };
   } catch {
     return null;
@@ -232,8 +214,9 @@ export function GraphPanel() {
     author: COL_AUTHOR_DEFAULT,
     date: COL_DATE_DEFAULT,
   });
-  const [columnVisibility, setColumnVisibility] = useState<GraphColumnVisibility>(DEFAULT_VISIBILITY);
-  const [dateFormat, setDateFormat] = useState<DateFormatId>("short");
+  const columnVisibility = useRepoStore((s) => s.graphColumnVisibility);
+  const setColumnVisibility = useRepoStore((s) => s.setGraphColumnVisibility);
+  const dateFormat = useRepoStore((s) => s.graphDateFormat);
   const [graphContainerWidth, setGraphContainerWidth] = useState<number>(0);
   const graphObserverRef = useRef<ResizeObserver | null>(null);
   const graphContainerRef = useCallback((el: HTMLDivElement | null) => {
@@ -275,26 +258,6 @@ export function GraphPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoPath]);
 
-  // Restore column visibility (global, not per-repo).
-  useEffect(() => {
-    getUiState("graph_column_visibility")
-      .then((raw) => {
-        const stored = parseStoredVisibility(raw);
-        if (stored) setColumnVisibility(stored);
-      })
-      .catch(() => {});
-  }, []);
-
-  // Restore date format preference (global).
-  useEffect(() => {
-    getUiState("graph_date_format")
-      .then((raw) => {
-        if (raw && (raw === "relative" || raw === "short" || raw === "long" || raw === "iso")) {
-          setDateFormat(raw as DateFormatId);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   // Effective widths fed to header + canvas. The graph column is clamped up if the
   // topology grew wider than the stored value (e.g. after a fetch). Derived rather
@@ -524,10 +487,7 @@ export function GraphPanel() {
                   ).catch(() => {});
                 }
               }}
-              onVisibilityChange={(v) => {
-                setColumnVisibility(v);
-                setUiState("graph_column_visibility", JSON.stringify(v)).catch(() => {});
-              }}
+              onVisibilityChange={setColumnVisibility}
             />
             <div className="flex-1 min-h-0">
               <CommitGraphCanvas

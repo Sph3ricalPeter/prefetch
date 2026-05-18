@@ -17,6 +17,10 @@ src-tauri/target/
 *.swp
 *.swo
 
+# Claude harness state
+.claude/
+**/.claude/
+
 # OS
 .DS_Store
 Thumbs.db
