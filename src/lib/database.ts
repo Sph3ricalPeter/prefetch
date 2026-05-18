@@ -310,6 +310,26 @@ export async function setUiState(key: string, value: string): Promise<void> {
   );
 }
 
+/** Delete UI state by exact keys and by key prefixes (e.g. `graph_layout:`). */
+export async function deleteUiState(opts: {
+  keys?: string[];
+  prefixes?: string[];
+}): Promise<void> {
+  const db = getDb();
+  for (const key of opts.keys ?? []) {
+    await db.execute("DELETE FROM ui_state WHERE key = $1", [key]);
+  }
+  for (const prefix of opts.prefixes ?? []) {
+    // SQLite LIKE — escape underscores and percent signs in the prefix to
+    // avoid matching unrelated keys.
+    const escaped = prefix.replace(/[\\%_]/g, (c) => `\\${c}`);
+    await db.execute(
+      "DELETE FROM ui_state WHERE key LIKE $1 ESCAPE '\\'",
+      [`${escaped}%`],
+    );
+  }
+}
+
 // --- Profiles ---
 
 /**

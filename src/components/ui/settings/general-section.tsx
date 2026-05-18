@@ -1,11 +1,35 @@
 import { useState, useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, RotateCcw } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { getUiState, setUiState } from "@/lib/database";
+import { deleteUiState, getUiState, setUiState } from "@/lib/database";
 import { useUpdaterStore } from "@/stores/updater-store";
 import { useRepoStore } from "@/stores/repo-store";
 import { setFetchInterval as setFetchIntervalCmd } from "@/lib/commands";
 import { DATE_FORMATS } from "@/lib/date-format";
+
+/** UI-state keys that hold visual / layout preferences (themes, fonts, panel
+ *  widths, diff display modes, graph column visibility + date format). Reset
+ *  by the "Reset layout & appearance" button. Behavioral keys (auto-fetch,
+ *  conflict auto-resolve, profile selection, recents) are deliberately not
+ *  touched. */
+const VISUAL_LAYOUT_KEYS = [
+  "app_theme",
+  "code_theme",
+  "font_family",
+  "mono_font",
+  "font_scale",
+  "sidebar_width",
+  "detail_width",
+  "diff_view_mode",
+  "image_diff_view_mode",
+  "diff_wrap_lines",
+  "file_view_mode",
+  "graph_column_visibility",
+  "graph_date_format",
+];
+/** Per-repo graph layout entries are stored as `graph_layout:<repoPath>` — wipe
+ *  every variant by prefix. */
+const VISUAL_LAYOUT_PREFIXES = ["graph_layout:"];
 
 const FETCH_INTERVALS = [
   { label: "1 minute", value: "60" },
@@ -199,6 +223,67 @@ export function GeneralSection() {
           ))}
         </div>
       </div>
+
+      <ResetLayoutSection />
+    </div>
+  );
+}
+
+function ResetLayoutSection() {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const handleReset = async () => {
+    setResetting(true);
+    try {
+      await deleteUiState({
+        keys: VISUAL_LAYOUT_KEYS,
+        prefixes: VISUAL_LAYOUT_PREFIXES,
+      });
+      // Reload the webview so every store re-initialises from defaults.
+      window.location.reload();
+    } catch {
+      setResetting(false);
+      setConfirmOpen(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs font-medium text-foreground">
+        Reset layout &amp; appearance
+      </label>
+      <p className="text-xs text-muted-foreground">
+        Clears column widths, panel sizes, theme, fonts, and diff view
+        preferences. Repos, profiles, and behavior settings are kept.
+      </p>
+      {confirmOpen ? (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleReset}
+            disabled={resetting}
+            className="flex items-center gap-1.5 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-destructive/20 disabled:opacity-60"
+          >
+            {resetting && <Loader2 className="h-3 w-3 animate-spin" />}
+            Confirm reset &amp; reload
+          </button>
+          <button
+            onClick={() => setConfirmOpen(false)}
+            disabled={resetting}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-60"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setConfirmOpen(true)}
+          className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Reset to defaults
+        </button>
+      )}
     </div>
   );
 }
