@@ -70,6 +70,24 @@ pub fn open_repo(
         ));
     }
 
+    // Scrub any leaked credentials from the origin URL (e.g. from an earlier
+    // clone that embedded x-token-auth:TOKEN@ in the remote).
+    // Only strip user:pass@ (contains colon), not plain user@ (legitimate).
+    if let Ok(url) = repository::run_git(&path, &["remote", "get-url", "origin"], &[]) {
+        let url = url.trim();
+        if url.starts_with("https://") {
+            let without_scheme = url.strip_prefix("https://").unwrap_or(url);
+            if let Some(at_pos) = without_scheme.find('@') {
+                let userinfo = &without_scheme[..at_pos];
+                if userinfo.contains(':') {
+                    let clean = format!("https://{}", &without_scheme[at_pos + 1..]);
+                    let _ = repository::run_git(&path, &["remote", "set-url", "origin", &clean], &[]);
+                    debug!("scrubbed credentials from origin URL");
+                }
+            }
+        }
+    }
+
     debug!(repo_name = %name, "repo opened");
     Ok(name)
 }
@@ -80,17 +98,27 @@ pub fn open_repo(
 pub async fn clone_repo(
     url: String,
     target_path: String,
+    profile_id: Option<String>,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, AppError> {
     let env = get_profile_env(&state);
-    let pid = get_profile_id(&state);
+    // Use the explicitly passed profile ID (from clone dialog) or fall back to active profile
+    let pid = profile_id.or_else(|| get_profile_id(&state));
 
     // Try to extract host from URL and load a token for authenticated clone
-    let token = extract_host_from_url(&url).and_then(|host| {
-        forge::load_token_for_profile(pid.as_deref(), &host)
+    let extracted_host = extract_host_from_url(&url);
+    tracing::debug!(
+        ?pid,
+        ?extracted_host,
+        "clone_repo: resolving credentials"
+    );
+    let token = extracted_host.and_then(|host| {
+        let t = forge::load_token_for_profile(pid.as_deref(), &host)
             .ok()
-            .flatten()
+            .flatten();
+        tracing::debug!(host, has_token = t.is_some(), "clone_repo: token lookup");
+        t
     });
 
     offload(move || {
@@ -112,6 +140,8 @@ fn extract_host_from_url(url: &str) -> Option<String> {
         .strip_prefix("https://")
         .or(url.strip_prefix("http://"))?;
     let host = url.split('/').next()?;
+    // Strip username@ prefix (e.g. "user@bitbucket.org" → "bitbucket.org")
+    let host = host.rsplit('@').next().unwrap_or(host);
     Some(host.to_string())
 }
 

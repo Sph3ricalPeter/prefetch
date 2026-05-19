@@ -33,8 +33,8 @@ export async function openRepo(path: string): Promise<string> {
   return tracedInvoke<string>("open_repo", { path });
 }
 
-export async function cloneRepo(url: string, targetPath: string): Promise<string> {
-  return tracedInvoke<string>("clone_repo", { url, targetPath });
+export async function cloneRepo(url: string, targetPath: string, profileId?: string): Promise<string> {
+  return tracedInvoke<string>("clone_repo", { url, targetPath, profileId: profileId ?? null });
 }
 
 export async function getCommits(limit?: number): Promise<GraphData> {
@@ -380,7 +380,7 @@ export interface OAuthResult {
 }
 
 export async function startOAuthFlow(
-  provider: "github" | "gitlab",
+  provider: "github" | "gitlab" | "bitbucket",
   profileId?: string,
 ): Promise<OAuthResult> {
   return tracedInvoke<OAuthResult>("start_oauth_flow", { provider, profileId });

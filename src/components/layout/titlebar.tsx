@@ -21,6 +21,8 @@ import {
   GitBranchPlus,
   MoreHorizontal,
   Download,
+  Check,
+  ExternalLink,
 } from "lucide-react";
 
 /** Detect macOS — synchronous, safe to call at module level */
@@ -182,6 +184,7 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
   const recentRepos = useRepoStore((s) => s.recentRepos);
   const openRepository = useRepoStore((s) => s.openRepository);
   const removeFromRecentRepos = useRepoStore((s) => s.removeFromRecentRepos);
+  const openInEditor = useRepoStore((s) => s.openInEditor);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
   const profiles = useProfileStore((s) => s.profiles);
 
@@ -231,8 +234,6 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
     );
   }
 
-  const otherRepos = recentRepos.filter((r) => r.path !== repoPath);
-
   return (
     <div className="relative min-w-0" ref={dropdownRef}>
       <button
@@ -281,14 +282,22 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
             <Download className="h-3.5 w-3.5" />
             Clone Repository...
           </button>
+          <button
+            onClick={() => { setIsOpen(false); openInEditor("."); }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Open in File Explorer
+          </button>
 
-          {otherRepos.length > 0 && (
+          {recentRepos.length > 0 && (
             <>
               <div className="border-t border-border" />
               <p className="px-3 pt-2 pb-1 text-label text-faint uppercase tracking-wider font-medium">
                 Recent
               </p>
-              {otherRepos.map((repo) => {
+              {recentRepos.map((repo) => {
+                const isCurrent = repo.path === repoPath;
                 const repoProfile = repo.profile_id
                   ? profiles.find((p) => p.id === repo.profile_id)
                   : null;
@@ -296,7 +305,9 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
                   <div
                     key={repo.path}
                     className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-secondary transition-colors"
+                    style={repoProfile ? { borderLeftWidth: 3, borderLeftColor: repoProfile.color } : undefined}
                     onClick={() => {
+                      if (isCurrent) return;
                       setIsOpen(false);
                       openRepository(repo.path);
                     }}
@@ -310,28 +321,24 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
                       <span className="text-xs text-foreground truncate">{repo.name}</span>
                       <span className="text-label text-faint truncate">{repo.path}</span>
                     </div>
-                    {repoProfile && (
-                      <span
-                        className="shrink-0 rounded-sm px-1.5 py-0.5 text-label font-medium"
-                        style={{ backgroundColor: `${repoProfile.color}18`, color: repoProfile.color }}
-                      >
-                        {repoProfile.name}
-                      </span>
+                    {isCurrent ? (
+                      <Check className="h-3 w-3 shrink-0 text-primary" />
+                    ) : (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeFromRecentRepos(repo.path);
+                            }}
+                            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>Remove from recent</TooltipContent>
+                      </Tooltip>
                     )}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeFromRecentRepos(repo.path);
-                          }}
-                          className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>Remove from recent</TooltipContent>
-                    </Tooltip>
                   </div>
                 );
               })}

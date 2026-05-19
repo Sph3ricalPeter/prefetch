@@ -28,6 +28,7 @@ import { ForgeIcon } from "@/components/ui/forge-icons";
 const FORGE_AVATAR_HOSTS: { host: string; label: string; kind: ForgeKind }[] = [
   { host: "github.com", label: "GitHub", kind: "github" },
   { host: "gitlab.com", label: "GitLab", kind: "gitlab" },
+  { host: "bitbucket.org", label: "Bitbucket", kind: "bitbucket" },
 ];
 
 // ── Profile list view ───────────────────────────────────────────────────────

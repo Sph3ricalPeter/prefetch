@@ -520,12 +520,21 @@ pub fn clone_repo<F: Fn(&str)>(
 
     let effective_url = if url.starts_with("https://") {
         if let Some(tok) = token {
-            let username = if url.contains("gitlab") {
-                "oauth2"
+            // Strip any existing user@ from the URL before injecting credentials
+            // e.g. "https://user@bitbucket.org/..." → "https://bitbucket.org/..."
+            let stripped = url.strip_prefix("https://").unwrap_or(url);
+            let bare_url = if let Some(at_pos) = stripped.find('@') {
+                let after_at = &stripped[at_pos + 1..];
+                format!("https://{after_at}")
             } else {
-                "x-access-token"
+                url.to_string()
             };
-            let authed_url = url.replacen("https://", &format!("https://{username}:{tok}@"), 1);
+            let host = bare_url
+                .strip_prefix("https://")
+                .and_then(|s| s.split('/').next())
+                .unwrap_or("");
+            let username = forge::http_auth_username(host, tok);
+            let authed_url = format!("https://{username}:{tok}@{}", bare_url.strip_prefix("https://").unwrap_or(&bare_url));
             args.extend(["-c", "credential.helper="].iter().map(|s| s.to_string()));
             env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
             env.push(("GCM_INTERACTIVE".to_string(), "never".to_string()));
@@ -542,7 +551,15 @@ pub fn clone_repo<F: Fn(&str)>(
     args.push(target_path.to_string());
 
     let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run_git_with_progress(".", &args_refs, &on_progress, &env)
+    let result = run_git_with_progress(".", &args_refs, &on_progress, &env);
+
+    // Reset origin to the original URL so credentials aren't stored in .git/config.
+    // git clone persists the full URL (including embedded user:token@) in .git/config.
+    if result.is_ok() && token.is_some() {
+        let _ = run_git(target_path, &["remote", "set-url", "origin", url], &[]);
+    }
+
+    result
 }
 
 /// Fetch all remotes with progress streaming.

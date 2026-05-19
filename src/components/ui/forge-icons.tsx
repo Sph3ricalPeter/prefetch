@@ -36,8 +36,22 @@ export function GitLabIcon({ className = "h-3 w-3" }: ForgeIconProps) {
   );
 }
 
+export function BitbucketIcon({ className = "h-3 w-3" }: ForgeIconProps) {
+  return (
+    <svg
+      viewBox="0 0 32 32"
+      fill="none"
+      className={className}
+      aria-label="Bitbucket"
+    >
+      <path d="M2.81 4.07a1 1 0 0 0-1 1.16l4.06 24.6a1.36 1.36 0 0 0 1.33 1.13h17.85a1 1 0 0 0 1-.85l4.06-24.88a1 1 0 0 0-1-1.16Zm16.37 17.61h-6.5l-1.76-9.2h9.85Z" fill="#2684FF" />
+    </svg>
+  );
+}
+
 export function ForgeIcon({ kind, className }: { kind: ForgeKind | null; className?: string }) {
   if (kind === "github") return <GitHubIcon className={className} />;
   if (kind === "gitlab") return <GitLabIcon className={className} />;
+  if (kind === "bitbucket") return <BitbucketIcon className={className} />;
   return null;
 }

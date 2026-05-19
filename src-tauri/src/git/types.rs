@@ -176,6 +176,7 @@ pub struct UndoAction {
 pub enum ForgeKind {
     GitHub,
     GitLab,
+    Bitbucket,
 }
 
 /// Detected information about the remote forge (GitHub or GitLab instance).

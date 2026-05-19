@@ -95,7 +95,7 @@ pub fn validate_repo_paths(repo_root: &str, paths: &[String]) -> Result<(), AppE
     Ok(())
 }
 
-/// Refresh GitLab OAuth tokens if needed before git write operations.
+/// Refresh OAuth tokens if needed before git write operations (GitLab + Bitbucket).
 /// Silently succeeds when no refresh is needed or on failure (the git
 /// command will use whatever token is in the keychain).
 pub async fn refresh_forge_token(state: &State<'_, AppState>) {
@@ -104,7 +104,7 @@ pub async fn refresh_forge_token(state: &State<'_, AppState>) {
         Err(_) => return,
     };
     let pid = get_profile_id(state);
-    crate::oauth::try_refresh_gitlab_token(&path, pid.as_deref())
+    crate::oauth::try_refresh_token(&path, pid.as_deref())
         .await
         .ok();
 }

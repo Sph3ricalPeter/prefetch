@@ -1,4 +1,4 @@
-//! OAuth authorization code flow with PKCE for GitHub and GitLab.
+//! OAuth authorization code flow with PKCE for GitHub, GitLab, and Bitbucket Cloud.
 //!
 //! Flow:
 //! 1. Generate PKCE verifier + challenge, state token, pick ephemeral port
@@ -177,6 +177,7 @@ fn sha256_impl(message: &[u8]) -> [u8; 32] {
 pub enum OAuthProvider {
     GitHub,
     GitLab,
+    Bitbucket,
 }
 
 /// Configuration for an OAuth app (client_id, client_secret, scopes, endpoints).
@@ -206,6 +207,18 @@ impl OAuthConfig {
             client_id: env!("GITLAB_OAUTH_CLIENT_ID").to_string(),
             client_secret: Some(env!("GITLAB_OAUTH_CLIENT_SECRET").to_string()),
             scopes: "read_user read_api write_repository".to_string(),
+        }
+    }
+
+    fn bitbucket() -> Self {
+        // Bitbucket scopes are configured on the OAuth consumer, not in the URL.
+        // The scope param is ignored by Bitbucket but we include it for consistency.
+        Self {
+            authorize_url: "https://bitbucket.org/site/oauth2/authorize".to_string(),
+            token_url: "https://bitbucket.org/site/oauth2/access_token".to_string(),
+            client_id: option_env!("BB_OAUTH_CLIENT_ID").unwrap_or("").to_string(),
+            client_secret: option_env!("BB_OAUTH_CLIENT_SECRET").map(|s| s.to_string()),
+            scopes: "account repository repository:write pullrequest".to_string(),
         }
     }
 }
@@ -252,6 +265,7 @@ pub async fn start_flow(
     let config = match provider {
         OAuthProvider::GitHub => OAuthConfig::github(),
         OAuthProvider::GitLab => OAuthConfig::gitlab(),
+        OAuthProvider::Bitbucket => OAuthConfig::bitbucket(),
     };
 
     if config.client_id.is_empty() {
@@ -263,6 +277,7 @@ pub async fn start_flow(
     let host = match provider {
         OAuthProvider::GitHub => "github.com",
         OAuthProvider::GitLab => "gitlab.com",
+        OAuthProvider::Bitbucket => "bitbucket.org",
     };
 
     // Bind to an ephemeral port
@@ -531,16 +546,18 @@ async fn exchange_code(
 
 // ── Token refresh ──────────────────────────────────────────────────────────
 
-/// Refresh a GitLab OAuth access token using the stored refresh token.
+/// Refresh an OAuth access token using the stored refresh token.
 /// Updates both access and refresh tokens in the keychain on success.
 /// Does nothing for GitHub (tokens don't expire) or when no refresh token exists.
-pub async fn try_refresh_gitlab_token(
+pub async fn try_refresh_token(
     path: &str,
     profile_id: Option<&str>,
 ) -> Result<(), AppError> {
+    use crate::git::types::ForgeKind;
+
     let config = forge::detect_forge(path).ok().flatten();
     let config = match config {
-        Some(c) if c.kind == crate::git::types::ForgeKind::GitLab => c,
+        Some(c) if c.kind == ForgeKind::GitLab || c.kind == ForgeKind::Bitbucket => c,
         _ => return Ok(()),
     };
 
@@ -549,22 +566,27 @@ pub async fn try_refresh_gitlab_token(
         None => return Ok(()),
     };
 
-    let gitlab = OAuthConfig::gitlab();
+    let oauth_config = match config.kind {
+        ForgeKind::GitLab => OAuthConfig::gitlab(),
+        ForgeKind::Bitbucket => OAuthConfig::bitbucket(),
+        _ => return Ok(()),
+    };
+
     let client = reqwest::Client::new();
 
     let mut params = vec![
-        ("client_id", gitlab.client_id.as_str()),
+        ("client_id", oauth_config.client_id.as_str()),
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token.as_str()),
     ];
     let secret_ref;
-    if let Some(ref secret) = gitlab.client_secret {
+    if let Some(ref secret) = oauth_config.client_secret {
         secret_ref = secret.clone();
         params.push(("client_secret", &secret_ref));
     }
 
     let resp = client
-        .post(&gitlab.token_url)
+        .post(&oauth_config.token_url)
         .header("Accept", "application/json")
         .form(&params)
         .send()
@@ -574,7 +596,7 @@ pub async fn try_refresh_gitlab_token(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        warn!(status = %status, body = %body, "GitLab token refresh failed");
+        warn!(status = %status, body = %body, kind = ?config.kind, "Token refresh failed");
         return Err(AppError::Other(format!(
             "Token refresh failed (HTTP {status}): {body}"
         )));
@@ -595,9 +617,10 @@ pub async fn try_refresh_gitlab_token(
         forge::save_refresh_token_for_profile(profile_id, &config.host, new_refresh)?;
     }
 
-    info!("GitLab access token refreshed successfully");
+    info!(kind = ?config.kind, "OAuth access token refreshed successfully");
     Ok(())
 }
+
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 

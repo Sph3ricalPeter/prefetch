@@ -407,7 +407,7 @@ function ProfileEdit({
                       }}
                     >
                       <img src={url} alt={label} className="h-full w-full rounded-md object-cover" />
-                      <ForgeIcon kind={kind as "github" | "gitlab"} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-sm bg-popover p-px text-muted-foreground" />
+                      <ForgeIcon kind={kind as ForgeKind} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-sm bg-popover p-px text-muted-foreground" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{label} avatar</TooltipContent>
@@ -608,11 +608,12 @@ function ProfileEdit({
 
 // ── Forge tokens per profile ────────────────────────────────────────────────
 
-type ForgeHostSpec = { host: string; label: string; kind: ForgeKind; oauthProvider: "github" | "gitlab"; hasOAuth: boolean; tokenDocsUrl: string; placeholder: string; scopes: string[] };
+type ForgeHostSpec = { host: string; label: string; kind: ForgeKind; oauthProvider: "github" | "gitlab" | "bitbucket"; hasOAuth: boolean; tokenDocsUrl: string; placeholder: string; scopes: string[] };
 
 const FORGE_HOSTS: ForgeHostSpec[] = [
   { host: "github.com", label: "GitHub", kind: "github", oauthProvider: "github", hasOAuth: true, tokenDocsUrl: "https://github.com/settings/tokens", placeholder: "ghp_...", scopes: ["repo — push, pull, fetch, PR detection"] },
   { host: "gitlab.com", label: "GitLab", kind: "gitlab", oauthProvider: "gitlab", hasOAuth: true, tokenDocsUrl: "https://gitlab.com/-/user_settings/personal_access_tokens/legacy/new", placeholder: "glpat-...", scopes: ["read_api — PR/MR detection", "write_repository — push, pull, fetch"] },
+  { host: "bitbucket.org", label: "Bitbucket", kind: "bitbucket", oauthProvider: "bitbucket", hasOAuth: true, tokenDocsUrl: "https://bitbucket.org/account/settings/api-tokens/", placeholder: "API token", scopes: ["read/write:repository — push, pull, fetch", "read:pullrequest — PR detection", "read:user — user info"] },
 ];
 
 function buildSelfHostedSpec(host: string, kind: ForgeKind): ForgeHostSpec {
@@ -739,7 +740,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
     }
   };
 
-  const handleOAuth = async (host: string, provider: "github" | "gitlab") => {
+  const handleOAuth = async (host: string, provider: "github" | "gitlab" | "bitbucket") => {
     setOauthWaitingHost(host);
     try {
       await startOAuthFlow(provider, profileId);
@@ -768,7 +769,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
         Forge Tokens
       </h3>
       <p className="text-label text-faint">
-        Authenticate with GitHub/GitLab via OAuth or a Personal Access Token.
+        Authenticate with GitHub, GitLab, or Bitbucket via OAuth or a token.
       </p>
 
       <div className="space-y-2">

@@ -43,14 +43,16 @@ pub async fn get_forge_status(state: State<'_, AppState>) -> Result<ForgeStatus,
                 has_token: false,
             }),
             Some(cfg) => {
-                let token =
-                    forge::load_token_for_profile(profile_id.as_deref(), &cfg.host).unwrap_or(None);
+                // Use strict (no legacy fallback) check so the status bar
+                // only shows the checkmark when THIS profile has a token.
+                let has_token =
+                    forge::keychain::has_token_for_profile(profile_id.as_deref(), &cfg.host);
                 Ok(ForgeStatus {
                     kind: Some(format!("{:?}", cfg.kind).to_lowercase()),
                     host: Some(cfg.host),
                     owner: Some(cfg.owner),
                     repo: Some(cfg.repo),
-                    has_token: token.is_some(),
+                    has_token,
                 })
             }
         }
@@ -96,8 +98,7 @@ pub async fn delete_forge_token(
 #[tauri::command]
 pub async fn check_profile_token(profile_id: String, host: String) -> Result<bool, AppError> {
     offload(move || {
-        let token = forge::load_token_for_profile(Some(&profile_id), &host)?;
-        Ok(token.is_some())
+        Ok(forge::keychain::has_token_for_profile(Some(&profile_id), &host))
     })
     .await
 }
@@ -247,6 +248,7 @@ pub async fn start_oauth_flow(
     let provider = match provider.as_str() {
         "github" => oauth::OAuthProvider::GitHub,
         "gitlab" => oauth::OAuthProvider::GitLab,
+        "bitbucket" => oauth::OAuthProvider::Bitbucket,
         other => return Err(AppError::Other(format!("Unknown OAuth provider: {other}"))),
     };
 

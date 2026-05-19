@@ -173,7 +173,7 @@ export interface PrInfo {
   state: PrState;
 }
 
-export type ForgeKind = "github" | "gitlab";
+export type ForgeKind = "github" | "gitlab" | "bitbucket";
 
 export interface ForgeStatus {
   kind: ForgeKind | null;

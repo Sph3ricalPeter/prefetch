@@ -11,6 +11,9 @@ import {
   ChevronRight,
   Settings,
   FolderOpen,
+  ChevronsUpDown,
+  User,
+  Check,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -19,13 +22,22 @@ import { toast } from "sonner";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { listForgeRepos, cloneRepo, checkProfileToken } from "@/lib/commands";
-import { GitHubIcon, GitLabIcon } from "@/components/ui/forge-icons";
+import { getUiState, setUiState } from "@/lib/database";
+import { ForgeIcon } from "@/components/ui/forge-icons";
+import { ProfileAvatar } from "@/components/ui/avatar";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import type { ForgeKind, ForgeRepo } from "@/types/git";
+import type { Profile } from "@/types/profile";
 import type { SettingsTarget } from "@/components/ui/settings-page";
 
 const FORGE_HOSTS: { kind: ForgeKind; host: string; label: string }[] = [
   { kind: "github", host: "github.com", label: "GitHub" },
   { kind: "gitlab", host: "gitlab.com", label: "GitLab" },
+  { kind: "bitbucket", host: "bitbucket.org", label: "Bitbucket" },
 ];
 
 interface CloneDialogProps {
@@ -36,7 +48,30 @@ interface CloneDialogProps {
 type Tab = "forge" | "url";
 
 export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
-  const [tab, setTab] = useState<Tab>("forge");
+  const profiles = useProfileStore((s) => s.profiles);
+  const activeProfile = useProfileStore((s) => s.activeProfile);
+  const [selectedProfile, setSelectedProfile] = useState<Profile | null>(activeProfile);
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [tab, setTab] = useState<Tab>(activeProfile ? "forge" : "url");
+  const [cloneDir, setCloneDir] = useState<string | null>(null);
+
+  const profileId = selectedProfile?.id;
+
+  useEffect(() => {
+    const key = profileId ? `clone_dir:${profileId}` : "clone_dir";
+    getUiState(key).then((val) => {
+      if (val) setCloneDir(val);
+      else getUiState("clone_dir").then((fallback) => setCloneDir(fallback));
+    });
+  }, [profileId]);
+
+  const hasProfile = selectedProfile !== null;
+
+  const handleProfileChange = useCallback((profile: Profile | null) => {
+    setSelectedProfile(profile);
+    setProfileDropdownOpen(false);
+    if (!profile && tab === "forge") setTab("url");
+  }, [tab]);
 
   return (
     <div
@@ -57,12 +92,97 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
           </button>
         </div>
 
+        {/* Profile selector — shared across tabs */}
+        <div className="px-5 pb-3">
+          <p className="text-label text-faint uppercase tracking-wider font-medium mb-1.5">Profile</p>
+          <div className="relative">
+            <button
+              onClick={() => setProfileDropdownOpen((o) => !o)}
+              className="flex w-full items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-left hover:bg-secondary transition-colors"
+            >
+              {selectedProfile ? (
+                <>
+                  <ProfileAvatar
+                    name={selectedProfile.user_name}
+                    email={selectedProfile.user_email}
+                    size={20}
+                    color={selectedProfile.color}
+                    icon={selectedProfile.icon}
+                    avatarUrl={selectedProfile.avatar_url}
+                  />
+                  <span className="flex-1 truncate font-medium text-foreground">{selectedProfile.name}</span>
+                </>
+              ) : (
+                <>
+                  <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="flex-1 text-muted-foreground">No Profile</span>
+                </>
+              )}
+              <ChevronsUpDown className="h-3 w-3 text-muted-foreground shrink-0" />
+            </button>
+            {profileDropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-[9]" onClick={() => setProfileDropdownOpen(false)} />
+                <div className="absolute z-10 mt-1 w-full rounded-md border border-border bg-popover shadow-[0_8px_30px_rgba(0,0,0,0.5)] py-1">
+                  <button
+                    onClick={() => handleProfileChange(null)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                  >
+                    <User className="h-3.5 w-3.5 shrink-0 text-faint" />
+                    <span className="flex-1 text-left truncate">No Profile</span>
+                    {!selectedProfile && <Check className="h-3 w-3 shrink-0 text-primary" />}
+                  </button>
+                  {profiles.length > 0 && <div className="mx-2 my-1 border-t border-border" />}
+                  {profiles.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleProfileChange(p)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-secondary transition-colors"
+                      style={{ borderLeftWidth: 3, borderLeftColor: p.color }}
+                    >
+                      <ProfileAvatar
+                        name={p.user_name}
+                        email={p.user_email}
+                        size={20}
+                        color={p.color}
+                        icon={p.icon}
+                        avatarUrl={p.avatar_url}
+                      />
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate text-foreground">{p.name}</span>
+                        </div>
+                        <span className="block truncate text-label text-dim">{p.user_email}</span>
+                      </div>
+                      {selectedProfile?.id === p.id && <Check className="h-3 w-3 shrink-0 text-primary" />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* Tabs */}
         <div className="flex gap-1 px-5 pb-3">
-          <TabPill active={tab === "forge"} onClick={() => setTab("forge")}>
-            <Download className="h-3 w-3" />
-            GitHub / GitLab
-          </TabPill>
+          {hasProfile ? (
+            <TabPill active={tab === "forge"} onClick={() => setTab("forge")}>
+              <Download className="h-3 w-3" />
+              Accounts
+            </TabPill>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <TabPill active={false} onClick={() => {}} disabled>
+                    <Download className="h-3 w-3" />
+                    Accounts
+                  </TabPill>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>Requires profile with auth</TooltipContent>
+            </Tooltip>
+          )}
           <TabPill active={tab === "url"} onClick={() => setTab("url")}>
             <Link className="h-3 w-3" />
             URL
@@ -73,9 +193,9 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
 
         {/* Content */}
         {tab === "forge" ? (
-          <ForgeTab onClose={onClose} onOpenSettings={onOpenSettings} />
+          <ForgeTab selectedProfile={selectedProfile} cloneDir={cloneDir} onClose={onClose} onOpenSettings={onOpenSettings} />
         ) : (
-          <UrlTab onClose={onClose} />
+          <UrlTab cloneDir={cloneDir} onClose={onClose} />
         )}
       </div>
     </div>
@@ -85,19 +205,24 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
 function TabPill({
   active,
   onClick,
+  disabled,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-        active
-          ? "bg-secondary text-foreground"
-          : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+        disabled
+          ? "text-faint cursor-not-allowed opacity-50"
+          : active
+            ? "bg-secondary text-foreground"
+            : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
       }`}
     >
       {children}
@@ -109,9 +234,8 @@ function TabPill({
 
 type ForgeStep = "pick-provider" | "pick-repo";
 
-function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSettings?: (target?: SettingsTarget) => void }) {
-  const activeProfile = useProfileStore((s) => s.activeProfile);
-  const profileId = activeProfile?.id ?? undefined;
+function ForgeTab({ selectedProfile, cloneDir, onClose, onOpenSettings }: { selectedProfile: Profile | null; cloneDir: string | null; onClose: () => void; onOpenSettings?: (target?: SettingsTarget) => void }) {
+  const profileId = selectedProfile?.id ?? undefined;
 
   const [step, setStep] = useState<ForgeStep>("pick-provider");
   const [selectedHost, setSelectedHost] = useState<typeof FORGE_HOSTS[0] | null>(null);
@@ -124,26 +248,26 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
   const [tokenStatus, setTokenStatus] = useState<Record<string, boolean>>({});
   const [checkingTokens, setCheckingTokens] = useState(true);
 
-  // Check which hosts have tokens on mount
+  // Check which hosts have tokens when profile changes
   useEffect(() => {
+    if (!profileId) {
+      setTokenStatus({});
+      setCheckingTokens(false);
+      return;
+    }
+    setCheckingTokens(true);
     let cancelled = false;
-    const check = async () => {
-      const status: Record<string, boolean> = {};
-      for (const h of FORGE_HOSTS) {
-        try {
-          status[h.host] = profileId
-            ? await checkProfileToken(profileId, h.host)
-            : false;
-        } catch {
-          status[h.host] = false;
-        }
-      }
-      if (!cancelled) {
-        setTokenStatus(status);
-        setCheckingTokens(false);
-      }
-    };
-    check();
+    Promise.all(
+      FORGE_HOSTS.map((h) =>
+        checkProfileToken(profileId, h.host)
+          .then((ok) => [h.host, ok] as const)
+          .catch(() => [h.host, false] as const),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      setTokenStatus(Object.fromEntries(results));
+      setCheckingTokens(false);
+    });
     return () => { cancelled = true; };
   }, [profileId]);
 
@@ -178,14 +302,10 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
   // Set default target path when a repo is selected
   useEffect(() => {
     if (!selectedRepo) return;
-    homeDir()
-      .then((home) => {
-        setTargetPath(`${home}repos/${selectedRepo.name}`);
-      })
-      .catch(() => {
-        setTargetPath(selectedRepo.name);
-      });
-  }, [selectedRepo]);
+    (cloneDir ? Promise.resolve(cloneDir) : homeDir().then((h) => `${h}repos/`))
+      .then((dir) => setTargetPath(`${dir}${selectedRepo.name}`))
+      .catch(() => setTargetPath(selectedRepo.name));
+  }, [selectedRepo, cloneDir]);
 
   const filteredRepos = useMemo(() => {
     if (!filter) return repos;
@@ -208,9 +328,18 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
 
   // ── Step 1: Pick provider ──────────────────────────────────────────────
 
+  // Reset to pick-provider when profile changes
+  useEffect(() => {
+    setStep("pick-provider");
+    setSelectedHost(null);
+    setRepos([]);
+    setSelectedRepo(null);
+  }, [profileId]);
+
   if (step === "pick-provider") {
     return (
       <div className="p-5 space-y-2">
+        <p className="text-label text-faint uppercase tracking-wider font-medium mb-1.5">Providers</p>
         {checkingTokens ? (
           <div className="flex items-center justify-center py-6">
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -230,11 +359,7 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
                       : "border-border/50 opacity-60 cursor-not-allowed"
                   }`}
                 >
-                  {h.kind === "github" ? (
-                    <GitHubIcon className="h-5 w-5 shrink-0" />
-                  ) : (
-                    <GitLabIcon className="h-5 w-5 shrink-0" />
-                  )}
+                  <ForgeIcon kind={h.kind} className="h-5 w-5 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <span className="text-xs font-medium text-foreground">{h.label}</span>
                     <p className="text-label text-muted-foreground">
@@ -280,11 +405,7 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
         >
           <ChevronLeft className="h-3.5 w-3.5" />
         </button>
-        {selectedHost?.kind === "github" ? (
-          <GitHubIcon className="h-3.5 w-3.5" />
-        ) : (
-          <GitLabIcon className="h-3.5 w-3.5" />
-        )}
+        <ForgeIcon kind={selectedHost?.kind ?? null} className="h-3.5 w-3.5" />
         <span className="text-xs font-medium text-foreground">{selectedHost?.label}</span>
         <span className="text-xs text-muted-foreground">
           {!loading && `· ${repos.length} repositories`}
@@ -362,6 +483,8 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
           setTargetPath={setTargetPath}
           onBrowse={handleBrowse}
           cloneUrl={selectedRepo.clone_url_https}
+          profileId={profileId}
+          cloneProfile={selectedProfile}
           onClose={onClose}
         />
       )}
@@ -371,7 +494,7 @@ function ForgeTab({ onClose, onOpenSettings }: { onClose: () => void; onOpenSett
 
 // ── URL tab ──────────────────────────────────────────────────────────────────
 
-function UrlTab({ onClose }: { onClose: () => void }) {
+function UrlTab({ cloneDir, onClose }: { cloneDir: string | null; onClose: () => void }) {
   const [url, setUrl] = useState("");
   const [targetPath, setTargetPath] = useState("");
 
@@ -380,11 +503,12 @@ function UrlTab({ onClose }: { onClose: () => void }) {
     if (!url) return;
     const match = url.match(/\/([^/]+?)(?:\.git)?$/);
     if (match) {
-      homeDir()
-        .then((home) => setTargetPath(`${home}repos/${match[1]}`))
-        .catch(() => setTargetPath(match[1]));
+      const repoName = match[1];
+      (cloneDir ? Promise.resolve(cloneDir) : homeDir().then((h) => `${h}repos/`))
+        .then((dir) => setTargetPath(`${dir}${repoName}`))
+        .catch(() => setTargetPath(repoName));
     }
-  }, [url]);
+  }, [url, cloneDir]);
 
   const handleBrowse = useCallback(async () => {
     const selected = await open({ directory: true, title: "Choose clone destination" });
@@ -434,12 +558,16 @@ function CloneFooter({
   setTargetPath,
   onBrowse,
   cloneUrl,
+  profileId,
+  cloneProfile,
   onClose,
 }: {
   targetPath: string;
   setTargetPath: (p: string) => void;
   onBrowse: () => void;
   cloneUrl: string;
+  profileId?: string;
+  cloneProfile?: Profile | null;
   onClose: () => void;
 }) {
   const openRepository = useRepoStore((s) => s.openRepository);
@@ -455,10 +583,24 @@ function CloneFooter({
     });
 
     try {
-      await cloneRepo(cloneUrl, targetPath);
+      await cloneRepo(cloneUrl, targetPath, profileId);
+      // Remember the parent directory for next clone
+      const sep = targetPath.includes("\\") ? "\\" : "/";
+      const lastSep = targetPath.lastIndexOf(sep);
+      if (lastSep > 0) {
+        const parentDir = targetPath.slice(0, lastSep + 1);
+        if (profileId) setUiState(`clone_dir:${profileId}`, parentDir);
+        setUiState("clone_dir", parentDir);
+      }
       toast.success("Clone complete", { id: toastId });
       onClose();
       await openRepository(targetPath);
+      // Activate the profile that was used for cloning so the repo inherits
+      // the token association (autoSwitchForRepo deactivates because the new
+      // repo has no saved profile yet).
+      if (cloneProfile) {
+        await useProfileStore.getState().activateProfile(cloneProfile);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(msg, { id: toastId });
@@ -466,7 +608,7 @@ function CloneFooter({
       unlisten();
       setCloning(false);
     }
-  }, [cloneUrl, targetPath, cloning, onClose, openRepository]);
+  }, [cloneUrl, targetPath, profileId, cloneProfile, cloning, onClose, openRepository]);
 
   return (
     <div className="border-t border-border px-5 py-4 space-y-3">
