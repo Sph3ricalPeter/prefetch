@@ -40,12 +40,7 @@ impl ForgeProvider for GitHubProvider {
         Some((username, avatar_url))
     }
 
-    fn search_avatar(
-        &self,
-        host: &str,
-        token: &Option<String>,
-        email: &str,
-    ) -> Option<String> {
+    fn search_avatar(&self, host: &str, token: &Option<String>, email: &str) -> Option<String> {
         let url = format!(
             "https://api.{}/search/users?q={}+in:email&per_page=1",
             host,

@@ -534,7 +534,10 @@ pub fn clone_repo<F: Fn(&str)>(
                 .and_then(|s| s.split('/').next())
                 .unwrap_or("");
             let username = forge::http_auth_username(host, tok);
-            let authed_url = format!("https://{username}:{tok}@{}", bare_url.strip_prefix("https://").unwrap_or(&bare_url));
+            let authed_url = format!(
+                "https://{username}:{tok}@{}",
+                bare_url.strip_prefix("https://").unwrap_or(&bare_url)
+            );
             args.extend(["-c", "credential.helper="].iter().map(|s| s.to_string()));
             env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
             env.push(("GCM_INTERACTIVE".to_string(), "never".to_string()));

@@ -549,10 +549,7 @@ async fn exchange_code(
 /// Refresh an OAuth access token using the stored refresh token.
 /// Updates both access and refresh tokens in the keychain on success.
 /// Does nothing for GitHub (tokens don't expire) or when no refresh token exists.
-pub async fn try_refresh_token(
-    path: &str,
-    profile_id: Option<&str>,
-) -> Result<(), AppError> {
+pub async fn try_refresh_token(path: &str, profile_id: Option<&str>) -> Result<(), AppError> {
     use crate::git::types::ForgeKind;
 
     let config = forge::detect_forge(path).ok().flatten();
@@ -620,7 +617,6 @@ pub async fn try_refresh_token(
     info!(kind = ?config.kind, "OAuth access token refreshed successfully");
     Ok(())
 }
-
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
