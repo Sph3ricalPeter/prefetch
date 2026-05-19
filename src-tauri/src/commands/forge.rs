@@ -98,7 +98,10 @@ pub async fn delete_forge_token(
 #[tauri::command]
 pub async fn check_profile_token(profile_id: String, host: String) -> Result<bool, AppError> {
     offload(move || {
-        Ok(forge::keychain::has_token_for_profile(Some(&profile_id), &host))
+        Ok(forge::keychain::has_token_for_profile(
+            Some(&profile_id),
+            &host,
+        ))
     })
     .await
 }

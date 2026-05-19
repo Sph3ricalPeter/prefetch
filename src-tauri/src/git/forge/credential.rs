@@ -86,4 +86,3 @@ pub fn authenticated_remote_url(
         ],
     })
 }
-

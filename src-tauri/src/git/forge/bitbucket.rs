@@ -59,12 +59,7 @@ impl ForgeProvider for BitbucketProvider {
         Some((username, avatar_url))
     }
 
-    fn search_avatar(
-        &self,
-        _host: &str,
-        _token: &Option<String>,
-        _email: &str,
-    ) -> Option<String> {
+    fn search_avatar(&self, _host: &str, _token: &Option<String>, _email: &str) -> Option<String> {
         // Bitbucket has no public email→avatar search API.
         // Could use Gravatar fallback in the future.
         None
@@ -87,9 +82,7 @@ impl ForgeProvider for BitbucketProvider {
         );
 
         let client = reqwest::blocking::Client::new();
-        let mut req = client
-            .get(&url)
-            .header("User-Agent", super::USER_AGENT);
+        let mut req = client.get(&url).header("User-Agent", super::USER_AGENT);
 
         if let Some(t) = token {
             req = req.header("Authorization", format!("Bearer {t}"));
@@ -105,10 +98,7 @@ impl ForgeProvider for BitbucketProvider {
             title: pr["title"].as_str()?.to_string(),
             url: pr["links"]["html"]["href"].as_str()?.to_string(),
             // Bitbucket uses uppercase states (OPEN, MERGED, DECLINED) — normalize
-            state: pr["state"]
-                .as_str()
-                .unwrap_or("OPEN")
-                .to_lowercase(),
+            state: pr["state"].as_str().unwrap_or("OPEN").to_lowercase(),
         })
     }
 
@@ -148,9 +138,7 @@ impl ForgeProvider for BitbucketProvider {
                         let clone_links = repo["links"]["clone"].as_array();
                         let https_url = clone_links
                             .and_then(|links| {
-                                links
-                                    .iter()
-                                    .find(|l| l["name"].as_str() == Some("https"))
+                                links.iter().find(|l| l["name"].as_str() == Some("https"))
                             })
                             .and_then(|l| l["href"].as_str())
                             .unwrap_or("")
@@ -190,9 +178,8 @@ fn list_workspaces(
     token: &str,
 ) -> Result<Vec<String>, AppError> {
     let mut slugs = Vec::new();
-    let mut next_url: Option<String> = Some(
-        "https://api.bitbucket.org/2.0/user/workspaces?pagelen=100".to_string(),
-    );
+    let mut next_url: Option<String> =
+        Some("https://api.bitbucket.org/2.0/user/workspaces?pagelen=100".to_string());
 
     while let Some(url) = next_url.take() {
         let resp = client

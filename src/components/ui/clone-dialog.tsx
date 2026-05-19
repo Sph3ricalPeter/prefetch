@@ -193,7 +193,7 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
 
         {/* Content */}
         {tab === "forge" ? (
-          <ForgeTab selectedProfile={selectedProfile} cloneDir={cloneDir} onClose={onClose} onOpenSettings={onOpenSettings} />
+          <ForgeTab key={selectedProfile?.id} selectedProfile={selectedProfile} cloneDir={cloneDir} onClose={onClose} onOpenSettings={onOpenSettings} />
         ) : (
           <UrlTab cloneDir={cloneDir} onClose={onClose} />
         )}
@@ -248,14 +248,9 @@ function ForgeTab({ selectedProfile, cloneDir, onClose, onOpenSettings }: { sele
   const [tokenStatus, setTokenStatus] = useState<Record<string, boolean>>({});
   const [checkingTokens, setCheckingTokens] = useState(true);
 
-  // Check which hosts have tokens when profile changes
+  // Check which hosts have tokens on mount (component remounts via key when profile changes)
   useEffect(() => {
-    if (!profileId) {
-      setTokenStatus({});
-      setCheckingTokens(false);
-      return;
-    }
-    setCheckingTokens(true);
+    if (!profileId) return;
     let cancelled = false;
     Promise.all(
       FORGE_HOSTS.map((h) =>
@@ -327,14 +322,6 @@ function ForgeTab({ selectedProfile, cloneDir, onClose, onOpenSettings }: { sele
   }, [selectedRepo]);
 
   // ── Step 1: Pick provider ──────────────────────────────────────────────
-
-  // Reset to pick-provider when profile changes
-  useEffect(() => {
-    setStep("pick-provider");
-    setSelectedHost(null);
-    setRepos([]);
-    setSelectedRepo(null);
-  }, [profileId]);
 
   if (step === "pick-provider") {
     return (

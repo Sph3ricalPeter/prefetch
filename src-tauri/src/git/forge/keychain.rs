@@ -61,10 +61,7 @@ pub fn load_token_for_profile(
 
 /// Strict token lookup — only checks the profile-scoped key, no legacy fallback.
 /// Use this for status checks where you need to know if THIS profile has a token.
-pub fn has_token_for_profile(
-    profile_id: Option<&str>,
-    host: &str,
-) -> bool {
+pub fn has_token_for_profile(profile_id: Option<&str>, host: &str) -> bool {
     let user = keyring_user(profile_id, host);
     let entry = match keyring::Entry::new(KEYCHAIN_SERVICE, &user) {
         Ok(e) => e,
@@ -169,10 +166,7 @@ pub fn delete_refresh_token_for_profile(
 
 // ── Bitbucket username storage ───────────────────────────────────────────────
 
-pub fn load_bb_username(
-    profile_id: Option<&str>,
-    host: &str,
-) -> Result<Option<String>, AppError> {
+pub fn load_bb_username(profile_id: Option<&str>, host: &str) -> Result<Option<String>, AppError> {
     let key = match profile_id {
         Some(pid) => format!("{pid}/{host}/username"),
         None => format!("{host}/username"),

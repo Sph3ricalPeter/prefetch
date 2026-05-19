@@ -127,7 +127,11 @@ fn parse_remote_url(url: &str) -> Result<Option<ForgeConfig>, AppError> {
         let without_creds = if let Some(at_pos) = without_scheme.find('@') {
             let after_at = &without_scheme[at_pos + 1..];
             // Only strip if there's still a path component after the @
-            if after_at.contains('/') { after_at } else { without_scheme }
+            if after_at.contains('/') {
+                after_at
+            } else {
+                without_scheme
+            }
         } else {
             without_scheme
         };
@@ -230,7 +234,9 @@ pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo>
     let kind = classify_host(host);
     let p = provider(&kind);
     let mut token_type = p.detect_token_type(&token);
-    let refresh_token = load_refresh_token_for_profile(profile_id, host).ok().flatten();
+    let refresh_token = load_refresh_token_for_profile(profile_id, host)
+        .ok()
+        .flatten();
     // If a refresh token exists, the token came from an OAuth flow regardless
     // of what the format heuristic says (Bitbucket tokens lack distinguishing prefixes).
     if matches!(token_type, TokenType::Pat) && refresh_token.is_some() {
@@ -241,7 +247,9 @@ pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo>
     let (username, avatar_url) = match result {
         Some(info) => info,
         None if refresh_token.is_some() => {
-            if let Some(new_token) = try_refresh_blocking(profile_id, host, &kind, &refresh_token.unwrap()) {
+            if let Some(new_token) =
+                try_refresh_blocking(profile_id, host, &kind, &refresh_token.unwrap())
+            {
                 token = new_token;
                 token_type = TokenType::OAuth;
                 p.get_user_info(host, &token)?

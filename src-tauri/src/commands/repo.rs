@@ -81,7 +81,8 @@ pub fn open_repo(
                 let userinfo = &without_scheme[..at_pos];
                 if userinfo.contains(':') {
                     let clean = format!("https://{}", &without_scheme[at_pos + 1..]);
-                    let _ = repository::run_git(&path, &["remote", "set-url", "origin", &clean], &[]);
+                    let _ =
+                        repository::run_git(&path, &["remote", "set-url", "origin", &clean], &[]);
                     debug!("scrubbed credentials from origin URL");
                 }
             }
@@ -108,11 +109,7 @@ pub async fn clone_repo(
 
     // Try to extract host from URL and load a token for authenticated clone
     let extracted_host = extract_host_from_url(&url);
-    tracing::debug!(
-        ?pid,
-        ?extracted_host,
-        "clone_repo: resolving credentials"
-    );
+    tracing::debug!(?pid, ?extracted_host, "clone_repo: resolving credentials");
     let token = extracted_host.and_then(|host| {
         let t = forge::load_token_for_profile(pid.as_deref(), &host)
             .ok()

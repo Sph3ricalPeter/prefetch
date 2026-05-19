@@ -50,12 +50,7 @@ impl ForgeProvider for GitLabProvider {
         Some((username, avatar_url))
     }
 
-    fn search_avatar(
-        &self,
-        host: &str,
-        token: &Option<String>,
-        email: &str,
-    ) -> Option<String> {
+    fn search_avatar(&self, host: &str, token: &Option<String>, email: &str) -> Option<String> {
         let url = format!(
             "https://{}/api/v4/avatar?email={}&size=128",
             host,
@@ -63,9 +58,7 @@ impl ForgeProvider for GitLabProvider {
         );
         tracing::debug!(url = %url, has_token = token.is_some(), "gitlab avatar API request");
         let client = reqwest::blocking::Client::new();
-        let mut req = client
-            .get(&url)
-            .header("User-Agent", super::USER_AGENT);
+        let mut req = client.get(&url).header("User-Agent", super::USER_AGENT);
         if let Some(t) = token {
             let (h, v) = gitlab_auth_header(t);
             req = req.header(h, v);
@@ -115,9 +108,7 @@ impl ForgeProvider for GitLabProvider {
         );
 
         let client = reqwest::blocking::Client::new();
-        let mut req = client
-            .get(&url)
-            .header("User-Agent", super::USER_AGENT);
+        let mut req = client.get(&url).header("User-Agent", super::USER_AGENT);
 
         if let Some(t) = token {
             let (h, v) = gitlab_auth_header(t);
