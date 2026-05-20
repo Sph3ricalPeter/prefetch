@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Archive,
   ChevronDown,
@@ -9,6 +9,11 @@ import {
   Trash2,
   Folder,
   FolderOpen,
+  Plus,
+  Minus,
+  Pencil,
+  ArrowRightLeft,
+  HelpCircle,
 } from "lucide-react";
 import { FileIcon } from "@/components/ui/file-icon";
 import {
@@ -539,14 +544,15 @@ function commitFileStatusColor(type: string): string {
   }
 }
 
-function commitFileStatusLabel(type: string): string {
+function commitFileStatusIcon(type: string): React.ReactNode {
+  const cls = "h-[13px] w-[13px]";
   switch (type) {
-    case "added": return "A";
-    case "untracked": return "?";
-    case "modified": return "M";
-    case "deleted": return "D";
-    case "renamed": return "R";
-    default: return "?";
+    case "added": return <Plus className={cls} />;
+    case "untracked": return <HelpCircle className={cls} />;
+    case "modified": return <Pencil className={cls} />;
+    case "deleted": return <Minus className={cls} />;
+    case "renamed": return <ArrowRightLeft className={cls} />;
+    default: return <HelpCircle className={cls} />;
   }
 }
 
@@ -560,7 +566,7 @@ function CommitFileRow({
   onClick: () => void;
 }) {
   const statusColor = commitFileStatusColor(file.status_type);
-  const statusLabel = commitFileStatusLabel(file.status_type);
+  const statusLabel = commitFileStatusIcon(file.status_type);
 
   const fileName = file.path.split("/").pop() ?? file.path;
   const dirPath = file.path.includes("/")
@@ -576,12 +582,12 @@ function CommitFileRow({
           : "hover:bg-secondary"
       }`}
     >
-      <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
       <span
         className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}
       >
         {statusLabel}
       </span>
+      <FileIcon filename={fileName} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
         {dirPath && (
@@ -686,7 +692,7 @@ function CommitTreeNode({
   // File node
   const file = node.file!;
   const statusColor = commitFileStatusColor(file.status_type);
-  const statusLabel = commitFileStatusLabel(file.status_type);
+  const statusLabel = commitFileStatusIcon(file.status_type);
   const isSelected = selectedFilePath === file.path;
 
   return (
@@ -711,11 +717,11 @@ function CommitTreeNode({
       >
         {statusLabel}
       </span>
-      <span className="truncate text-xs text-foreground">{node.name}</span>
       <FileIcon
         filename={node.name}
-        className="h-3 w-3 shrink-0 text-muted-foreground"
+        className="h-4 w-4 shrink-0 text-muted-foreground"
       />
+      <span className="truncate text-xs text-foreground">{node.name}</span>
       <span className="ml-auto flex items-center gap-1 tabular-nums overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>

@@ -9,8 +9,11 @@ import {
   Folder,
   FolderOpen,
   Loader2,
+  Pencil,
+  ArrowRightLeft,
+  HelpCircle,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -733,11 +736,11 @@ function ConflictTreeNodeView({
       ))}
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${fileAutoResolved ? "text-purple-400" : "text-red-400"}`}>
         {fileAutoResolved
-          ? <Check className="h-3 w-3 inline-block" />
-          : <AlertTriangle className="h-3 w-3 inline-block" />}
+          ? <Check className="h-[13px] w-[13px] inline-block" />
+          : <AlertTriangle className="h-[13px] w-[13px] inline-block" />}
       </span>
       <span className="truncate text-xs text-foreground">{node.name}</span>
-      <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <FileIcon filename={node.name} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <span className="ml-auto flex items-center gap-1 tabular-nums text-right overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>
@@ -920,7 +923,7 @@ function TreeNodeView({
   // File node
   const file = node.file!;
   const statusColor = statusTypeColor(file.status_type);
-  const statusLabel = statusTypeLabel(file.status_type);
+  const statusLabel = statusTypeIcon(file.status_type);
   const isSelected = selectedFilePath === file.path;
   const isMulti = multiSelected?.has(file.path) ?? false;
   const isLfs = !!isLfsFile(file.path);
@@ -952,8 +955,8 @@ function TreeNodeView({
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
         {statusLabel}
       </span>
+      <FileIcon filename={node.name} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <span className="truncate text-xs text-foreground">{node.name}</span>
-      <FileIcon filename={node.name} className="h-3 w-3 shrink-0 text-muted-foreground" />
       {isLfs && (
         <span className="shrink-0 rounded px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
           LFS
@@ -1027,7 +1030,7 @@ function FileRow({
   onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const statusColor = statusTypeColor(file.status_type);
-  const statusLabel = statusTypeLabel(file.status_type);
+  const statusLabel = statusTypeIcon(file.status_type);
   const fileName = file.path.split("/").pop() ?? file.path;
   const dirPath = file.path.includes("/")
     ? file.path.slice(0, file.path.lastIndexOf("/"))
@@ -1045,10 +1048,10 @@ function FileRow({
       onClick={onSelect}
       onContextMenu={onContextMenu}
     >
-      <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
         {statusLabel}
       </span>
+      <FileIcon filename={fileName} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
         {isLfs && (
@@ -1142,12 +1145,12 @@ function ConflictRow({
     >
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${isAutoResolved ? "text-purple-400" : "text-red-400"}`}>
         {isAutoResolved
-          ? <Check className="h-3 w-3 inline-block" />
-          : <AlertTriangle className="h-3 w-3 inline-block" />}
+          ? <Check className="h-[13px] w-[13px] inline-block" />
+          : <AlertTriangle className="h-[13px] w-[13px] inline-block" />}
       </span>
+      <FileIcon filename={fileName} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground">{fileName}</span>
-        <FileIcon filename={fileName} className="h-3 w-3 shrink-0 text-muted-foreground" />
         {dirPath && (
           <span className="truncate text-xs text-faint">
             {dirPath}
@@ -1223,20 +1226,21 @@ function statusTypeColor(type: string): string {
   }
 }
 
-function statusTypeLabel(type: string): string {
+function statusTypeIcon(type: string): React.ReactNode {
+  const cls = "h-[13px] w-[13px]";
   switch (type) {
     case "added":
-      return "A";
+      return <Plus className={cls} />;
     case "untracked":
-      return "?";
+      return <HelpCircle className={cls} />;
     case "modified":
-      return "M";
+      return <Pencil className={cls} />;
     case "deleted":
-      return "D";
+      return <Minus className={cls} />;
     case "renamed":
-      return "R";
+      return <ArrowRightLeft className={cls} />;
     default:
-      return "?";
+      return <HelpCircle className={cls} />;
   }
 }
 
