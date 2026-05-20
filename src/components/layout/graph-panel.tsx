@@ -704,7 +704,7 @@ export function GraphPanel() {
       {/* Dirty working tree dialog */}
       {dirtyActionPending && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-sm">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-md">
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
               <p className="text-sm text-foreground">Uncommitted changes</p>
@@ -716,19 +716,19 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={cancelDirtyAction}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
               <button
                 onClick={stashAndProceed}
-                className="rounded bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-accent transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Stash &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
               </button>
               <button
                 onClick={discardAndProceed}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Discard &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
               </button>
@@ -740,7 +740,7 @@ export function GraphPanel() {
       {/* Remote checkout dialog */}
       {remoteCheckoutPending && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-sm">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-md">
             {remoteCheckoutPending.alreadyOnLocal ? (
               <>
                 <p className="text-sm text-foreground mb-1">
@@ -763,7 +763,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={cancelRemoteCheckout}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -773,14 +773,14 @@ export function GraphPanel() {
                     cancelRemoteCheckout();
                     checkout(remoteCheckoutPending.localName);
                   }}
-                  className="rounded bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-accent transition-colors"
+                  className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
                 >
                   Switch to Local
                 </button>
               )}
               <button
                 onClick={resetLocalToRemote}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Reset Local to Remote
               </button>
@@ -800,7 +800,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirmResetHard(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -809,7 +809,7 @@ export function GraphPanel() {
                   resetTo(confirmResetHard, "hard");
                   setConfirmResetHard(null);
                 }}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Reset Hard
               </button>
@@ -833,7 +833,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirmDeleteBranch(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -844,7 +844,7 @@ export function GraphPanel() {
                   if (deleteLocal) await deleteBranch(branchName);
                   if (deleteRemote) await deleteRemoteBranch(remoteName, branchName);
                 }}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Delete
               </button>
@@ -864,7 +864,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirmDropStash(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -873,7 +873,7 @@ export function GraphPanel() {
                   dropStash(confirmDropStash);
                   setConfirmDropStash(null);
                 }}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Drop
               </button>
@@ -893,7 +893,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirmDeleteTag(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -902,7 +902,7 @@ export function GraphPanel() {
                   deleteExistingTag(confirmDeleteTag);
                   setConfirmDeleteTag(null);
                 }}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Delete
               </button>
@@ -922,13 +922,13 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={cancelForcePush}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
               <button
                 onClick={forcePush}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Force Push
               </button>
@@ -963,7 +963,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setCreateBranchDialog(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -975,7 +975,7 @@ export function GraphPanel() {
                   }
                 }}
                 disabled={!dialogInput.trim()}
-                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
               >
                 Create
               </button>
@@ -1015,7 +1015,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setEditMessageDialog(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -1029,7 +1029,7 @@ export function GraphPanel() {
                   setEditMessageDialog(null);
                 }}
                 disabled={!editMsgSubject.trim()}
-                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
               >
                 Save
               </button>
@@ -1064,7 +1064,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setRenameDialog(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -1076,7 +1076,7 @@ export function GraphPanel() {
                   }
                 }}
                 disabled={!dialogInput.trim() || dialogInput.trim() === renameDialog.branch}
-                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
               >
                 Rename
               </button>
@@ -1111,7 +1111,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setUpstreamDialog(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -1123,7 +1123,7 @@ export function GraphPanel() {
                   }
                 }}
                 disabled={!dialogInput.trim()}
-                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
               >
                 Set
               </button>
@@ -1158,7 +1158,7 @@ export function GraphPanel() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setCreateTagDialog(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -1170,7 +1170,7 @@ export function GraphPanel() {
                   }
                 }}
                 disabled={!dialogInput.trim()}
-                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
               >
                 Create
               </button>

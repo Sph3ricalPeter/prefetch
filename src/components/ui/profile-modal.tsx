@@ -319,13 +319,13 @@ function ProfileEditView({
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setShowDiscardConfirm(false)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Keep Editing
               </button>
               <button
                 onClick={() => { setShowDiscardConfirm(false); onBack(); }}
-                className="rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 hover:-translate-y-px"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Discard
               </button>
@@ -591,7 +591,7 @@ function ProfileEditView({
           </button>
           <button
             onClick={handleBack}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
           >
             Cancel
           </button>

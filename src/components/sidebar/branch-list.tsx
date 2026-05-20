@@ -203,7 +203,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setRenameDialog(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -215,7 +215,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
                   }
                 }}
                 disabled={!renameInput.trim() || renameInput.trim() === renameDialog.branch}
-                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
               >
                 Rename
               </button>
@@ -250,7 +250,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setUpstreamDialog(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -262,7 +262,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
                   }
                 }}
                 disabled={!upstreamInput.trim()}
-                className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
               >
                 Set
               </button>
@@ -286,7 +286,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirmDeleteBranch(null)}
-                className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
@@ -297,7 +297,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
                   if (deleteLocal) await deleteBranch(branchName);
                   if (delRemote) await deleteRemoteBranch(remoteName, branchName);
                 }}
-                className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
               >
                 Delete
               </button>

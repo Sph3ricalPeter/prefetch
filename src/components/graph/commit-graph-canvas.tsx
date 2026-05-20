@@ -25,7 +25,6 @@ const GRAPH_INSET_LEFT = SCROLLBAR_PAD;
 const MESSAGE_INSET_LEFT = 12;
 const LABEL_HEIGHT = 24;         // badge pill height
 const LABEL_PAD_X = 8;
-const LABEL_GAP = 3;
 const LABEL_RADIUS = 5;
 const ROW_RADIUS = 6;            // Change 1: matches CSS rounded-md
 const GRAPH_PADDING_TOP = 6;     // top padding matching left padding
@@ -489,6 +488,7 @@ function drawPill(
   textColor: string,
   drawIcon?: (ctx: CanvasRenderingContext2D, ix: number, iy: number, color: string) => number,
   maxContentWidth?: number,
+  cornerRadii?: number | number[],
 ): number {
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   const iconWidth = drawIcon ? drawIcon(ctx, 0, -1000, textColor) : 0; // dry-run to measure width
@@ -506,7 +506,7 @@ function drawPill(
   // Background
   ctx.fillStyle = bgColor;
   ctx.beginPath();
-  ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, LABEL_RADIUS);
+  ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, cornerRadii ?? LABEL_RADIUS);
   ctx.fill();
 
   // Text + trailing icon
@@ -615,6 +615,7 @@ function drawMergedBranchPill(
   y: number,
   group: MergedBranchGroup,
   maxContentWidth?: number,
+  cornerRadii?: number | number[],
 ): number {
   const bColor = branchColor(group.baseName);
   const dimColor = branchColorDim(group.baseName);
@@ -649,7 +650,7 @@ function drawMergedBranchPill(
 
   ctx.fillStyle = bg;
   ctx.beginPath();
-  ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, LABEL_RADIUS);
+  ctx.roundRect(x, pillY, pillWidth, LABEL_HEIGHT, cornerRadii ?? LABEL_RADIUS);
   ctx.fill();
 
   let cursorX = x + LABEL_PAD_X;
@@ -824,6 +825,7 @@ export function CommitGraphCanvas({
   refMru,
 }: CommitGraphCanvasProps) {
   const graphColors = useThemeStore((s) => s.appTheme.graph);
+  const cardColor = useThemeStore((s) => `hsl(${s.appTheme.cssVars["--card"]})`);
   const fontFamilyId = useThemeStore((s) => s.fontFamilyId);
   const fontScale = useThemeStore((s) => s.fontScale);
   const activeProfile = useProfileStore((s) => s.activeProfile);
@@ -847,9 +849,12 @@ export function CommitGraphCanvas({
     /** Container-relative coords for the dropdown anchor. */
     x: number;
     y: number;
+    /** Total badge+chip width so the dropdown can match it. */
+    width: number;
   } | null>(null);
   const openHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropdownRowRef = useRef<number | null>(null);
   // Stable ref so async avatar-load callbacks always reach the latest draw
   const requestDrawRef = useRef<() => void>(() => {});
 
@@ -1486,15 +1491,22 @@ export function CommitGraphCanvas({
           ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
           nChipW = cachedMeasureText(ctx, `+${extra}`) + LABEL_PAD_X * 2;
         }
-        const gapBeforeChip = extra > 0 ? LABEL_GAP : 0;
+        const gapBeforeChip = extra > 0 ? 1 : 0;
         const maxPrimaryW = Math.max(0, totalAvail - nChipW - gapBeforeChip);
 
-        // Draw primary pill
+        // Draw primary pill — flatten right corners when a +N chip follows,
+        // flatten bottom corners when the hover dropdown is open.
         let primaryW = 0;
         let primaryColor = graphColors.dim;
+        const isDropdownRow = dropdownRowRef.current === visRow;
+        const joinedRadii = extra > 0
+          ? (isDropdownRow
+              ? [LABEL_RADIUS, 2, 0, 0]
+              : [LABEL_RADIUS, 2, 2, LABEL_RADIUS])
+          : undefined;
         if (maxPrimaryW > 20) {
           if (primary.kind === "branch") {
-            primaryW = drawMergedBranchPill(ctx, badgeColLeft, y, primary.group, maxPrimaryW);
+            primaryW = drawMergedBranchPill(ctx, badgeColLeft, y, primary.group, maxPrimaryW, joinedRadii);
             primaryColor = branchColor(primary.group.baseName);
           } else if (primary.kind === "tag") {
             primaryW = drawPill(
@@ -1506,6 +1518,7 @@ export function CommitGraphCanvas({
               graphColors.dim,
               drawTagIcon,
               maxPrimaryW,
+              joinedRadii,
             );
           } else {
             primaryW = drawPill(
@@ -1517,6 +1530,7 @@ export function CommitGraphCanvas({
               graphColors.dim,
               drawStashIcon,
               maxPrimaryW,
+              joinedRadii,
             );
           }
         }
@@ -1569,7 +1583,7 @@ export function CommitGraphCanvas({
         if (primaryW > 0) {
           // Hit area spans badge + +N chip so hover-open works over either.
           const hitWidth =
-            primaryW + (extra > 0 ? LABEL_GAP + nChipW : 0);
+            primaryW + (extra > 0 ? 1 + nChipW : 0);
           hitAreas.push({
             x: badgeColLeft,
             y: visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2 - LABEL_HEIGHT / 2,
@@ -1584,25 +1598,34 @@ export function CommitGraphCanvas({
           });
         }
 
-        // +N chip (non-interactive in this pass — hover dropdown lands in #39)
+        // +N chip — joined to primary pill via flat left corners,
+        // bottom corners flatten when hover dropdown is open.
         if (extra > 0 && primaryW > 0) {
           drawPill(
             ctx,
-            badgeColLeft + primaryW + LABEL_GAP,
+            badgeColLeft + primaryW + 1,
             y,
             `+${extra}`,
-            "rgba(255,255,255,0.1)",
+            isDropdownRow ? cardColor : "rgba(255,255,255,0.1)",
             graphColors.dim,
+            undefined,
+            undefined,
+            isDropdownRow
+              ? [2, LABEL_RADIUS, 0, 0]
+              : [2, LABEL_RADIUS, LABEL_RADIUS, 2],
           );
         }
 
         // Hover highlight overlay on badge
         if (primaryW > 0 && hoveredBadgeRowRef.current === visRow) {
-          const hlW = primaryW + (extra > 0 ? LABEL_GAP + nChipW : 0);
+          const hlW = primaryW + (extra > 0 ? 1 + nChipW : 0);
+          const hlRadii = isDropdownRow
+            ? [LABEL_RADIUS, LABEL_RADIUS, 0, 0]
+            : LABEL_RADIUS;
           ctx.save();
           ctx.fillStyle = "rgba(255,255,255,0.04)";
           ctx.beginPath();
-          ctx.roundRect(badgeColLeft, y - LABEL_HEIGHT / 2, hlW, LABEL_HEIGHT, LABEL_RADIUS);
+          ctx.roundRect(badgeColLeft, y - LABEL_HEIGHT / 2, hlW, LABEL_HEIGHT, hlRadii);
           ctx.fill();
           ctx.restore();
         }
@@ -1611,7 +1634,7 @@ export function CommitGraphCanvas({
         // by the primary badge so lineage is visible.
         if (primaryW > 0) {
           const linkStartX =
-            badgeColLeft + primaryW + (extra > 0 ? LABEL_GAP + nChipW : 0) + 2;
+            badgeColLeft + primaryW + (extra > 0 ? 1 + nChipW : 0) + 2;
           const linkEndX = x - NODE_RADIUS - 2;
           if (linkEndX > linkStartX + 1) {
             ctx.save();
@@ -1762,7 +1785,7 @@ export function CommitGraphCanvas({
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
     authorHitAreasRef.current = authorHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, fontFamilyId, fontScale, activeProfile]);
+  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -1773,6 +1796,11 @@ export function CommitGraphCanvas({
   useEffect(() => {
     requestDrawRef.current = requestDraw;
   }, [requestDraw]);
+
+  useEffect(() => {
+    dropdownRowRef.current = hoverDropdown?.row ?? null;
+    requestDraw();
+  }, [hoverDropdown?.row, requestDraw]);
 
   const handleScroll = useCallback(() => {
     requestDraw();
@@ -1898,10 +1926,11 @@ export function CommitGraphCanvas({
           const items = overBadgeArea.dropdownItems;
           const commitId = overBadgeArea.commitId;
           const ax = overBadgeArea.x;
-          const ay = overBadgeArea.y + overBadgeArea.height + 2;
+          const ay = overBadgeArea.y + overBadgeArea.height;
+          const aw = overBadgeArea.width;
           openHoverTimer.current = setTimeout(() => {
             openHoverTimer.current = null;
-            setHoverDropdown({ row: targetRow, commitId, items, x: ax, y: ay });
+            setHoverDropdown({ row: targetRow, commitId, items, x: ax, y: ay, width: aw });
           }, 150);
         }
       } else {
@@ -2108,8 +2137,8 @@ export function CommitGraphCanvas({
       {/* Hover dropdown listing every ref on a multi-ref commit (#39). */}
       {hoverDropdown && (
         <div
-          className="absolute z-40 min-w-[120px] flex flex-col gap-px border border-border bg-card shadow-lg overflow-hidden"
-          style={{ borderRadius: LABEL_RADIUS, left: hoverDropdown.x, top: hoverDropdown.y }}
+          className="absolute z-40 flex flex-col gap-px border border-border border-t-0 bg-card shadow-lg overflow-hidden"
+          style={{ borderRadius: `0 0 ${LABEL_RADIUS}px ${LABEL_RADIUS}px`, left: hoverDropdown.x, top: hoverDropdown.y, width: hoverDropdown.width }}
           onMouseEnter={() => {
             if (closeHoverTimer.current) {
               clearTimeout(closeHoverTimer.current);
@@ -2199,7 +2228,7 @@ function DropdownItemRow({
       onClick={onSingleClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      className="flex cursor-pointer select-none items-center gap-1.5 px-3 text-xs transition-colors hover:bg-secondary"
+      className="flex cursor-pointer select-none items-center gap-1.5 px-2 text-xs transition-colors hover:bg-secondary"
       style={{ height: LABEL_HEIGHT }}
     >
       {item.isHead && (
@@ -2212,16 +2241,16 @@ function DropdownItemRow({
         {item.displayName}
       </span>
       {isTag && (
-        <Tag className="ml-auto h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <Tag className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       )}
       {isStash && (
-        <Archive className="ml-auto h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <Archive className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       )}
       {item.hasLocal && (
-        <Monitor className="ml-auto h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
+        <Monitor className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
       )}
       {item.hasRemote && (
-        <Cloud className={`h-3 w-3 shrink-0 ${item.hasLocal ? "" : "ml-auto"}`} style={colorStyle} aria-hidden="true" />
+        <Cloud className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
       )}
     </div>
   );

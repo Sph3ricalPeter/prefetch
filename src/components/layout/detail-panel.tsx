@@ -153,7 +153,7 @@ export function DetailPanel() {
               <div className="flex justify-end gap-2">
                 <button
                   onClick={() => setShowDiscardAll(false)}
-                  className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                  className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
                 >
                   Cancel
                 </button>
@@ -162,7 +162,7 @@ export function DetailPanel() {
                     discardAll();
                     setShowDiscardAll(false);
                   }}
-                  className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                  className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
                 >
                   Discard All
                 </button>
