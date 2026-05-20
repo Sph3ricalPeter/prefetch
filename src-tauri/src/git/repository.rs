@@ -1405,32 +1405,43 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
                     });
                 }
             }
-            if let Ok(content) = std::fs::read_to_string(&abs_path) {
-                let lines: Vec<DiffLine> = content
-                    .lines()
-                    .enumerate()
-                    .map(|(i, l)| DiffLine {
-                        origin: '+',
-                        content: l.to_string(),
-                        old_lineno: None,
-                        new_lineno: Some(i as u32 + 1),
-                    })
-                    .collect();
-                if !lines.is_empty() {
-                    return Ok(truncate_diff(FileDiff {
+            match std::fs::read_to_string(&abs_path) {
+                Ok(content) => {
+                    let lines: Vec<DiffLine> = content
+                        .lines()
+                        .enumerate()
+                        .map(|(i, l)| DiffLine {
+                            origin: '+',
+                            content: l.to_string(),
+                            old_lineno: None,
+                            new_lineno: Some(i as u32 + 1),
+                        })
+                        .collect();
+                    if !lines.is_empty() {
+                        return Ok(truncate_diff(FileDiff {
+                            path: file_path.to_string(),
+                            hunks: vec![DiffHunk {
+                                header: format!("@@ -0,0 +1,{} @@", lines.len()),
+                                old_start: 0,
+                                old_lines: 0,
+                                new_start: 1,
+                                new_lines: lines.len() as u32,
+                                lines,
+                            }],
+                            is_binary: false,
+                            is_truncated: false,
+                            total_lines: 0,
+                        }));
+                    }
+                }
+                Err(_) => {
+                    return Ok(FileDiff {
                         path: file_path.to_string(),
-                        hunks: vec![DiffHunk {
-                            header: format!("@@ -0,0 +1,{} @@", lines.len()),
-                            old_start: 0,
-                            old_lines: 0,
-                            new_start: 1,
-                            new_lines: lines.len() as u32,
-                            lines,
-                        }],
-                        is_binary: false,
+                        hunks: vec![],
+                        is_binary: true,
                         is_truncated: false,
                         total_lines: 0,
-                    }));
+                    });
                 }
             }
         }
@@ -2643,6 +2654,78 @@ pub fn create_branch_at(path: &str, name: &str, commit_id: &str) -> Result<(), A
 /// Rename a local branch.
 pub fn rename_branch(path: &str, old_name: &str, new_name: &str) -> Result<String, AppError> {
     run_git(path, &["branch", "-m", old_name, new_name], &[])
+}
+
+/// Rename a branch both locally and on the remote.
+///
+/// 1. Rename the local branch (`git branch -m`)
+/// 2. Push the new name to origin (`git push origin <new> -u`)
+/// 3. Delete the old remote branch (`git push origin --delete <old>`)
+/// 4. Clean up stale tracking refs
+pub fn rename_branch_on_remote<F: Fn(&str)>(
+    path: &str,
+    old_name: &str,
+    new_name: &str,
+    on_progress: F,
+    extra_env: &[(String, String)],
+    profile_id: Option<&str>,
+) -> Result<String, AppError> {
+    run_git(path, &["branch", "-m", old_name, new_name], &[])?;
+
+    let authed = forge::authenticated_remote_url(path, profile_id);
+
+    // Push the new branch name and set upstream
+    let push_result = if let Some(ref a) = authed {
+        let args = a.build_args(&["push", "-u", &a.url, new_name, "--progress"]);
+        let env = a.merge_env(extra_env);
+        run_git_with_progress(path, &args, &on_progress, &env)
+    } else {
+        run_git_with_progress(
+            path,
+            &["push", "-u", "origin", new_name, "--progress"],
+            &on_progress,
+            extra_env,
+        )
+    };
+
+    if let Err(e) = push_result {
+        // Roll back the local rename so the user isn't left in a broken state
+        let _ = run_git(path, &["branch", "-m", new_name, old_name], &[]);
+        return Err(e);
+    }
+
+    // Fix tracking config after URL-based push
+    if authed.is_some() {
+        let _ = fixup_remote_tracking(path, new_name);
+    }
+
+    // Delete the old remote branch
+    let delete_result = if let Some(ref a) = authed {
+        let args = a.build_args(&["push", &a.url, "--delete", old_name]);
+        let env = a.merge_env(extra_env);
+        run_git(path, &args, &env)
+    } else {
+        run_git(path, &["push", "origin", "--delete", old_name], extra_env)
+    };
+
+    if let Err(e) = &delete_result {
+        warn!("Failed to delete old remote branch {old_name}: {e}");
+    }
+
+    // Clean up stale remote tracking ref
+    let _ = run_git(
+        path,
+        &[
+            "update-ref",
+            "-d",
+            &format!("refs/remotes/origin/{old_name}"),
+        ],
+        &[],
+    );
+
+    Ok(format!(
+        "Renamed '{old_name}' → '{new_name}' (local + remote)"
+    ))
 }
 
 /// Delete a branch from a remote.

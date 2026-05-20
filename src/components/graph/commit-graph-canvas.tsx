@@ -2005,6 +2005,7 @@ export function CommitGraphCanvas({
       const clickY = e.clientY - rect.top + scroll.scrollTop;
 
       // Check if right-click landed on a badge (stash or branch)
+      let hitBadge: BadgeHitArea | null = null;
       for (const badge of badgeHitAreasRef.current) {
         if (
           clickX >= badge.x &&
@@ -2012,13 +2013,21 @@ export function CommitGraphCanvas({
           clickY >= badge.y &&
           clickY <= badge.y + badge.height
         ) {
-          if (badge.badgeType === "stash" && badge.stashIndex != null && onStashContextMenu) {
-            e.preventDefault();
-            onStashContextMenu(badge.stashIndex, e.clientX, e.clientY);
-            return;
-          }
-          // Branch and tag badges fall through to commit context menu
+          hitBadge = badge;
           break;
+        }
+      }
+
+      if (hitBadge) {
+        if (hitBadge.badgeType === "stash" && hitBadge.stashIndex != null && onStashContextMenu) {
+          e.preventDefault();
+          onStashContextMenu(hitBadge.stashIndex, e.clientX, e.clientY);
+          return;
+        }
+        if (onCommitContextMenu && hitBadge.commitId) {
+          e.preventDefault();
+          onCommitContextMenu(hitBadge.commitId, e.clientX, e.clientY, hitBadge.branchName);
+          return;
         }
       }
 

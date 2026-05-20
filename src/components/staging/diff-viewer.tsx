@@ -15,6 +15,17 @@ interface DiffViewerProps {
   onBack?: () => void;
 }
 
+function EmptyState({ message, filePath, onBack }: { message: string; filePath?: string; onBack?: () => void }) {
+  return (
+    <div className="flex flex-col h-full">
+      <DiffToolbar filePath={filePath} onBack={onBack} />
+      <div className="flex-1 flex items-center justify-center p-8 text-sm text-muted-foreground">
+        {message}
+      </div>
+    </div>
+  );
+}
+
 export function DiffViewer({ diff, filePath, mode = "readonly", source = {}, staged = false, onBack }: DiffViewerProps) {
   const resolvedPath = filePath ?? diff.path;
   // Key the hook to diff.path (the actually-rendered diff) rather than filePath
@@ -26,31 +37,17 @@ export function DiffViewer({ diff, filePath, mode = "readonly", source = {}, sta
 
   if (diff.is_binary) {
     if (isImageFile(resolvedPath)) {
-      return <ImageDiffViewer filePath={resolvedPath} source={source} staged={staged} />;
+      return <ImageDiffViewer filePath={resolvedPath} source={source} staged={staged} onBack={onBack} />;
     }
-    return (
-      <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-        Binary file — cannot display diff
-      </div>
-    );
+    return <EmptyState message="Binary file — cannot display diff" filePath={resolvedPath} onBack={onBack} />;
   }
 
   if (diff.is_truncated && diff.hunks.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 p-8">
-        <p className="text-sm text-muted-foreground">
-          File too large to display ({diff.total_lines.toLocaleString()} lines)
-        </p>
-      </div>
-    );
+    return <EmptyState message={`File too large to display (${diff.total_lines.toLocaleString()} lines)`} filePath={resolvedPath} onBack={onBack} />;
   }
 
   if (diff.hunks.length === 0) {
-    return (
-      <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-        No changes
-      </div>
-    );
+    return <EmptyState message="No changes" filePath={resolvedPath} onBack={onBack} />;
   }
 
   const toolbarProps = {

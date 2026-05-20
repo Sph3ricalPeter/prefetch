@@ -33,8 +33,9 @@ export function BranchList({ filter = "" }: { filter?: string }) {
     x: number;
     y: number;
   } | null>(null);
-  const [renameDialog, setRenameDialog] = useState<{ branch: string } | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{ branch: string; hasRemote: boolean } | null>(null);
   const [renameInput, setRenameInput] = useState("");
+  const [renameRemote, setRenameRemote] = useState(false);
   const [upstreamDialog, setUpstreamDialog] = useState<{ branch: string } | null>(null);
   const [upstreamInput, setUpstreamInput] = useState("");
   const [confirmDeleteBranch, setConfirmDeleteBranch] = useState<{
@@ -156,7 +157,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
             checkout,
             pull,
             push,
-            (name) => { setRenameInput(name); setRenameDialog({ branch: name }); },
+            (name, hasRemote) => { setRenameInput(name); setRenameRemote(hasRemote); setRenameDialog({ branch: name, hasRemote }); },
             (name) => { setUpstreamInput(""); setUpstreamDialog({ branch: name }); },
           )}
           onClose={() => setBranchContextMenu(null)}
@@ -177,7 +178,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
               onChange={(e) => setRenameInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
-                  renameBranch(renameDialog.branch, renameInput.trim());
+                  renameBranch(renameDialog.branch, renameInput.trim(), renameRemote);
                   setRenameDialog(null);
                 } else if (e.key === "Escape") {
                   setRenameDialog(null);
@@ -186,6 +187,19 @@ export function BranchList({ filter = "" }: { filter?: string }) {
               placeholder="New name"
               className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
             />
+            {renameDialog.hasRemote && (
+              <label className="flex items-center gap-2 mb-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={renameRemote}
+                  onChange={(e) => setRenameRemote(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <span className="text-xs text-muted-foreground">
+                  Rename on remote too (pushes new name, deletes old)
+                </span>
+              </label>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setRenameDialog(null)}
@@ -196,7 +210,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
               <button
                 onClick={() => {
                   if (renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
-                    renameBranch(renameDialog.branch, renameInput.trim());
+                    renameBranch(renameDialog.branch, renameInput.trim(), renameRemote);
                     setRenameDialog(null);
                   }
                 }}
@@ -277,11 +291,11 @@ export function BranchList({ filter = "" }: { filter?: string }) {
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   const { branchName, deleteLocal, deleteRemote: delRemote, remoteName } = confirmDeleteBranch;
-                  if (deleteLocal) deleteBranch(branchName);
-                  if (delRemote) deleteRemoteBranch(remoteName, branchName);
                   setConfirmDeleteBranch(null);
+                  if (deleteLocal) await deleteBranch(branchName);
+                  if (delRemote) await deleteRemoteBranch(remoteName, branchName);
                 }}
                 className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
               >
@@ -304,7 +318,7 @@ function buildBranchContextMenuItems(
   checkout: (name: string) => void,
   pull: () => void,
   push: () => void,
-  renameBranch: (name: string) => void,
+  renameBranch: (name: string, hasRemote: boolean) => void,
   setUpstream: (name: string) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -386,7 +400,7 @@ function buildBranchContextMenuItems(
   // Manage
   items.push({
     label: "Rename branch…",
-    onClick: () => renameBranch(branch.name),
+    onClick: () => renameBranch(branch.name, branch.ahead != null || branch.behind != null),
   });
   items.push({
     label: "Copy branch name",
@@ -399,10 +413,17 @@ function buildBranchContextMenuItems(
 
     const hasRemote = branch.ahead != null || branch.behind != null;
     items.push({
-      label: hasRemote ? `Delete ${branch.name} (local + remote)…` : `Delete ${branch.name}…`,
-      onClick: () => confirmDeleteBranch(branch.name, true, hasRemote, "origin"),
+      label: `Delete ${branch.name}…`,
+      onClick: () => confirmDeleteBranch(branch.name, true, false, "origin"),
       destructive: true,
     });
+    if (hasRemote) {
+      items.push({
+        label: `Delete ${branch.name} (local + remote)…`,
+        onClick: () => confirmDeleteBranch(branch.name, true, true, "origin"),
+        destructive: true,
+      });
+    }
   }
 
   return items;

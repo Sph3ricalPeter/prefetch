@@ -687,6 +687,32 @@ pub async fn rename_branch(
 }
 
 #[tauri::command]
+pub async fn rename_branch_on_remote(
+    old_name: String,
+    new_name: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    refresh_forge_token(&state).await;
+    let path = repo_path(&state)?;
+    let env = get_profile_env(&state);
+    let pid = get_profile_id(&state);
+    offload(move || {
+        repository::rename_branch_on_remote(
+            &path,
+            &old_name,
+            &new_name,
+            |progress| {
+                app.emit(events::GIT_PROGRESS, progress).ok();
+            },
+            &env,
+            pid.as_deref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn delete_remote_branch(
     remote: String,
     branch: String,

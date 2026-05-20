@@ -131,6 +131,7 @@ pub fn run() {
             commands::repo::checkout_detached,
             commands::repo::create_branch_at,
             commands::repo::rename_branch,
+            commands::repo::rename_branch_on_remote,
             commands::repo::delete_remote_branch,
             commands::repo::set_upstream,
             commands::repo::stash_push_files,

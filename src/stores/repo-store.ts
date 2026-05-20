@@ -90,6 +90,7 @@ import {
   checkoutDetached as checkoutDetachedCmd,
   createBranchAt as createBranchAtCmd,
   renameBranchCmd,
+  renameBranchOnRemote,
   deleteRemoteBranch as deleteRemoteBranchCmd,
   setUpstream as setUpstreamCmd,
   stashPushFiles as stashPushFilesCmd,
@@ -337,8 +338,8 @@ interface RepoState {
 
   /** Diff view layout — unified (interleaved) or side-by-side (split columns) */
   diffViewMode: "unified" | "side-by-side";
-  /** Image diff view mode — side-by-side or swipe overlay */
-  imageDiffViewMode: "side-by-side" | "swipe";
+  /** Image diff view mode — unified (single image), side-by-side, or swipe overlay */
+  imageDiffViewMode: "unified" | "side-by-side" | "swipe";
   /** Whether long lines wrap in the diff viewer */
   diffWrapLines: boolean;
 
@@ -411,7 +412,7 @@ interface RepoState {
   revertCommit: (commitId: string) => Promise<void>;
   checkoutDetached: (commitId: string) => Promise<void>;
   createBranchAt: (name: string, commitId: string) => Promise<void>;
-  renameBranch: (oldName: string, newName: string) => Promise<void>;
+  renameBranch: (oldName: string, newName: string, renameRemote?: boolean) => Promise<void>;
   deleteRemoteBranch: (remote: string, branch: string) => Promise<void>;
   setUpstream: (remoteBranch: string) => Promise<void>;
   stashFiles: (paths: string[], message?: string) => Promise<void>;
@@ -444,7 +445,7 @@ interface RepoState {
   setFileViewMode: (mode: "flat" | "tree") => void;
   loadFileViewMode: () => Promise<void>;
   setDiffViewMode: (mode: "unified" | "side-by-side") => void;
-  setImageDiffViewMode: (mode: "side-by-side" | "swipe") => void;
+  setImageDiffViewMode: (mode: "unified" | "side-by-side" | "swipe") => void;
   setDiffWrapLines: (on: boolean) => void;
   loadDiffPreferences: () => Promise<void>;
   setGraphColumnVisibility: (v: GraphColumnVisibility) => void;
@@ -1685,13 +1686,18 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
-  renameBranch: async (oldName, newName) => {
+  renameBranch: async (oldName, newName, renameRemote) => {
     set({ isLoading: true });
     try {
-      await renameBranchCmd(oldName, newName);
+      if (renameRemote) {
+        await renameBranchOnRemote(oldName, newName);
+        toast.success(`Renamed '${oldName}' to '${newName}' (local + remote)`);
+      } else {
+        await renameBranchCmd(oldName, newName);
+        toast.success(`Renamed '${oldName}' to '${newName}'`);
+      }
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
-      toast.success(`Renamed '${oldName}' to '${newName}'`);
     } catch (e) {
       set({ isLoading: false });
       toast.error(errorMessage(e));
@@ -1706,8 +1712,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, isLoading: false });
       toast.success(`Deleted ${remote}/${branch} from remote`);
     } catch (e) {
-      set({ isLoading: false });
-      toast.error(errorMessage(e));
+      const msg = errorMessage(e);
+      if (msg.includes("remote ref does not exist")) {
+        const repoData = await fetchRepoData();
+        set({ ...repoData, isLoading: false });
+        toast.success(`Remote branch ${remote}/${branch} already deleted`);
+      } else {
+        set({ isLoading: false });
+        toast.error(msg);
+      }
     }
   },
 
@@ -2072,7 +2085,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       if (viewMode === "unified" || viewMode === "side-by-side") {
         update.diffViewMode = viewMode;
       }
-      if (imageViewMode === "side-by-side" || imageViewMode === "swipe") {
+      if (imageViewMode === "unified" || imageViewMode === "side-by-side" || imageViewMode === "swipe") {
         update.imageDiffViewMode = imageViewMode;
       }
       if (wrapLines === "true" || wrapLines === "false") {

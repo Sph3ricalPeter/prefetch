@@ -298,6 +298,10 @@ export async function renameBranchCmd(oldName: string, newName: string): Promise
   return tracedInvoke<string>("rename_branch", { oldName, newName });
 }
 
+export async function renameBranchOnRemote(oldName: string, newName: string): Promise<string> {
+  return tracedInvoke<string>("rename_branch_on_remote", { oldName, newName });
+}
+
 export async function deleteRemoteBranch(remote: string, branch: string): Promise<string> {
   return tracedInvoke<string>("delete_remote_branch", { remote, branch });
 }

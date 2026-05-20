@@ -838,11 +838,11 @@ export function GraphPanel() {
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   const { branchName, deleteLocal, deleteRemote, remoteName } = confirmDeleteBranch;
-                  if (deleteLocal) deleteBranch(branchName);
-                  if (deleteRemote) deleteRemoteBranch(remoteName, branchName);
                   setConfirmDeleteBranch(null);
+                  if (deleteLocal) await deleteBranch(branchName);
+                  if (deleteRemote) await deleteRemoteBranch(remoteName, branchName);
                 }}
                 className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
               >
@@ -1277,10 +1277,17 @@ function buildCommitContextMenuItems(
       if (!isCurrent) {
         const hasRemote = branch.ahead != null || branch.behind != null;
         items.push({
-          label: hasRemote ? `Delete ${branch.name} (local + remote)…` : `Delete ${branch.name}…`,
-          onClick: () => confirmDeleteBranch(branch.name, true, hasRemote, "origin"),
+          label: `Delete ${branch.name}…`,
+          onClick: () => confirmDeleteBranch(branch.name, true, false, "origin"),
           destructive: true,
         });
+        if (hasRemote) {
+          items.push({
+            label: `Delete ${branch.name} (local + remote)…`,
+            onClick: () => confirmDeleteBranch(branch.name, true, true, "origin"),
+            destructive: true,
+          });
+        }
       }
 
       items.push({ separator: true });

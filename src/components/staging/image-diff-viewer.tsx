@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useReducer, useRef } from "react";
-import { Columns2, SwatchBook } from "lucide-react";
+import { ArrowLeft, Columns2, Image as ImageIcon, SwatchBook } from "lucide-react";
 import { getBinaryBlobBase64 } from "@/lib/commands";
 import { useRepoStore } from "@/stores/repo-store";
 import type { DiffSource } from "@/hooks/use-expandable-context";
@@ -8,6 +8,7 @@ interface ImageDiffViewerProps {
   filePath: string;
   source: DiffSource;
   staged: boolean;
+  onBack?: () => void;
 }
 
 interface ImageState {
@@ -17,7 +18,7 @@ interface ImageState {
   height: number;
 }
 
-type ViewMode = "side-by-side" | "swipe";
+type ViewMode = "unified" | "side-by-side" | "swipe";
 
 interface FetchState {
   loading: boolean;
@@ -187,7 +188,7 @@ function useZoomAndPan(
   }, [containerRef, onZoomChange]);
 }
 
-export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerProps) {
+export function ImageDiffViewer({ filePath, source, staged, onBack }: ImageDiffViewerProps) {
   const [state, dispatch] = useReducer(fetchReducer, { loading: true, oldImg: null, newImg: null });
   const viewMode = useRepoStore((s) => s.imageDiffViewMode);
   const setImageDiffViewMode = useRepoStore((s) => s.setImageDiffViewMode);
@@ -248,34 +249,57 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
     );
   }
 
+  const hasBoth = !!state.oldImg && !!state.newImg;
+  const effectiveMode: ViewMode = hasBoth ? viewMode : "unified";
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-card shrink-0">
         <div className="w-0 overflow-hidden border border-transparent py-1 text-xs font-medium leading-normal shrink-0" aria-hidden>{"​"}</div>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </button>
+        )}
         <span className="truncate text-xs font-medium text-foreground min-w-0" title={filePath}>
           {filePath}
         </span>
         <span className="w-px h-4 bg-border shrink-0" />
 
-        <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
-          <button
-            onClick={() => handleSetViewMode("side-by-side")}
-            title="Side-by-side"
-            className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
-              viewMode === "side-by-side"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Columns2 className="w-3.5 h-3.5" />
-            <span>Side by Side</span>
-          </button>
-          {state.oldImg && state.newImg && (
+        {hasBoth && (
+          <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+            <button
+              onClick={() => handleSetViewMode("unified")}
+              title="Unified"
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+                effectiveMode === "unified"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Unified</span>
+            </button>
+            <button
+              onClick={() => handleSetViewMode("side-by-side")}
+              title="Side-by-side"
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+                effectiveMode === "side-by-side"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Columns2 className="w-3.5 h-3.5" />
+              <span>Split</span>
+            </button>
             <button
               onClick={() => handleSetViewMode("swipe")}
               title="Swipe overlay"
               className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
-                viewMode === "swipe"
+                effectiveMode === "swipe"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
@@ -283,8 +307,8 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
               <SwatchBook className="w-3.5 h-3.5" />
               <span>Swipe</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         {zoom.scale > 1 && (
           <div className="ml-auto flex items-center rounded-md bg-secondary p-0.5 shrink-0">
@@ -299,7 +323,9 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
       </div>
 
       <div className="flex-1 overflow-hidden min-h-0">
-        {viewMode === "side-by-side" ? (
+        {effectiveMode === "unified" ? (
+          <UnifiedView img={(state.newImg ?? state.oldImg)!} zoom={zoom} onZoomChange={setZoom} />
+        ) : effectiveMode === "side-by-side" ? (
           <SideBySide oldImg={state.oldImg} newImg={state.newImg} zoom={zoom} onZoomChange={setZoom} />
         ) : (
           <SwipeView
@@ -311,6 +337,49 @@ export function ImageDiffViewer({ filePath, source, staged }: ImageDiffViewerPro
             onZoomChange={setZoom}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+function UnifiedView({
+  img,
+  zoom,
+  onZoomChange,
+}: {
+  img: ImageState;
+  zoom: ZoomState;
+  onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>;
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  useZoomAndPan(viewportRef, zoom, onZoomChange);
+
+  const wrapperStyle: React.CSSProperties = {
+    transform: `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`,
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-3 py-1.5 border-b border-border shrink-0">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{img.width} × {img.height}</span>
+          <span>{formatBytes(img.sizeBytes)}</span>
+        </div>
+      </div>
+      <div
+        ref={viewportRef}
+        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden [container-type:size]"
+        style={{ cursor: zoom.scale > 1 ? "grab" : "default" }}
+        onDoubleClick={() => onZoomChange(INITIAL_ZOOM)}
+      >
+        <div className={`rounded border border-border ${CHECKER_BG}`} style={wrapperStyle}>
+          <img
+            src={img.dataUri}
+            alt="Preview"
+            className={`${IMG_CONSTRAINT} pointer-events-none`}
+            draggable={false}
+          />
+        </div>
       </div>
     </div>
   );
@@ -346,7 +415,7 @@ function ImagePanel({
   useZoomAndPan(viewportRef, zoom, onZoomChange);
 
   if (!img) {
-    const text = label === "Before" ? "File added" : "File deleted";
+    const text = label === "Before" ? "No previous version" : "File removed";
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4 min-w-0">
         <span className="text-label text-muted-foreground">{label}</span>
