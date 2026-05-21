@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CommitInfo {
@@ -58,6 +58,8 @@ pub struct BranchInfo {
     /// True when HEAD is an ancestor of this branch — rebasing would be a
     /// simple fast-forward (pointer move, no replay).
     pub can_fast_forward: bool,
+    /// Short name of the upstream tracking branch (e.g. "origin/main"). None for remote branches or locals without an upstream.
+    pub upstream_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -209,6 +211,48 @@ pub struct ForgeRepo {
     pub description: Option<String>,
     pub is_private: bool,
     pub updated_at: String,
+}
+
+// ── CI types ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineStatus {
+    Queued,
+    InProgress,
+    Success,
+    /// Job failed but was allowed to fail (`allow_failure` in GitLab).
+    Warning,
+    Failure,
+    Cancelled,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Pipeline {
+    pub id: u64,
+    /// Human-readable label — workflow name (GitHub Actions) or `None` (GitLab).
+    pub name: Option<String>,
+    /// What triggered this pipeline — e.g. "push", "pull_request", "schedule",
+    /// "merge_request_event", "web", "workflow_dispatch", etc.
+    pub source: Option<String>,
+    pub status: PipelineStatus,
+    pub branch: String,
+    pub commit_sha: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+    pub duration_secs: Option<u64>,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CiJob {
+    pub id: u64,
+    pub name: String,
+    pub status: PipelineStatus,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub duration_secs: Option<u64>,
 }
 
 // ── LFS types ─────────────────────────────────────────────────────────────────

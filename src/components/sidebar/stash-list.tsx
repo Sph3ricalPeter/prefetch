@@ -22,7 +22,8 @@ export function StashList({ filter = "" }: { filter?: string }) {
   const popStash = useRepoStore((s) => s.popStash);
   const dropStash = useRepoStore((s) => s.dropStash);
   const isLoading = useRepoStore((s) => s.isLoading);
-  const [isOpen, setIsOpen] = useState(true);
+  const isOpen = useRepoStore((s) => s.sidebarSections.stashes);
+  const setSidebarSection = useRepoStore((s) => s.setSidebarSection);
   const [stashContextMenu, setStashContextMenu] = useState<{
     index: number;
     x: number;
@@ -41,7 +42,7 @@ export function StashList({ filter = "" }: { filter?: string }) {
       {/* Header */}
       <div className="flex items-center px-3 py-1.5">
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => setSidebarSection("stashes", !isOpen)}
           className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
         >
           {isOpen ? (

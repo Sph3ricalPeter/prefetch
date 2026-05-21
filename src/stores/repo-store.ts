@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import type {
   BranchInfo,
+  CiJob,
   CommitInfo,
   ConflictContents,
   ConflictState,
@@ -13,6 +14,7 @@ import type {
   GraphEdge,
   HunkLineSelection,
   LfsInfo,
+  Pipeline,
   PrInfo,
   RebaseProgress,
   StashInfo,
@@ -21,6 +23,21 @@ import type {
 } from "@/types/git";
 import type { GraphColumnVisibility } from "@/components/graph/commit-graph-canvas";
 import type { DateFormatId } from "@/lib/date-format";
+
+export interface SidebarSections {
+  branches: boolean;
+  ci: boolean;
+  stashes: boolean;
+  tags: boolean;
+}
+
+const DEFAULT_SIDEBAR_SECTIONS: SidebarSections = {
+  branches: true,
+  ci: false,
+  stashes: true,
+  tags: true,
+};
+
 import {
   openRepo,
   getCommits,
@@ -82,6 +99,9 @@ import {
   getPrForBranch as getPrForBranchCmd,
   clearPrCache as clearPrCacheCmd,
   openUrl as openUrlCmd,
+  getPipelinesForBranch,
+  getPipelineJobs,
+  getCiJobLog,
   stagePatch as stagePatchCmd,
   unstagePatch as unstagePatchCmd,
   getConflictContents as getConflictContentsCmd,
@@ -333,6 +353,18 @@ interface RepoState {
   /** branch name → PrInfo (or null = "checked, no open PR") */
   prCache: Record<string, PrInfo | null>;
 
+  // CI / Pipelines
+  ciPipelines: Pipeline[];
+  /** Jobs per pipeline — keyed by pipeline ID, eagerly loaded. */
+  ciJobsMap: Record<number, CiJob[]>;
+  /** Hidden pipeline source names (e.g. "schedule"). Persisted in ui_state. */
+  ciHiddenSources: Set<string>;
+  ciSelectedPipelineId: number | null;
+  ciSelectedJobId: number | null;
+  ciJobLog: string | null;
+  ciLoading: boolean;
+  ciPolling: boolean;
+
   /** Global file view mode — persisted across all views */
   fileViewMode: "flat" | "tree";
 
@@ -347,6 +379,9 @@ interface RepoState {
   graphColumnVisibility: GraphColumnVisibility;
   /** Date format used in the graph date column (global) */
   graphDateFormat: DateFormatId;
+
+  /** Sidebar section expand/collapse state (persisted) */
+  sidebarSections: SidebarSections;
 
   // Actions
   openRepository: (path: string) => Promise<void>;
@@ -451,6 +486,17 @@ interface RepoState {
   setGraphColumnVisibility: (v: GraphColumnVisibility) => void;
   setGraphDateFormat: (f: DateFormatId) => void;
   loadGraphPreferences: () => Promise<void>;
+  setSidebarSection: (section: keyof SidebarSections, open: boolean) => void;
+  loadSidebarPreferences: () => Promise<void>;
+
+  // CI actions
+  loadCiPipelines: () => Promise<void>;
+  toggleCiPipeline: (pipelineId: number) => void;
+  toggleCiSourceFilter: (source: string) => void;
+  loadCiJobLog: (jobId: number) => Promise<void>;
+  clearCiJobLog: () => void;
+  startCiPolling: () => void;
+  stopCiPolling: () => void;
 
   // LFS actions
   loadLfsInfo: (full?: boolean) => Promise<void>;
@@ -546,16 +592,27 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   gitIdentity: null,
   forgeStatus: null,
   prCache: {},
+  ciPipelines: [],
+  ciJobsMap: {},
+  ciHiddenSources: new Set(),
+  ciSelectedPipelineId: null,
+  ciSelectedJobId: null,
+  ciJobLog: null,
+  ciLoading: false,
+  ciPolling: false,
   fileViewMode: "flat",
   diffViewMode: "unified",
   imageDiffViewMode: "side-by-side",
   diffWrapLines: true,
   graphColumnVisibility: { sha: false, author: false, date: false },
   graphDateFormat: "short",
+  sidebarSections: { ...DEFAULT_SIDEBAR_SECTIONS },
 
   openRepository: async (path: string) => {
     // Skip if this repo is already open
     if (get().repoPath === path && get().commits.length > 0) return;
+    // Stop CI polling before switching repos
+    get().stopCiPolling();
     // Clear avatar caches so forge lookups retry with fresh tokens
     import("@/lib/avatar-cache").then((m) => m.clearAvatarCache()).catch(() => {});
     // Clear all previous repo state before loading new one
@@ -952,6 +1009,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, isLoading: false });
       ms.completeStep(1);
       ms.finish();
+
+      // Kick off CI polling after successful push
+      get().startCiPolling();
     } catch (e) {
       set({ isLoading: false });
       const { hookName, message } = parseError(e);
@@ -1002,6 +1062,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       activeDiff: null,
       commitFiles: [],
       commitFilesLoading: !!id,
+      ciSelectedJobId: null,
+      ciJobLog: null,
     });
     if (id) {
       try {
@@ -1023,7 +1085,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
     const totalChanges = isLargeDiff(get().fileStatuses, path);
     if (totalChanges) {
-      set({ activeDiff: null, largeDiffPending: { path, staged, totalChanges } });
+      // Large-diff guard takes priority in the view chain — safe to clear CI now
+      set({ activeDiff: null, largeDiffPending: { path, staged, totalChanges }, ciSelectedJobId: null, ciJobLog: null });
       return;
     }
 
@@ -1031,7 +1094,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       const diff = await getFileDiff(path, staged);
       const keepLoading = diff.is_binary && isImageFile(path);
-      set({ activeDiff: diff, diffLoading: keepLoading });
+      // Clear CI state only when the diff is ready to display — avoids graph flash
+      set({ activeDiff: diff, diffLoading: keepLoading, ciSelectedJobId: null, ciJobLog: null });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
@@ -1043,7 +1107,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
     const totalChanges = isLargeDiff(get().commitFiles, filePath);
     if (totalChanges) {
-      set({ activeDiff: null, largeDiffPending: { path: filePath, commitId, totalChanges } });
+      set({ activeDiff: null, largeDiffPending: { path: filePath, commitId, totalChanges }, ciSelectedJobId: null, ciJobLog: null });
       return;
     }
 
@@ -1051,14 +1115,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       const diff = await getCommitFileDiff(commitId, filePath);
       const keepLoading = diff.is_binary && isImageFile(filePath);
-      set({ activeDiff: diff, diffLoading: keepLoading });
+      set({ activeDiff: diff, diffLoading: keepLoading, ciSelectedJobId: null, ciJobLog: null });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
     }
   },
 
-  clearDiff: () => set({ activeDiff: null, largeDiffPending: null, diffLoading: false, selectedFilePath: null }),
+  clearDiff: () => set({ activeDiff: null, largeDiffPending: null, diffLoading: false, selectedFilePath: null, ciSelectedJobId: null, ciJobLog: null }),
   setDiffLoading: (loading) => set({ diffLoading: loading }),
 
   clearSelection: () =>
@@ -1366,6 +1430,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       activeDiff: null,
       commitFiles: [],
       commitFilesLoading: true,
+      ciSelectedJobId: null,
+      ciJobLog: null,
     });
     try {
       const files = await getStashFiles(index);
@@ -2131,6 +2197,145 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch {
       // DB might not be ready yet — use defaults
     }
+  },
+
+  setSidebarSection: (section, open) => {
+    const next = { ...get().sidebarSections, [section]: open };
+    set({ sidebarSections: next });
+    setUiState("sidebar_sections", JSON.stringify(next)).catch(() => {});
+  },
+
+  loadSidebarPreferences: async () => {
+    try {
+      const [raw, hiddenRaw] = await Promise.all([
+        getUiState("sidebar_sections"),
+        getUiState("ci_hidden_sources"),
+      ]);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          set({
+            sidebarSections: {
+              branches: parsed.branches !== false,
+              ci: parsed.ci === true,
+              stashes: parsed.stashes !== false,
+              tags: parsed.tags !== false,
+            },
+          });
+        } catch { /* malformed — keep defaults */ }
+      }
+      if (hiddenRaw) {
+        try {
+          const arr = JSON.parse(hiddenRaw) as string[];
+          set({ ciHiddenSources: new Set(arr) });
+        } catch { /* malformed — keep defaults */ }
+      }
+    } catch {
+      // DB might not be ready yet — use defaults
+    }
+  },
+
+  // ── CI actions ─────────────────────────────────────────────────────────────
+
+  loadCiPipelines: async () => {
+    const forgeStatus = get().forgeStatus;
+    if (!forgeStatus?.has_token) return;
+
+    set({ ciLoading: true });
+    try {
+      const pipelines = await getPipelinesForBranch(null, 10);
+      set({ ciPipelines: pipelines, ciLoading: false });
+
+      // Fetch jobs — only re-fetch for active/new pipelines, reuse cached for settled ones
+      const prevJobsMap = get().ciJobsMap;
+      const toFetch = pipelines.filter(
+        (p) => p.status === "queued" || p.status === "in_progress" || !(p.id in prevJobsMap),
+      );
+      const entries = await Promise.all(
+        toFetch.map(async (p) => {
+          try {
+            const jobs = await getPipelineJobs(p.id);
+            return [p.id, jobs] as const;
+          } catch {
+            return [p.id, [] as CiJob[]] as const;
+          }
+        }),
+      );
+      const jobsMap: Record<number, CiJob[]> = {};
+      for (const p of pipelines) {
+        const fetched = entries.find(([id]) => id === p.id);
+        jobsMap[p.id] = fetched ? fetched[1] : (prevJobsMap[p.id] ?? []);
+      }
+      set({ ciJobsMap: jobsMap });
+
+      // Auto-expand the latest pipeline
+      if (pipelines.length > 0 && get().ciSelectedPipelineId == null) {
+        set({ ciSelectedPipelineId: pipelines[0].id });
+      }
+
+      // Auto-start polling if any pipeline is still active
+      const hasActive = pipelines.some(
+        (p) => p.status === "queued" || p.status === "in_progress",
+      );
+      if (hasActive) get().startCiPolling();
+    } catch {
+      set({ ciPipelines: [], ciLoading: false });
+    }
+  },
+
+  toggleCiPipeline: (pipelineId: number) => {
+    const current = get().ciSelectedPipelineId;
+    set({ ciSelectedPipelineId: current === pipelineId ? null : pipelineId });
+  },
+
+  toggleCiSourceFilter: (source: string) => {
+    const hidden = new Set(get().ciHiddenSources);
+    if (hidden.has(source)) hidden.delete(source);
+    else hidden.add(source);
+    set({ ciHiddenSources: hidden });
+    setUiState("ci_hidden_sources", JSON.stringify([...hidden])).catch(() => {});
+  },
+
+  loadCiJobLog: async (jobId: number) => {
+    // Clear any active diff so the CI log viewer can show in the center pane
+    set({ ciSelectedJobId: jobId, ciJobLog: null, activeDiff: null, largeDiffPending: null, selectedFilePath: null });
+    try {
+      const log = await getCiJobLog(jobId);
+      set({ ciJobLog: log });
+    } catch (e) {
+      set({ ciJobLog: `Failed to load log: ${e}` });
+    }
+  },
+
+  clearCiJobLog: () => {
+    set({ ciSelectedJobId: null, ciJobLog: null });
+  },
+
+  startCiPolling: () => {
+    if (get().ciPolling) return;
+    set({ ciPolling: true });
+
+    const poll = async () => {
+      while (get().ciPolling) {
+        await get().loadCiPipelines();
+
+        // Stop polling once all pipelines are settled
+        const active = get().ciPipelines.some(
+          (p) => p.status === "queued" || p.status === "in_progress",
+        );
+        if (!active) {
+          set({ ciPolling: false });
+          return;
+        }
+
+        await new Promise((r) => setTimeout(r, 15_000));
+      }
+    };
+    poll();
+  },
+
+  stopCiPolling: () => {
+    set({ ciPolling: false });
   },
 
   // ── LFS actions ────────────────────────────────────────────────────────────

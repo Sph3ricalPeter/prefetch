@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::git::forge::keychain;
 use crate::git::forge::ForgeProvider;
 use crate::git::forge::TokenType;
-use crate::git::types::{ForgeConfig, ForgeRepo, PrInfo};
+use crate::git::types::{CiJob, ForgeConfig, ForgeRepo, Pipeline, PrInfo};
 use tracing::{debug, warn};
 
 pub struct BitbucketProvider;
@@ -169,6 +169,42 @@ impl ForgeProvider for BitbucketProvider {
         }
 
         Ok(all_repos)
+    }
+
+    // ── CI (not supported for Bitbucket in v0.18.0) ──────────────────────────
+
+    fn list_pipelines(
+        &self,
+        _config: &ForgeConfig,
+        _branch: Option<&str>,
+        _token: &str,
+        _per_page: u32,
+    ) -> Result<Vec<Pipeline>, AppError> {
+        Err(AppError::Other(
+            "CI pipelines are not yet supported for Bitbucket".to_string(),
+        ))
+    }
+
+    fn list_pipeline_jobs(
+        &self,
+        _config: &ForgeConfig,
+        _pipeline_id: u64,
+        _token: &str,
+    ) -> Result<Vec<CiJob>, AppError> {
+        Err(AppError::Other(
+            "CI jobs are not yet supported for Bitbucket".to_string(),
+        ))
+    }
+
+    fn get_job_log(
+        &self,
+        _config: &ForgeConfig,
+        _job_id: u64,
+        _token: &str,
+    ) -> Result<String, AppError> {
+        Err(AppError::Other(
+            "CI job logs are not yet supported for Bitbucket".to_string(),
+        ))
     }
 }
 

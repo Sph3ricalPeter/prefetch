@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use crate::error::AppError;
 use crate::git::repository::run_git;
-use crate::git::types::{ForgeConfig, ForgeKind, ForgeRepo, PrInfo};
+use crate::git::types::{CiJob, ForgeConfig, ForgeKind, ForgeRepo, Pipeline, PrInfo};
 
 pub(crate) const USER_AGENT: &str = "prefetch-git-client/0.1";
 
@@ -69,6 +69,33 @@ pub trait ForgeProvider: Send + Sync {
 
     /// List repositories the authenticated user has access to.
     fn list_repos(&self, host: &str, token: &str) -> Result<Vec<ForgeRepo>, AppError>;
+
+    // ── CI / Pipeline methods ────────────────────────────────────────────────
+
+    /// List recent pipelines/workflow runs for a branch.
+    fn list_pipelines(
+        &self,
+        config: &ForgeConfig,
+        branch: Option<&str>,
+        token: &str,
+        per_page: u32,
+    ) -> Result<Vec<Pipeline>, AppError>;
+
+    /// List jobs within a pipeline/workflow run.
+    fn list_pipeline_jobs(
+        &self,
+        config: &ForgeConfig,
+        pipeline_id: u64,
+        token: &str,
+    ) -> Result<Vec<CiJob>, AppError>;
+
+    /// Download the log for a single job (raw text, may contain ANSI escapes).
+    fn get_job_log(
+        &self,
+        config: &ForgeConfig,
+        job_id: u64,
+        token: &str,
+    ) -> Result<String, AppError>;
 }
 
 /// Get the provider implementation for a ForgeKind.
@@ -353,4 +380,30 @@ pub fn list_user_repos(host: &str, token: &str) -> Result<Vec<ForgeRepo>, AppErr
     let kind = classify_host(host);
     let p = provider(&kind);
     p.list_repos(host, token)
+}
+
+// ── CI / Pipeline public API ──────────────────────────────────────────────
+
+pub fn list_pipelines(
+    config: &ForgeConfig,
+    branch: Option<&str>,
+    token: &str,
+    per_page: u32,
+) -> Result<Vec<Pipeline>, AppError> {
+    let p = provider(&config.kind);
+    p.list_pipelines(config, branch, token, per_page)
+}
+
+pub fn list_pipeline_jobs(
+    config: &ForgeConfig,
+    pipeline_id: u64,
+    token: &str,
+) -> Result<Vec<CiJob>, AppError> {
+    let p = provider(&config.kind);
+    p.list_pipeline_jobs(config, pipeline_id, token)
+}
+
+pub fn get_job_log(config: &ForgeConfig, job_id: u64, token: &str) -> Result<String, AppError> {
+    let p = provider(&config.kind);
+    p.get_job_log(config, job_id, token)
 }

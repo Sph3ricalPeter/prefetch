@@ -46,6 +46,8 @@ export interface BranchInfo {
   behind: number | null;
   /** True when HEAD is an ancestor — rebasing would be a fast-forward. */
   can_fast_forward: boolean;
+  /** Short upstream ref name, e.g. "origin/main". Null for remote branches or locals without an upstream. */
+  upstream_name: string | null;
 }
 
 /** Porcelain status codes returned by the Rust backend. */
@@ -191,6 +193,41 @@ export interface ForgeRepo {
   description: string | null;
   is_private: boolean;
   updated_at: string;
+}
+
+// ── CI / Pipelines ────────────────────────────────────────────────────────────
+
+export type PipelineStatus =
+  | "queued"
+  | "in_progress"
+  | "success"
+  | "warning"
+  | "failure"
+  | "cancelled"
+  | "unknown";
+
+export interface Pipeline {
+  id: number;
+  /** Workflow name (GitHub Actions) or null (GitLab). */
+  name: string | null;
+  /** What triggered this pipeline — e.g. "push", "pull_request", "schedule", "merge_request_event". */
+  source: string | null;
+  status: PipelineStatus;
+  branch: string;
+  commit_sha: string;
+  created_at: string;
+  updated_at: string | null;
+  duration_secs: number | null;
+  url: string;
+}
+
+export interface CiJob {
+  id: number;
+  name: string;
+  status: PipelineStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_secs: number | null;
 }
 
 // ── LFS ───────────────────────────────────────────────────────────────────────

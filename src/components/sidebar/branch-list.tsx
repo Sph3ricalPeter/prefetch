@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal, Monitor, Cloud } from "lucide-react";
-import type { BranchInfo, PrInfo } from "@/types/git";
+import { useState, useEffect, useMemo } from "react";
+import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal, Check, Monitor, Cloud } from "lucide-react";
+import type { BranchInfo, PipelineStatus, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
+import { effectivePipelineStatus } from "@/lib/ci-utils";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import {
   Tooltip,
@@ -26,8 +27,10 @@ export function BranchList({ filter = "" }: { filter?: string }) {
   const renameBranch = useRepoStore((s) => s.renameBranch);
   const deleteRemoteBranch = useRepoStore((s) => s.deleteRemoteBranch);
   const setUpstream = useRepoStore((s) => s.setUpstream);
-  const [localOpen, setLocalOpen] = useState(true);
-  const [remoteOpen, setRemoteOpen] = useState(false);
+  const ciPipelines = useRepoStore((s) => s.ciPipelines);
+  const ciJobsMap = useRepoStore((s) => s.ciJobsMap);
+  const isOpen = useRepoStore((s) => s.sidebarSections.branches);
+  const setSidebarSection = useRepoStore((s) => s.setSidebarSection);
   const [branchContextMenu, setBranchContextMenu] = useState<{
     branch: BranchInfo;
     x: number;
@@ -51,18 +54,59 @@ export function BranchList({ filter = "" }: { filter?: string }) {
       )
     : branches;
 
-  const localBranches = filtered.filter((b) => !b.is_remote);
-  const remoteBranches = filtered.filter((b) => b.is_remote);
+  // Only show local branches — remote tracking is indicated via icons
+  const localBranches = useMemo(
+    () => filtered.filter((b) => !b.is_remote),
+    [filtered],
+  );
+
+  // Build a map: branch name → latest CI pipeline effective status
+  const branchCiStatus = useMemo(() => {
+    const map = new Map<string, PipelineStatus>();
+    for (const p of ciPipelines) {
+      // Direct branch match
+      let branchName = p.branch;
+
+      // GitLab MR ref: refs/merge-requests/N/head → find PR by number
+      const glMr = p.branch.match(/^refs\/merge-requests\/(\d+)\//);
+      if (glMr) {
+        // Find which local branch has this MR number
+        const mrNum = parseInt(glMr[1], 10);
+        const entry = Object.entries(prCache).find(
+          ([, pr]) => pr?.number === mrNum,
+        );
+        if (entry) branchName = entry[0];
+        else continue; // can't map this MR pipeline to a branch
+      }
+
+      // GitHub PR ref: refs/pull/N/head → find PR by number
+      const ghPr = p.branch.match(/^refs\/pull\/(\d+)\//);
+      if (ghPr) {
+        const prNum = parseInt(ghPr[1], 10);
+        const entry = Object.entries(prCache).find(
+          ([, pr]) => pr?.number === prNum,
+        );
+        if (entry) branchName = entry[0];
+        else continue;
+      }
+
+      // Only keep the first (latest) pipeline per branch
+      if (map.has(branchName)) continue;
+
+      map.set(branchName, effectivePipelineStatus(p, ciJobsMap[p.id] ?? []));
+    }
+    return map;
+  }, [ciPipelines, ciJobsMap, prCache]);
 
   // Lazily load PR info for visible local branches
   useEffect(() => {
-    if (!localOpen) return;
+    if (!isOpen) return;
     localBranches.forEach((b) => {
       if (!(b.name in prCache)) {
         loadPrForBranch(b.name);
       }
     });
-  }, [localOpen, localBranches, prCache, loadPrForBranch]);
+  }, [isOpen, localBranches, prCache, loadPrForBranch]);
 
   const handleCheckout = async (name: string) => {
     if (name === currentBranch || isLoading) return;
@@ -88,13 +132,12 @@ export function BranchList({ filter = "" }: { filter?: string }) {
           </div>
         )}
 
-        {/* Local branches */}
+        {/* Unified branch list */}
         <BranchSection
-          label="Local"
-          icon={Monitor}
+          label="Branches"
           count={localBranches.length}
-          isOpen={localOpen}
-          onToggle={() => setLocalOpen(!localOpen)}
+          isOpen={isOpen}
+          onToggle={() => setSidebarSection("branches", !isOpen)}
         >
           {localBranches.map((branch) => (
             <BranchRow
@@ -102,6 +145,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
               branch={branch}
               isCurrent={branch.name === currentBranch}
               pr={prCache[branch.name]}
+              ciStatus={branchCiStatus.get(branch.name)}
               disabled={isLoading}
               onClick={() => handleCheckout(branch.name)}
               onPrClick={
@@ -109,29 +153,6 @@ export function BranchList({ filter = "" }: { filter?: string }) {
                   ? () => openPr(prCache[branch.name]!.url)
                   : undefined
               }
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setBranchContextMenu({ branch, x: e.clientX, y: e.clientY });
-              }}
-            />
-          ))}
-        </BranchSection>
-
-        {/* Remote branches */}
-        <BranchSection
-          label="Remote"
-          icon={Cloud}
-          count={remoteBranches.length}
-          isOpen={remoteOpen}
-          onToggle={() => setRemoteOpen(!remoteOpen)}
-        >
-          {remoteBranches.map((branch) => (
-            <BranchRow
-              key={branch.name}
-              branch={branch}
-              isCurrent={false}
-              disabled={isLoading}
-              onClick={() => handleCheckout(branch.name)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setBranchContextMenu({ branch, x: e.clientX, y: e.clientY });
@@ -323,39 +344,7 @@ function buildBranchContextMenuItems(
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
   const isCurrent = branch.name === currentBranch;
-
-  if (branch.is_remote) {
-    // ── Remote branch menu ──
-    items.push({
-      label: `Checkout ${branch.name}`,
-      onClick: () => checkout(branch.name),
-    });
-
-    items.push({ separator: true });
-
-    items.push({
-      label: "Copy branch name",
-      onClick: () => navigator.clipboard.writeText(branch.name),
-    });
-
-    items.push({ separator: true });
-
-    // Parse remote/branch from e.g. "origin/feature"
-    const slashIdx = branch.name.indexOf("/");
-    if (slashIdx > 0) {
-      const remote = branch.name.slice(0, slashIdx);
-      const remoteBranch = branch.name.slice(slashIdx + 1);
-      items.push({
-        label: `Delete from ${remote}…`,
-        onClick: () => confirmDeleteBranch(remoteBranch, false, true, remote),
-        destructive: true,
-      });
-    }
-
-    return items;
-  }
-
-  // ── Local branch menu ──
+  const hasRemote = branch.upstream_name != null;
 
   // Navigation (not for current branch)
   if (!isCurrent) {
@@ -366,7 +355,7 @@ function buildBranchContextMenuItems(
     items.push({ separator: true });
   }
 
-  // Merge & rebase (only for non-current local branches)
+  // Merge & rebase (only for non-current branches)
   if (!isCurrent && currentBranch) {
     items.push({
       label: `Merge ${branch.name} into ${currentBranch}`,
@@ -390,17 +379,19 @@ function buildBranchContextMenuItems(
     label: "Push",
     onClick: () => push(),
   });
-  items.push({
-    label: "Set upstream…",
-    onClick: () => setUpstream(branch.name),
-  });
+  if (!hasRemote) {
+    items.push({
+      label: "Set upstream…",
+      onClick: () => setUpstream(branch.name),
+    });
+  }
 
   items.push({ separator: true });
 
   // Manage
   items.push({
     label: "Rename branch…",
-    onClick: () => renameBranch(branch.name, branch.ahead != null || branch.behind != null),
+    onClick: () => renameBranch(branch.name, hasRemote),
   });
   items.push({
     label: "Copy branch name",
@@ -411,16 +402,25 @@ function buildBranchContextMenuItems(
   if (!isCurrent) {
     items.push({ separator: true });
 
-    const hasRemote = branch.ahead != null || branch.behind != null;
+    // Parse remote name from upstream (e.g. "origin/main" → "origin")
+    const remoteName = hasRemote
+      ? branch.upstream_name!.split("/")[0]
+      : "origin";
+
     items.push({
-      label: `Delete ${branch.name}…`,
-      onClick: () => confirmDeleteBranch(branch.name, true, false, "origin"),
+      label: "Delete local…",
+      onClick: () => confirmDeleteBranch(branch.name, true, false, remoteName),
       destructive: true,
     });
     if (hasRemote) {
       items.push({
-        label: `Delete ${branch.name} (local + remote)…`,
-        onClick: () => confirmDeleteBranch(branch.name, true, true, "origin"),
+        label: `Delete from ${remoteName}…`,
+        onClick: () => confirmDeleteBranch(branch.name, false, true, remoteName),
+        destructive: true,
+      });
+      items.push({
+        label: "Delete local + remote…",
+        onClick: () => confirmDeleteBranch(branch.name, true, true, remoteName),
         destructive: true,
       });
     }
@@ -431,14 +431,12 @@ function buildBranchContextMenuItems(
 
 function BranchSection({
   label,
-  icon: Icon,
   count,
   isOpen,
   onToggle,
   children,
 }: {
   label: string;
-  icon?: React.ComponentType<{ className?: string }>;
   count: number;
   isOpen: boolean;
   onToggle: () => void;
@@ -459,17 +457,28 @@ function BranchSection({
         <span className="ml-1 normal-case tracking-normal text-faint">
           {count}
         </span>
-        {Icon && <Icon className="h-3 w-3 text-faint" />}
       </button>
       {isOpen && <div>{children}</div>}
     </div>
   );
 }
 
+/** MR icon color based on CI pipeline status */
+function prIconColor(ciStatus?: PipelineStatus): string {
+  switch (ciStatus) {
+    case "success": return "text-green-400";
+    case "failure": return "text-red-400";
+    case "warning": return "text-orange-400";
+    case "in_progress": return "text-yellow-400";
+    default: return "text-muted-foreground";
+  }
+}
+
 function BranchRow({
   branch,
   isCurrent,
   pr,
+  ciStatus,
   disabled,
   onClick,
   onPrClick,
@@ -479,6 +488,7 @@ function BranchRow({
   isCurrent: boolean;
   /** undefined = not yet checked; null = no open PR; PrInfo = has open PR */
   pr?: PrInfo | null;
+  ciStatus?: PipelineStatus;
   disabled: boolean;
   onClick: () => void;
   onPrClick?: () => void;
@@ -495,10 +505,28 @@ function BranchRow({
         isCurrent
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-      } ${branch.is_remote ? "text-dim" : ""} disabled:cursor-default`}
+      } disabled:cursor-default`}
     >
       <GitBranch className="h-3 w-3 shrink-0" />
       <span className="truncate">{displayName}</span>
+
+      {/* Local/remote indicators */}
+      <span className="flex items-center gap-0.5 shrink-0 text-faint">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Monitor className="h-3 w-3" />
+          </TooltipTrigger>
+          <TooltipContent>Local</TooltipContent>
+        </Tooltip>
+        {branch.upstream_name != null && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Cloud className="h-3 w-3" />
+            </TooltipTrigger>
+            <TooltipContent>{branch.upstream_name}</TooltipContent>
+          </Tooltip>
+        )}
+      </span>
 
       {/* Ahead/behind badges */}
       {((branch.ahead != null && branch.ahead > 0) ||
@@ -509,7 +537,7 @@ function BranchRow({
         </span>
       )}
 
-      {/* PR badge — only shown when there's an open PR */}
+      {/* PR badge — colored by CI status */}
       {pr && onPrClick && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -519,7 +547,7 @@ function BranchRow({
                 e.stopPropagation();
                 onPrClick();
               }}
-              className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              className={`ml-auto shrink-0 rounded p-0.5 ${prIconColor(ciStatus)} hover:text-foreground hover:bg-accent transition-colors`}
             >
               <GitPullRequest className="h-3 w-3" />
             </span>
@@ -530,11 +558,12 @@ function BranchRow({
         </Tooltip>
       )}
 
+      {/* Current branch indicator — checkmark */}
       {isCurrent && !pr && (
-        <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+        <Check className="ml-auto h-3 w-3 shrink-0 text-primary" />
       )}
       {isCurrent && pr && (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+        <Check className="h-3 w-3 shrink-0 text-primary" />
       )}
     </button>
   );

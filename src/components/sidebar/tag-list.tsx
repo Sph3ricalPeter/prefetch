@@ -19,7 +19,8 @@ export function TagList({ filter = "" }: { filter?: string }) {
   const createNewTag = useRepoStore((s) => s.createNewTag);
   const deleteExistingTag = useRepoStore((s) => s.deleteExistingTag);
   const pushExistingTag = useRepoStore((s) => s.pushExistingTag);
-  const [isOpen, setIsOpen] = useState(true);
+  const isOpen = useRepoStore((s) => s.sidebarSections.tags);
+  const setSidebarSection = useRepoStore((s) => s.setSidebarSection);
   const [isCreating, setIsCreating] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [newTagMessage, setNewTagMessage] = useState("");
@@ -64,7 +65,7 @@ export function TagList({ filter = "" }: { filter?: string }) {
       {/* Header */}
       <div className="flex items-center px-3 py-1.5">
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => setSidebarSection("tags", !isOpen)}
           className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
         >
           {isOpen ? (

@@ -4,7 +4,7 @@ use crate::commands::helpers::{get_profile_id, offload, repo_path};
 use crate::error::AppError;
 use crate::git::{
     forge,
-    types::{ForgeConfig, ForgeRepo, PrInfo},
+    types::{CiJob, ForgeConfig, ForgeRepo, Pipeline, PrInfo},
 };
 use crate::oauth;
 use crate::AppState;
@@ -230,6 +230,64 @@ pub async fn list_forge_repos(
         let token = forge::load_token_for_profile(pid.as_deref(), &host)?
             .ok_or_else(|| AppError::Other(format!("No token stored for {host}")))?;
         forge::list_user_repos(&host, &token)
+    })
+    .await
+}
+
+// ── CI / Pipeline tracking ───────────────────────────────────────────────────
+
+/// List recent CI pipelines / workflow runs for a branch.
+#[tauri::command]
+pub async fn get_pipelines_for_branch(
+    branch: Option<String>,
+    per_page: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Pipeline>, AppError> {
+    let path = repo_path(&state)?;
+    let profile_id = get_profile_id(&state);
+    let limit = per_page.unwrap_or(10);
+
+    offload(move || {
+        let config: ForgeConfig = forge::detect_forge(&path)?
+            .ok_or_else(|| AppError::Other("No forge detected".to_string()))?;
+        let token = forge::load_token_for_profile(profile_id.as_deref(), &config.host)?
+            .ok_or_else(|| AppError::Other(format!("No token stored for {}", config.host)))?;
+        forge::list_pipelines(&config, branch.as_deref(), &token, limit)
+    })
+    .await
+}
+
+/// List jobs within a CI pipeline / workflow run.
+#[tauri::command]
+pub async fn get_pipeline_jobs(
+    pipeline_id: u64,
+    state: State<'_, AppState>,
+) -> Result<Vec<CiJob>, AppError> {
+    let path = repo_path(&state)?;
+    let profile_id = get_profile_id(&state);
+
+    offload(move || {
+        let config: ForgeConfig = forge::detect_forge(&path)?
+            .ok_or_else(|| AppError::Other("No forge detected".to_string()))?;
+        let token = forge::load_token_for_profile(profile_id.as_deref(), &config.host)?
+            .ok_or_else(|| AppError::Other(format!("No token stored for {}", config.host)))?;
+        forge::list_pipeline_jobs(&config, pipeline_id, &token)
+    })
+    .await
+}
+
+/// Download the log output for a single CI job.
+#[tauri::command]
+pub async fn get_ci_job_log(job_id: u64, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = repo_path(&state)?;
+    let profile_id = get_profile_id(&state);
+
+    offload(move || {
+        let config: ForgeConfig = forge::detect_forge(&path)?
+            .ok_or_else(|| AppError::Other("No forge detected".to_string()))?;
+        let token = forge::load_token_for_profile(profile_id.as_deref(), &config.host)?
+            .ok_or_else(|| AppError::Other(format!("No token stored for {}", config.host)))?;
+        forge::get_job_log(&config, job_id, &token)
     })
     .await
 }

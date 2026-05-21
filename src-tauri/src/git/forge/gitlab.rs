@@ -3,9 +3,13 @@
 use crate::error::AppError;
 use crate::git::forge::ForgeProvider;
 use crate::git::forge::TokenType;
-use crate::git::types::{ForgeConfig, ForgeRepo, PrInfo};
+use crate::git::types::{CiJob, ForgeConfig, ForgeRepo, Pipeline, PipelineStatus, PrInfo};
 
 pub struct GitLabProvider;
+
+fn gitlab_project_path(config: &ForgeConfig) -> String {
+    urlencoding::encode(&format!("{}/{}", config.owner, config.repo)).into_owned()
+}
 
 fn gitlab_auth_header(token: &str) -> (&'static str, String) {
     if token.starts_with("glpat-") {
@@ -99,8 +103,7 @@ impl ForgeProvider for GitLabProvider {
         branch: &str,
         token: &Option<String>,
     ) -> Option<PrInfo> {
-        let project_path =
-            urlencoding::encode(&format!("{}/{}", config.owner, config.repo)).into_owned();
+        let project_path = gitlab_project_path(config);
 
         let url = format!(
             "https://{}/api/v4/projects/{}/merge_requests?source_branch={}&state=opened&per_page=1",
@@ -183,5 +186,175 @@ impl ForgeProvider for GitLabProvider {
         }
 
         Ok(all_repos)
+    }
+
+    // ── CI (GitLab CI) ───────────────────────────────────────────────────────
+
+    fn list_pipelines(
+        &self,
+        config: &ForgeConfig,
+        branch: Option<&str>,
+        token: &str,
+        per_page: u32,
+    ) -> Result<Vec<Pipeline>, AppError> {
+        let project_path = gitlab_project_path(config);
+
+        let ref_param = branch
+            .map(|b| format!("&ref={}", urlencoding::encode(b)))
+            .unwrap_or_default();
+        let url = format!(
+            "https://{}/api/v4/projects/{}/pipelines?per_page={}{}",
+            config.host, project_path, per_page, ref_param,
+        );
+
+        let (auth_header, auth_value) = gitlab_auth_header(token);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(&url)
+            .header("User-Agent", super::USER_AGENT)
+            .header(auth_header, &auth_value)
+            .send()
+            .map_err(|e| AppError::Other(format!("GitLab CI API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!("GitLab CI API {status}: {body}")));
+        }
+
+        let pipelines: Vec<serde_json::Value> = resp
+            .json()
+            .map_err(|e| AppError::Other(format!("Failed to parse pipelines response: {e}")))?;
+
+        Ok(pipelines
+            .iter()
+            .filter_map(|p| {
+                Some(Pipeline {
+                    id: p["id"].as_u64()?,
+                    name: None,
+                    source: p["source"].as_str().map(|s| s.to_string()),
+                    status: gl_pipeline_status(p["status"].as_str().unwrap_or("")),
+                    branch: p["ref"].as_str().unwrap_or("").to_string(),
+                    commit_sha: p["sha"].as_str().unwrap_or("").to_string(),
+                    created_at: p["created_at"].as_str().unwrap_or("").to_string(),
+                    updated_at: p["updated_at"].as_str().map(|s| s.to_string()),
+                    duration_secs: p["duration"]
+                        .as_u64()
+                        .or_else(|| p["duration"].as_f64().map(|f| f as u64)),
+                    url: p["web_url"].as_str().unwrap_or("").to_string(),
+                })
+            })
+            .collect())
+    }
+
+    fn list_pipeline_jobs(
+        &self,
+        config: &ForgeConfig,
+        pipeline_id: u64,
+        token: &str,
+    ) -> Result<Vec<CiJob>, AppError> {
+        let project_path = gitlab_project_path(config);
+
+        let url = format!(
+            "https://{}/api/v4/projects/{}/pipelines/{}/jobs?per_page=100",
+            config.host, project_path, pipeline_id,
+        );
+
+        let (auth_header, auth_value) = gitlab_auth_header(token);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(&url)
+            .header("User-Agent", super::USER_AGENT)
+            .header(auth_header, &auth_value)
+            .send()
+            .map_err(|e| AppError::Other(format!("GitLab CI API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!("GitLab CI API {status}: {body}")));
+        }
+
+        let jobs: Vec<serde_json::Value> = resp
+            .json()
+            .map_err(|e| AppError::Other(format!("Failed to parse jobs response: {e}")))?;
+
+        // GitLab returns jobs newest-first; reverse to match pipeline execution order.
+        let mut result: Vec<CiJob> = jobs
+            .iter()
+            .filter_map(|j| {
+                let mut status = gl_pipeline_status(j["status"].as_str().unwrap_or(""));
+                // GitLab: failed job with allow_failure → warning
+                if status == PipelineStatus::Failure
+                    && j["allow_failure"].as_bool().unwrap_or(false)
+                {
+                    status = PipelineStatus::Warning;
+                }
+                Some(CiJob {
+                    id: j["id"].as_u64()?,
+                    name: j["name"].as_str().unwrap_or("").to_string(),
+                    status,
+                    started_at: j["started_at"].as_str().map(|s| s.to_string()),
+                    completed_at: j["finished_at"].as_str().map(|s| s.to_string()),
+                    duration_secs: j["duration"]
+                        .as_u64()
+                        .or_else(|| j["duration"].as_f64().map(|f| f as u64)),
+                })
+            })
+            .collect();
+        result.reverse();
+        Ok(result)
+    }
+
+    fn get_job_log(
+        &self,
+        config: &ForgeConfig,
+        job_id: u64,
+        token: &str,
+    ) -> Result<String, AppError> {
+        let project_path = gitlab_project_path(config);
+
+        let url = format!(
+            "https://{}/api/v4/projects/{}/jobs/{}/trace",
+            config.host, project_path, job_id,
+        );
+
+        let (auth_header, auth_value) = gitlab_auth_header(token);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(&url)
+            .header("User-Agent", super::USER_AGENT)
+            .header(auth_header, &auth_value)
+            .send()
+            .map_err(|e| AppError::Other(format!("GitLab CI API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!("GitLab CI API {status}: {body}")));
+        }
+
+        resp.text()
+            .map_err(|e| AppError::Other(format!("Failed to read log body: {e}")))
+    }
+}
+
+fn gl_pipeline_status(status: &str) -> PipelineStatus {
+    match status {
+        "pending" | "waiting_for_resource" | "preparing" | "scheduled" => PipelineStatus::Queued,
+        "running" => PipelineStatus::InProgress,
+        "success" => PipelineStatus::Success,
+        "failed" => PipelineStatus::Failure,
+        "canceled" | "skipped" => PipelineStatus::Cancelled,
+        // GitLab returns this when the pipeline passed but some allowed-failure jobs failed.
+        "manual" => PipelineStatus::Queued,
+        _ => {
+            // Catch "success with warnings" or similar compound statuses
+            if status.contains("warning") {
+                PipelineStatus::Warning
+            } else {
+                PipelineStatus::Unknown
+            }
+        }
     }
 }

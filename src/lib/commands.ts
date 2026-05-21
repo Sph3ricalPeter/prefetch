@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BranchInfo,
+  CiJob,
   ConflictContents,
   ConflictState,
   FileDiff,
@@ -10,6 +11,7 @@ import type {
   GitIdentity,
   GraphData,
   LfsInfo,
+  Pipeline,
   PrInfo,
   RebaseProgress,
   StashInfo,
@@ -396,6 +398,23 @@ export async function cancelOAuthFlow(): Promise<void> {
 
 export async function openUrl(url: string): Promise<void> {
   return tracedInvoke<void>("open_url", { url });
+}
+
+// ── CI / Pipelines ────────────────────────────────────────────────────────────
+
+export async function getPipelinesForBranch(
+  branch?: string | null,
+  perPage?: number,
+): Promise<Pipeline[]> {
+  return tracedInvoke<Pipeline[]>("get_pipelines_for_branch", { branch: branch ?? null, perPage });
+}
+
+export async function getPipelineJobs(pipelineId: number): Promise<CiJob[]> {
+  return tracedInvoke<CiJob[]>("get_pipeline_jobs", { pipelineId });
+}
+
+export async function getCiJobLog(jobId: number): Promise<string> {
+  return tracedInvoke<string>("get_ci_job_log", { jobId });
 }
 
 // ── LFS ───────────────────────────────────────────────────────────────────────

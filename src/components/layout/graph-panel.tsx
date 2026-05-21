@@ -19,6 +19,7 @@ import {
 import { GraphHeader } from "@/components/graph/graph-header";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
+import { CiLogViewer } from "@/components/ci/ci-log-viewer";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import type { BranchInfo, ForgeKind, ForgeStatus, TagInfo } from "@/types/git";
 import { ForgeIcon } from "@/components/ui/forge-icons";
@@ -190,6 +191,7 @@ export function GraphPanel() {
   const selectedFileStaged = useRepoStore((s) => s.selectedFileStaged);
   const largeDiffPending = useRepoStore((s) => s.largeDiffPending);
   const diffLoading = useRepoStore((s) => s.diffLoading);
+  const ciSelectedJobId = useRepoStore((s) => s.ciSelectedJobId);
 
   const openRepository = useRepoStore((s) => s.openRepository);
   const selectCommit = useRepoStore((s) => s.selectCommit);
@@ -477,6 +479,7 @@ export function GraphPanel() {
 
   const showDiff = activeDiff !== null;
   const showLargeDiffGuard = largeDiffPending !== null;
+  const showCiLog = ciSelectedJobId != null && !showDiff && !showLargeDiffGuard;
   const isConflictedFile = selectedFilePath
     ? fileStatuses.some((f) => f.path === selectedFilePath && f.is_conflicted)
     : false;
@@ -564,6 +567,8 @@ export function GraphPanel() {
               onBack={clearDiff}
             />
           </div>
+        ) : showCiLog ? (
+          <CiLogViewer />
         ) : (
           <div ref={graphContainerRef} className="flex h-full flex-col">
             <GraphHeader

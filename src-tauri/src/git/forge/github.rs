@@ -3,7 +3,7 @@
 use crate::error::AppError;
 use crate::git::forge::ForgeProvider;
 use crate::git::forge::TokenType;
-use crate::git::types::{ForgeConfig, ForgeRepo, PrInfo};
+use crate::git::types::{CiJob, ForgeConfig, ForgeRepo, Pipeline, PipelineStatus, PrInfo};
 
 pub struct GitHubProvider;
 
@@ -148,5 +148,189 @@ impl ForgeProvider for GitHubProvider {
         }
 
         Ok(all_repos)
+    }
+
+    // ── CI (GitHub Actions) ──────────────────────────────────────────────────
+
+    fn list_pipelines(
+        &self,
+        config: &ForgeConfig,
+        branch: Option<&str>,
+        token: &str,
+        per_page: u32,
+    ) -> Result<Vec<Pipeline>, AppError> {
+        let branch_param = branch
+            .map(|b| format!("&branch={}", urlencoding::encode(b)))
+            .unwrap_or_default();
+        let url = format!(
+            "https://api.{}/repos/{}/{}/actions/runs?per_page={}{}",
+            config.host, config.owner, config.repo, per_page, branch_param,
+        );
+
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(&url)
+            .header("User-Agent", super::USER_AGENT)
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .map_err(|e| AppError::Other(format!("GitHub Actions API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "GitHub Actions API {status}: {body}"
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .map_err(|e| AppError::Other(format!("Failed to parse Actions response: {e}")))?;
+
+        let runs = json["workflow_runs"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(runs
+            .iter()
+            .filter_map(|r| {
+                Some(Pipeline {
+                    id: r["id"].as_u64()?,
+                    name: r["name"].as_str().map(|s| s.to_string()),
+                    source: r["event"].as_str().map(|s| s.to_string()),
+                    status: gh_run_status(
+                        r["status"].as_str().unwrap_or(""),
+                        r["conclusion"].as_str(),
+                    ),
+                    branch: r["head_branch"].as_str().unwrap_or("").to_string(),
+                    commit_sha: r["head_sha"].as_str().unwrap_or("").to_string(),
+                    created_at: r["created_at"].as_str().unwrap_or("").to_string(),
+                    updated_at: r["updated_at"].as_str().map(|s| s.to_string()),
+                    duration_secs: compute_duration(
+                        r["run_started_at"].as_str(),
+                        r["updated_at"].as_str(),
+                    ),
+                    url: r["html_url"].as_str().unwrap_or("").to_string(),
+                })
+            })
+            .collect())
+    }
+
+    fn list_pipeline_jobs(
+        &self,
+        config: &ForgeConfig,
+        pipeline_id: u64,
+        token: &str,
+    ) -> Result<Vec<CiJob>, AppError> {
+        let url = format!(
+            "https://api.{}/repos/{}/{}/actions/runs/{}/jobs?per_page=100",
+            config.host, config.owner, config.repo, pipeline_id,
+        );
+
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(&url)
+            .header("User-Agent", super::USER_AGENT)
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .map_err(|e| AppError::Other(format!("GitHub Actions API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "GitHub Actions API {status}: {body}"
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .map_err(|e| AppError::Other(format!("Failed to parse jobs response: {e}")))?;
+
+        let jobs = json["jobs"].as_array().cloned().unwrap_or_default();
+
+        Ok(jobs
+            .iter()
+            .filter_map(|j| {
+                Some(CiJob {
+                    id: j["id"].as_u64()?,
+                    name: j["name"].as_str().unwrap_or("").to_string(),
+                    status: gh_run_status(
+                        j["status"].as_str().unwrap_or(""),
+                        j["conclusion"].as_str(),
+                    ),
+                    started_at: j["started_at"].as_str().map(|s| s.to_string()),
+                    completed_at: j["completed_at"].as_str().map(|s| s.to_string()),
+                    duration_secs: compute_duration(
+                        j["started_at"].as_str(),
+                        j["completed_at"].as_str(),
+                    ),
+                })
+            })
+            .collect())
+    }
+
+    fn get_job_log(
+        &self,
+        config: &ForgeConfig,
+        job_id: u64,
+        token: &str,
+    ) -> Result<String, AppError> {
+        let url = format!(
+            "https://api.{}/repos/{}/{}/actions/jobs/{}/logs",
+            config.host, config.owner, config.repo, job_id,
+        );
+
+        let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .map_err(|e| AppError::Other(format!("HTTP client error: {e}")))?;
+
+        let resp = client
+            .get(&url)
+            .header("User-Agent", super::USER_AGENT)
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .map_err(|e| AppError::Other(format!("GitHub Actions API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "GitHub Actions API {status}: {body}"
+            )));
+        }
+
+        resp.text()
+            .map_err(|e| AppError::Other(format!("Failed to read log body: {e}")))
+    }
+}
+
+fn gh_run_status(status: &str, conclusion: Option<&str>) -> PipelineStatus {
+    match status {
+        "queued" | "pending" | "waiting" => PipelineStatus::Queued,
+        "in_progress" => PipelineStatus::InProgress,
+        "completed" => match conclusion {
+            Some("success") => PipelineStatus::Success,
+            Some("failure" | "timed_out") => PipelineStatus::Failure,
+            Some("cancelled" | "skipped") => PipelineStatus::Cancelled,
+            _ => PipelineStatus::Unknown,
+        },
+        _ => PipelineStatus::Unknown,
+    }
+}
+
+fn compute_duration(start: Option<&str>, end: Option<&str>) -> Option<u64> {
+    let s = chrono::DateTime::parse_from_rfc3339(start?).ok()?;
+    let e = chrono::DateTime::parse_from_rfc3339(end?).ok()?;
+    let dur = (e - s).num_seconds();
+    if dur >= 0 {
+        Some(dur as u64)
+    } else {
+        None
     }
 }

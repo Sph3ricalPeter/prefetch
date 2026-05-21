@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useRepoStore } from "@/stores/repo-store";
 import { BranchList } from "@/components/sidebar/branch-list";
+import { CiList } from "@/components/sidebar/ci-list";
 import { StashList } from "@/components/sidebar/stash-list";
 import { TagList } from "@/components/sidebar/tag-list";
 
@@ -33,6 +34,12 @@ export function SidebarPanel() {
       <div className="flex-1 overflow-y-auto">
         {/* Branches */}
         <BranchList filter={filter} />
+
+        {/* Divider */}
+        <div className="mx-3 my-1 border-t border-border" />
+
+        {/* CI Pipelines */}
+        <CiList />
 
         {/* Divider */}
         <div className="mx-3 my-1 border-t border-border" />

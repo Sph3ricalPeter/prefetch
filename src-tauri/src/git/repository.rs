@@ -281,11 +281,17 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
 ///
 /// Uses `git for-each-ref --format='%(refname:short)\t%(upstream:track)'` which outputs
 /// lines like `main\t[ahead 3, behind 1]` or `feature\t` (no upstream).
-fn get_all_divergence(path: &str) -> HashMap<String, (u32, u32)> {
+struct BranchTracking {
+    ahead: u32,
+    behind: u32,
+    upstream: Option<String>,
+}
+
+fn get_all_tracking(path: &str) -> HashMap<String, BranchTracking> {
     let output = git_cmd()
         .args([
             "for-each-ref",
-            "--format=%(refname:short)\t%(upstream:track)",
+            "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)",
             "refs/heads/",
         ])
         .current_dir(path)
@@ -299,21 +305,23 @@ fn get_all_divergence(path: &str) -> HashMap<String, (u32, u32)> {
 
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(2, '\t').collect();
-        if parts.len() != 2 {
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        if parts.len() < 2 {
             continue;
         }
         let branch_name = parts[0];
-        let track = parts[1]; // e.g. "[ahead 3, behind 1]" or "[ahead 2]" or ""
+        let upstream_short = parts[1]; // e.g. "origin/main" or ""
+        let track = if parts.len() == 3 { parts[2] } else { "" };
 
-        if track.is_empty() {
-            continue;
-        }
+        let upstream = if upstream_short.is_empty() {
+            None
+        } else {
+            Some(upstream_short.to_string())
+        };
 
         let mut ahead = 0u32;
         let mut behind = 0u32;
 
-        // Parse "ahead N"
         if let Some(pos) = track.find("ahead ") {
             let rest = &track[pos + 6..];
             let end = rest
@@ -321,7 +329,6 @@ fn get_all_divergence(path: &str) -> HashMap<String, (u32, u32)> {
                 .unwrap_or(rest.len());
             ahead = rest[..end].parse().unwrap_or(0);
         }
-        // Parse "behind N"
         if let Some(pos) = track.find("behind ") {
             let rest = &track[pos + 7..];
             let end = rest
@@ -330,9 +337,14 @@ fn get_all_divergence(path: &str) -> HashMap<String, (u32, u32)> {
             behind = rest[..end].parse().unwrap_or(0);
         }
 
-        if ahead > 0 || behind > 0 {
-            map.insert(branch_name.to_string(), (ahead, behind));
-        }
+        map.insert(
+            branch_name.to_string(),
+            BranchTracking {
+                ahead,
+                behind,
+                upstream,
+            },
+        );
     }
 
     map
@@ -350,8 +362,8 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
         .and_then(|h| h.peel_to_commit().ok())
         .map(|c| c.id());
 
-    // Batch-fetch ahead/behind for all local branches (single subprocess)
-    let divergence = get_all_divergence(path);
+    // Batch-fetch ahead/behind + upstream for all local branches (single subprocess)
+    let tracking = get_all_tracking(path);
 
     let mut branches = Vec::new();
 
@@ -381,14 +393,14 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
 
             let is_head = !is_remote && head_name.as_deref() == Some(&name);
 
-            // Look up ahead/behind for local branches
-            let (ahead, behind) = if !is_remote {
-                divergence
-                    .get(&name)
-                    .map(|&(a, b)| (Some(a), Some(b)))
-                    .unwrap_or((Some(0), Some(0)))
+            // Look up ahead/behind + upstream for local branches
+            let (ahead, behind, upstream_name) = if !is_remote {
+                match tracking.get(&name) {
+                    Some(t) => (Some(t.ahead), Some(t.behind), t.upstream.clone()),
+                    None => (Some(0), Some(0), None),
+                }
             } else {
-                (None, None)
+                (None, None, None)
             };
 
             // A rebase onto this branch would be a fast-forward if HEAD is
@@ -414,6 +426,7 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
                 ahead,
                 behind,
                 can_fast_forward,
+                upstream_name,
             });
         }
     }

@@ -8,8 +8,7 @@ import { StatusBar } from "./status-bar";
 import { SettingsPage, type SettingsTarget } from "@/components/ui/settings-page";
 import { CloneDialog } from "@/components/ui/clone-dialog";
 import { getUiState, setUiState } from "@/lib/database";
-
-const SIDEBAR_DEFAULT = 250;
+const SIDEBAR_DEFAULT = 300;
 const DETAIL_DEFAULT = 400;
 const SIDEBAR_MIN = 140;
 const SIDEBAR_MAX = 370;
@@ -170,7 +169,7 @@ export function AppLayout() {
               onResizeEnd={saveSidebarWidth}
             />
 
-            {/* Center — commit graph (grows to fill, never shrinks below CENTER_MIN) */}
+            {/* Center — commit graph, diff viewer, or CI log viewer */}
             <div className="grow shrink-0 basis-0 min-w-[120px]">
               <GraphPanel />
             </div>
