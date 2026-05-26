@@ -1583,8 +1583,25 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await resetToCommitCmd(commitId, `--${mode}`);
-      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses });
+      const [repoData, statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
+        fetchRepoData(),
+        getFileStatus(),
+        getStashes(),
+        getTags(),
+        getUndoAction(),
+        getConflictState(),
+      ]);
+      set({
+        ...repoData,
+        isLoading: false,
+        fileStatuses: statuses,
+        stashes: stashList,
+        tags: tagList,
+        undoInfo: undoAction,
+        conflictState: conflict,
+        selectedCommitId: null,
+        activeDiff: null,
+      });
       toast.success(mode === "soft" ? "Reset (soft) — changes kept staged" : "Reset (hard) — working tree clean");
     } catch (e) {
       set({ isLoading: false });
