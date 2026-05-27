@@ -599,7 +599,20 @@ pub fn fetch_all<F: Fn(&str)>(
             "--progress",
         ]);
         let env = authed.merge_env(extra_env);
-        run_git_with_progress(path, &args, &on_progress, &env)
+        let r = run_git_with_progress(path, &args, &on_progress, &env);
+        if r.is_ok() {
+            return r;
+        }
+        if is_credential_error(r.as_ref().unwrap_err()) {
+            warn!("fetch with embedded token failed (credential/access error); retrying via system credential helper");
+            return run_git_with_progress(
+                path,
+                &["fetch", "--all", "--prune", "--tags", "--force", "--progress"],
+                &on_progress,
+                extra_env,
+            );
+        }
+        r
     } else {
         run_git_with_progress(
             path,
@@ -615,6 +628,23 @@ pub fn fetch_all<F: Fn(&str)>(
             extra_env,
         )
     }
+}
+
+/// Check whether a push/fetch failure is a credential or access error where
+/// retrying without the embedded token (letting the system credential helper
+/// handle auth) might succeed.  GitHub returns "Repository not found" for
+/// permission errors on org repos when the PAT lacks org scope.
+fn is_credential_error(err: &AppError) -> bool {
+    let msg = match err {
+        AppError::Git(msg) | AppError::Other(msg) => msg.to_lowercase(),
+        _ => return false,
+    };
+    msg.contains("repository not found")
+        || msg.contains("authentication failed")
+        || msg.contains("could not read username")
+        || msg.contains("permission denied")
+        || msg.contains("invalid credentials")
+        || msg.contains("could not resolve host")
 }
 
 /// Force push to remote (used after reset when local diverges from remote).
@@ -653,6 +683,29 @@ pub fn force_push<F: Fn(&str)>(
             fixup_remote_tracking_for_head(path);
         }
         return Ok(output.clone());
+    }
+
+    // Token doesn't have access (e.g. org repo) — retry via system credential helper
+    if authed.is_some() && is_credential_error(result.as_ref().unwrap_err()) {
+        warn!("force push with embedded token failed (credential/access error); retrying via system credential helper");
+        let retry = run_git_with_progress(
+            path,
+            &["push", "--force-with-lease", "--progress"],
+            &on_progress,
+            extra_env,
+        );
+        if retry.is_ok() {
+            return retry;
+        }
+        let repo = Repository::open(path)?;
+        let head = repo.head()?;
+        let branch_name = head.shorthand().unwrap_or("HEAD");
+        return run_git_with_progress(
+            path,
+            &["push", "-u", "origin", branch_name, "--force-with-lease", "--progress"],
+            &on_progress,
+            extra_env,
+        );
     }
 
     // Fallback: try with -u for branches that have no upstream yet
@@ -726,7 +779,15 @@ pub fn pull<F: Fn(&str)>(
     if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
         let args = authed.build_args(&["pull", &authed.url, "--progress"]);
         let env = authed.merge_env(extra_env);
-        run_git_with_progress(path, &args, &on_progress, &env)
+        let r = run_git_with_progress(path, &args, &on_progress, &env);
+        if r.is_ok() {
+            return r;
+        }
+        if is_credential_error(r.as_ref().unwrap_err()) {
+            warn!("pull with embedded token failed (credential/access error); retrying via system credential helper");
+            return run_git_with_progress(path, &["pull", "--progress"], &on_progress, extra_env);
+        }
+        r
     } else {
         run_git_with_progress(path, &["pull", "--progress"], &on_progress, extra_env)
     }
@@ -751,12 +812,33 @@ pub fn push<F: Fn(&str)>(
     };
 
     if let Ok(ref output) = result {
-        // Defensively fixup tracking after any successful URL-based push
-        // (handles edge cases like a previously deleted tracking ref).
         if authed.is_some() {
             fixup_remote_tracking_for_head(path);
         }
         return Ok(output.clone());
+    }
+
+    // Token doesn't have access (e.g. org repo) — retry via system credential helper
+    if authed.is_some() && is_credential_error(result.as_ref().unwrap_err()) {
+        warn!("push with embedded token failed (credential/access error); retrying via system credential helper");
+        let retry = run_git_with_progress(
+            path,
+            &["push", "--progress"],
+            &on_progress,
+            extra_env,
+        );
+        if retry.is_ok() {
+            return retry;
+        }
+        let repo = Repository::open(path)?;
+        let head = repo.head()?;
+        let branch_name = head.shorthand().unwrap_or("HEAD");
+        return run_git_with_progress(
+            path,
+            &["push", "-u", "origin", branch_name, "--progress"],
+            &on_progress,
+            extra_env,
+        );
     }
 
     // If it failed, try with --set-upstream for new branches
@@ -1400,8 +1482,30 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
 
     let diff_text = String::from_utf8_lossy(&output.stdout);
 
-    // Untracked files won't show in git diff — read file content as all-added
+    // Untracked files won't show in git diff — read file content as all-added.
+    // But only apply this fallback for genuinely untracked files; tracked files
+    // can also produce empty diff output (e.g. working tree matches index).
     if diff_text.trim().is_empty() && !staged {
+        let is_tracked = git_cmd()
+            .args(["ls-files", "--error-unmatch", "--", file_path])
+            .current_dir(repo_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if is_tracked {
+            // File is in the index but has no unstaged changes — return empty diff
+            return Ok(FileDiff {
+                path: file_path.to_string(),
+                hunks: vec![],
+                is_binary: false,
+                is_truncated: false,
+                total_lines: 0,
+            });
+        }
+
         let abs_path = Path::new(repo_path).join(file_path);
         if abs_path.exists() {
             if let Ok(meta) = std::fs::metadata(&abs_path) {
@@ -2180,18 +2284,144 @@ pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
     Ok(stashes)
 }
 
+/// Pre-flight check: verify every dirty file is readable/writable before stashing.
+/// Returns `Ok(())` if all files are accessible, or an error naming the locked files.
+fn preflight_check_files(path: &str) -> Result<(), AppError> {
+    let output = git_cmd()
+        .args(["status", "--porcelain=v1", "-uall"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run git status: {e}")))?;
+
+    if !output.status.success() {
+        return Ok(()); // can't determine dirty files — skip the check, don't block
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut locked = Vec::new();
+    for line in text.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let file = line[3..].trim();
+        // Skip deleted files and renames (only the destination part matters)
+        let file = if let Some((_old, new)) = file.split_once(" -> ") {
+            new
+        } else {
+            file
+        };
+        let full = std::path::Path::new(path).join(file);
+        if !full.exists() {
+            continue; // deleted file, nothing to check
+        }
+        if full.is_dir() {
+            continue;
+        }
+        // Try opening for read+write — this catches OS locks and permission issues
+        match std::fs::OpenOptions::new().read(true).write(true).open(&full) {
+            Ok(_) => {}
+            Err(_) => {
+                // For untracked files, read-only is acceptable (git stash just deletes them)
+                if std::fs::File::open(&full).is_err() {
+                    locked.push(file.to_string());
+                }
+            }
+        }
+    }
+
+    if locked.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Other(format!(
+            "Cannot stash: {} locked or inaccessible by another process:\n{}",
+            if locked.len() == 1 { "file is" } else { "files are" },
+            locked.join("\n")
+        )))
+    }
+}
+
+/// Create a backup commit of all changes (tracked + untracked) via `git stash create`.
+/// Returns the commit hash, or None if there's nothing to back up.
+///
+/// `git stash create` only captures tracked files, so we temporarily stage
+/// everything (`git add -A`) and restore the original index afterwards via
+/// `git write-tree` / `git read-tree` to preserve the user's staging state.
+/// If `git add -A` itself fails (e.g. permission error), we still attempt
+/// the create so at least previously-tracked changes are captured.
+fn create_stash_backup(path: &str, extra_env: &[(String, String)]) -> Option<String> {
+    // Snapshot the current index so we can restore it exactly after the backup.
+    let saved_tree = run_git(path, &["write-tree"], extra_env)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    // Stage everything so untracked files are included in the snapshot.
+    let _ = run_git(path, &["add", "-A"], extra_env);
+
+    let hash = run_git(path, &["stash", "create"], extra_env)
+        .ok()
+        .and_then(|s| {
+            let h = s.trim().to_string();
+            if h.is_empty() || h == "Done" {
+                None
+            } else {
+                Some(h)
+            }
+        });
+
+    // Restore the original index state. `read-tree` replaces the index with the
+    // saved tree without touching the working tree, preserving staged/unstaged split.
+    if let Some(ref tree) = saved_tree {
+        let _ = run_git(path, &["read-tree", tree], extra_env);
+    } else {
+        let _ = run_git(path, &["reset"], extra_env);
+    }
+
+    hash
+}
+
+/// Store a backup stash commit so it shows up in `git stash list`.
+fn store_stash_backup(
+    path: &str,
+    extra_env: &[(String, String)],
+    hash: Option<&str>,
+    message: Option<&str>,
+) {
+    let Some(hash) = hash else { return };
+    let msg = format!(
+        "RECOVERED: {}",
+        message.unwrap_or("stash failed, changes saved here")
+    );
+    let _ = run_git(path, &["stash", "store", "-m", &msg, hash], extra_env);
+}
+
 /// Stash current changes (including untracked files).
 pub fn stash_push(
     path: &str,
     message: Option<&str>,
     extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
+    // Fail fast if any file is locked — before git modifies the working tree.
+    preflight_check_files(path)?;
+
+    // Safety: snapshot all changes before `git stash push` touches the working tree.
+    // `git stash create` writes a commit object without modifying the worktree or refs.
+    // If the real stash fails mid-cleanup we store this commit so changes survive.
+    let backup_hash = create_stash_backup(path, extra_env);
+
     let mut args = vec!["stash", "push", "-u"];
     if let Some(msg) = message {
         args.push("-m");
         args.push(msg);
     }
-    run_git(path, &args, extra_env)
+
+    match run_git(path, &args, extra_env) {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            store_stash_backup(path, extra_env, backup_hash.as_deref(), message);
+            Err(e)
+        }
+    }
 }
 
 /// Pop a stash entry (apply and remove from stash list).
@@ -2763,6 +2993,27 @@ pub fn stash_push_files(
     message: Option<&str>,
     extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
+    // Pre-flight: check only the selected files are accessible.
+    let mut locked = Vec::new();
+    for file in files {
+        let full = std::path::Path::new(path).join(file);
+        if !full.exists() || full.is_dir() {
+            continue;
+        }
+        if std::fs::File::open(&full).is_err() {
+            locked.push(file.clone());
+        }
+    }
+    if !locked.is_empty() {
+        return Err(AppError::Other(format!(
+            "Cannot stash: {} locked or inaccessible by another process:\n{}",
+            if locked.len() == 1 { "file is" } else { "files are" },
+            locked.join("\n")
+        )));
+    }
+
+    let backup_hash = create_stash_backup(path, extra_env);
+
     let mut args = vec!["stash", "push"];
     if let Some(msg) = message {
         args.push("-m");
@@ -2771,7 +3022,14 @@ pub fn stash_push_files(
     args.push("--");
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     args.extend(file_refs);
-    run_git(path, &args, extra_env)
+
+    match run_git(path, &args, extra_env) {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            store_stash_backup(path, extra_env, backup_hash.as_deref(), message);
+            Err(e)
+        }
+    }
 }
 
 /// Open a file or folder in the OS file manager / explorer.

@@ -876,6 +876,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const failIdx = ms.runningStepIndex();
       ms.failStep(failIdx >= 0 ? failIdx : 0, errorMessage(e));
       set({ isLoading: false });
+      try {
+        const [statuses, stashList] = await Promise.all([getFileStatus(), getStashes()]);
+        set({ fileStatuses: statuses, stashes: stashList });
+      } catch { /* stale UI is acceptable in error recovery */ }
     }
   },
 
@@ -1494,6 +1498,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       set({ isLoading: false });
       toast.error(errorMessage(e));
+      try {
+        const [statuses, stashList] = await Promise.all([getFileStatus(), getStashes()]);
+        set({ fileStatuses: statuses, stashes: stashList });
+      } catch { /* stale UI is acceptable in error recovery */ }
     }
   },
 
@@ -1830,6 +1838,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       set({ isLoading: false });
       toast.error(errorMessage(e));
+      try {
+        const [statuses, stashList] = await Promise.all([getFileStatus(), getStashes()]);
+        set({ fileStatuses: statuses, stashes: stashList });
+      } catch { /* stale UI is acceptable in error recovery */ }
     }
   },
 
