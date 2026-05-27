@@ -607,7 +607,14 @@ pub fn fetch_all<F: Fn(&str)>(
             warn!("fetch with embedded token failed (credential/access error); retrying via system credential helper");
             return run_git_with_progress(
                 path,
-                &["fetch", "--all", "--prune", "--tags", "--force", "--progress"],
+                &[
+                    "fetch",
+                    "--all",
+                    "--prune",
+                    "--tags",
+                    "--force",
+                    "--progress",
+                ],
                 &on_progress,
                 extra_env,
             );
@@ -702,7 +709,14 @@ pub fn force_push<F: Fn(&str)>(
         let branch_name = head.shorthand().unwrap_or("HEAD");
         return run_git_with_progress(
             path,
-            &["push", "-u", "origin", branch_name, "--force-with-lease", "--progress"],
+            &[
+                "push",
+                "-u",
+                "origin",
+                branch_name,
+                "--force-with-lease",
+                "--progress",
+            ],
             &on_progress,
             extra_env,
         );
@@ -821,12 +835,7 @@ pub fn push<F: Fn(&str)>(
     // Token doesn't have access (e.g. org repo) — retry via system credential helper
     if authed.is_some() && is_credential_error(result.as_ref().unwrap_err()) {
         warn!("push with embedded token failed (credential/access error); retrying via system credential helper");
-        let retry = run_git_with_progress(
-            path,
-            &["push", "--progress"],
-            &on_progress,
-            extra_env,
-        );
+        let retry = run_git_with_progress(path, &["push", "--progress"], &on_progress, extra_env);
         if retry.is_ok() {
             return retry;
         }
@@ -2318,7 +2327,11 @@ fn preflight_check_files(path: &str) -> Result<(), AppError> {
             continue;
         }
         // Try opening for read+write — this catches OS locks and permission issues
-        match std::fs::OpenOptions::new().read(true).write(true).open(&full) {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&full)
+        {
             Ok(_) => {}
             Err(_) => {
                 // For untracked files, read-only is acceptable (git stash just deletes them)
@@ -2334,7 +2347,11 @@ fn preflight_check_files(path: &str) -> Result<(), AppError> {
     } else {
         Err(AppError::Other(format!(
             "Cannot stash: {} locked or inaccessible by another process:\n{}",
-            if locked.len() == 1 { "file is" } else { "files are" },
+            if locked.len() == 1 {
+                "file is"
+            } else {
+                "files are"
+            },
             locked.join("\n")
         )))
     }
@@ -3007,7 +3024,11 @@ pub fn stash_push_files(
     if !locked.is_empty() {
         return Err(AppError::Other(format!(
             "Cannot stash: {} locked or inaccessible by another process:\n{}",
-            if locked.len() == 1 { "file is" } else { "files are" },
+            if locked.len() == 1 {
+                "file is"
+            } else {
+                "files are"
+            },
             locked.join("\n")
         )));
     }
