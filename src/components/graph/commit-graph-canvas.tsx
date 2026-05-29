@@ -164,10 +164,9 @@ function branchColorDim(name: string): string {
   return hslToHex(darkenHsl(deriveHsl(base, depth, hash)));
 }
 
-/** Fallback color for orphan commits (no branch ownership) — golden angle spacing */
+/** Color for a lane — used for commits not on any active branch's first-parent chain */
 function laneColor(lane: number): string {
-  const h = (lane * 137.5) % 360;
-  return hslToHex({ h, s: 70, l: 60 });
+  return hslToHex(ROOT_PALETTE[lane % ROOT_PALETTE.length]);
 }
 
 function drawBotAvatar(
@@ -981,25 +980,6 @@ export function CommitGraphCanvas({
         const idx = commitIndex.get(cid);
         if (idx === undefined) break;
         cid = commits[idx].parent_ids[0];
-      }
-    }
-
-    // Pass 2 — walk all parents to pick up merge-parent commits (e.g.
-    // the remote side of a git-pull merge) that aren't on any branch's
-    // first-parent spine.
-    const visited = new Set<string>();
-    for (const [tipId, { color }] of sorted) {
-      const queue = [tipId];
-      while (queue.length > 0) {
-        const cid = queue.shift()!;
-        if (visited.has(cid)) continue;
-        visited.add(cid);
-        if (!colorMap.has(cid)) colorMap.set(cid, color);
-        const idx = commitIndex.get(cid);
-        if (idx === undefined) continue;
-        for (const pid of commits[idx].parent_ids) {
-          if (!visited.has(pid)) queue.push(pid);
-        }
       }
     }
 
