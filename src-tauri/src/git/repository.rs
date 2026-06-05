@@ -1730,12 +1730,16 @@ pub fn discard_files(path: &str, files: &[String]) -> Result<(), AppError> {
     reset_args.extend(file_refs.clone());
     let _ = run_git(path, &reset_args, &[]);
 
-    // Restore tracked files to HEAD state
-    let mut restore_args = vec!["checkout", "--"];
-    restore_args.extend(file_refs.clone());
-    let _ = run_git(path, &restore_args, &[]);
+    // Restore tracked files to HEAD state. Do this one file at a time: a single
+    // `git checkout -- <a> <b>` aborts the WHOLE batch with a pathspec error if
+    // any path is untracked (e.g. a mixed selection of modified + untracked
+    // files), leaving the tracked modifications un-reverted. Per-file keeps an
+    // untracked path from blocking the others.
+    for file in &file_refs {
+        let _ = run_git(path, &["checkout", "--", file], &[]);
+    }
 
-    // Clean untracked files
+    // Clean untracked files (only affects untracked paths; tracked ones are ignored)
     let mut clean_args = vec!["clean", "-f", "--"];
     clean_args.extend(file_refs);
     let _ = run_git(path, &clean_args, &[]);
@@ -3503,5 +3507,42 @@ mod tests {
 
         let status = get_status(p).unwrap();
         assert!(status.is_empty());
+    }
+
+    #[test]
+    fn discard_files_handles_mixed_tracked_and_untracked() {
+        // Regression: a single `git checkout -- <a> <b>` aborts the whole batch
+        // with a pathspec error when any path is untracked, leaving tracked
+        // modifications un-reverted. discard_files must revert the tracked file
+        // AND remove the untracked one even when both are passed together.
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        // Commit a tracked file
+        std::fs::write(dir.path().join("tracked.txt"), "v1").unwrap();
+        git_cmd()
+            .args(["add", "tracked.txt"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        git_cmd()
+            .args(["commit", "-m", "add tracked"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+
+        // Modify the tracked file and add an untracked one
+        std::fs::write(dir.path().join("tracked.txt"), "modified").unwrap();
+        std::fs::write(dir.path().join("untracked.txt"), "new").unwrap();
+
+        discard_files(p, &["tracked.txt".to_string(), "untracked.txt".to_string()]).unwrap();
+
+        // Tracked file reverted to its committed content
+        let contents = std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap();
+        assert_eq!(contents, "v1");
+        // Untracked file removed
+        assert!(!dir.path().join("untracked.txt").exists());
+        // Working tree is clean
+        assert!(get_status(p).unwrap().is_empty());
     }
 }

@@ -379,6 +379,9 @@ export function FileList() {
           onConfirm={() => {
             discard(confirmDiscard);
             setConfirmDiscard(null);
+            // Discarded files leave the list — drop them from the selection so
+            // no stale entries remain highlighted.
+            setMultiSelected(new Set());
           }}
           onCancel={() => setConfirmDiscard(null)}
         />
