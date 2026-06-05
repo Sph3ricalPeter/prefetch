@@ -45,7 +45,6 @@ import {
   getRefMru,
   checkoutBranch,
   forceCheckoutBranch,
-  resetBranchToRemote,
   createBranchCmd,
   fetchRepo,
   pullRepo,
@@ -809,16 +808,20 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
       if (localExists) {
         if (fileStatuses.length > 0) {
-          set({ dirtyActionPending: { operation: "checkout", targetName: name, changesCount: fileStatuses.length } });
+          // Discard & switch should land on the LOCAL branch, not the remote
+          // ref — force-checking-out a remote ref ("origin/x") detaches HEAD.
+          set({ dirtyActionPending: { operation: "checkout", targetName: localName, changesCount: fileStatuses.length } });
           return;
         }
         set({ remoteCheckoutPending: { localName, remoteName: name, alreadyOnLocal: false } });
         return;
       }
 
-      // No local branch — if dirty, prompt; otherwise auto-create tracking branch
+      // No local branch — if dirty, prompt; otherwise auto-create tracking branch.
+      // Pass the bare name so git's DWIM creates a tracking branch (force-checking
+      // out the remote ref directly would detach HEAD instead).
       if (fileStatuses.length > 0) {
-        set({ dirtyActionPending: { operation: "checkout", targetName: name, changesCount: fileStatuses.length } });
+        set({ dirtyActionPending: { operation: "checkout", targetName: localName, changesCount: fileStatuses.length } });
         return;
       }
       set({ isLoading: true, error: null });
@@ -925,14 +928,28 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     const pending = get().remoteCheckoutPending;
     if (!pending) return;
     set({ remoteCheckoutPending: null, isLoading: true, error: null });
+
+    // Two distinct git commands in sequence — surface them as a multi-step toast.
+    const ms = new MultiStepAction(`Reset ${pending.localName} to ${pending.remoteName}`, [
+      `git checkout ${pending.localName}`,
+      `git reset --hard ${pending.remoteName}`,
+    ]);
     try {
-      await resetBranchToRemote(pending.localName, pending.remoteName);
+      ms.startStep(0);
+      await checkoutBranch(pending.localName);
+      ms.completeStep(0);
+
+      ms.startStep(1);
+      await resetToCommitCmd(pending.remoteName, "--hard");
+      ms.completeStep(1);
+      ms.finish();
+
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses });
-      toast.success(`Reset ${pending.localName} to ${pending.remoteName}`);
     } catch (e) {
+      const failIdx = ms.runningStepIndex();
+      ms.failStep(failIdx >= 0 ? failIdx : 0, errorMessage(e));
       set({ isLoading: false });
-      toast.error(errorMessage(e));
     }
   },
 
@@ -1033,26 +1050,26 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   forcePush: async () => {
     set({ forcePushPending: false, isLoading: true });
-    const toastId = toast.loading("Force pushing...");
-    const unlisten = await listen<string>("git_progress", (event) => {
-      toast.loading(event.payload, { id: toastId });
-    });
+    // Mirror push(): force push, then fetch to sync remote tracking refs.
+    const ms = new MultiStepAction("Force push", ["git push --force", "Sync remote refs"]);
     try {
+      ms.startStep(0);
       await forcePushRepo();
-      // Fetch after push to sync all remote tracking refs, then read local state.
-      toast.loading("Syncing…", { id: toastId });
+      ms.completeStep(0);
+
+      ms.startStep(1);
       await fetchRepo().catch(() => {});
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
-      toast.success("Force push complete", { id: toastId });
+      ms.completeStep(1);
+      ms.finish();
     } catch (e) {
       // Refetch even on failure — the graph may be stale from a prior
       // rebase or reset that never triggered a refresh.
       const repoData = await fetchRepoData().catch(() => ({}));
       set({ ...repoData, isLoading: false });
-      toast.error(errorMessage(e), { id: toastId });
-    } finally {
-      unlisten();
+      const failIdx = ms.runningStepIndex();
+      ms.failStep(failIdx >= 0 ? failIdx : 0, errorMessage(e));
     }
   },
 
