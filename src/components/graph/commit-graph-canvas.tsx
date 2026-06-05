@@ -1084,6 +1084,34 @@ export function CommitGraphCanvas({
     const isDetachedHead = headInfo.isDetached;
     const headHighlightColor = headInfo.highlightColor;
 
+    // --- WIP node lane ---
+    // The WIP/working-tree node normally sits in HEAD's lane and connects
+    // straight down. But when commits between the WIP row and HEAD occupy
+    // HEAD's lane (e.g. a linear chain of branches ahead of HEAD, all in
+    // lane 0), a straight connector overlaps that chain and the WIP node
+    // looks like it descends from the topmost branch instead of HEAD.
+    // In that case route the WIP node into its own free lane and curve the
+    // connector into HEAD's lane (GitKraken-style divergence).
+    const wipHeadIdx = headRow >= 0 ? headRow - rowOffset : -1;
+    const wipHeadCommit =
+      wipHeadIdx >= 0 && wipHeadIdx < commits.length ? commits[wipHeadIdx] : null;
+    let wipLane = wipHeadCommit
+      ? wipHeadCommit.lane
+      : commits.length > 0
+        ? commits[0].lane
+        : 0;
+    if (wipHeadCommit && wipHeadIdx > 0) {
+      // Lanes occupied by commit nodes strictly above HEAD — the span the
+      // WIP connector would pass through.
+      const occupied = new Set<number>();
+      for (let i = 0; i < wipHeadIdx; i++) occupied.add(commits[i].lane);
+      if (occupied.has(wipHeadCommit.lane)) {
+        let l = 0;
+        while (occupied.has(l)) l++;
+        wipLane = l;
+      }
+    }
+
     // Row highlight rect starts at the avatar's left edge so the badge column
     // stays unhighlighted. Falls back to the canvas left for rows without a
     // commit (e.g. WIP).
@@ -1093,12 +1121,9 @@ export function CommitGraphCanvas({
       if (commitIdx >= 0 && commitIdx < commits.length) {
         return laneX(commits[commitIdx].lane) - NODE_RADIUS - HIGHLIGHT_LEFT_PAD;
       }
-      // WIP row uses HEAD's lane
+      // WIP row uses its own (possibly routed) lane
       if (hasWip && visRow === 0) {
-        const hci = headRow >= 0 ? headRow - rowOffset : -1;
-        if (hci >= 0 && hci < commits.length) {
-          return laneX(commits[hci].lane) - NODE_RADIUS - HIGHLIGHT_LEFT_PAD;
-        }
+        return laneX(wipLane) - NODE_RADIUS - HIGHLIGHT_LEFT_PAD;
       }
       return SCROLLBAR_PAD;
     };
@@ -1231,20 +1256,30 @@ export function CommitGraphCanvas({
     // --- WIP row ---
     if (hasWip && firstVisibleRow === 0) {
       const wipY = ROW_HEIGHT / 2 - scrollTop;
-      // Place WIP node on HEAD's lane, not commits[0]'s lane
-      const headCommitIdx = headRow >= 0 ? headRow - rowOffset : -1;
-      const headCommit = headCommitIdx >= 0 ? commits[headCommitIdx] : null;
-      const nodeX = headCommit ? laneX(headCommit.lane) : (commits.length > 0 ? laneX(commits[0].lane) : laneX(0));
+      // Place WIP node on its own lane (== HEAD's lane unless routed around
+      // intermediate commits — see wipLane computation above).
+      const headCommit = wipHeadCommit;
+      const nodeX = laneX(wipLane);
 
       // Connect WIP to HEAD commit with a dashed line
       if (headCommit) {
         const headY = headRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
+        const headX = laneX(headCommit.lane);
         ctx.strokeStyle = getCommitColor(headCommit);
         ctx.globalAlpha = 0.4;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
         ctx.moveTo(nodeX, wipY);
-        ctx.lineTo(nodeX, headY);
+        if (nodeX === headX) {
+          ctx.lineTo(nodeX, headY);
+        } else {
+          // WIP routed into its own lane — drop down the WIP lane then curve
+          // into HEAD's lane so the divergence from HEAD reads clearly.
+          const maxR = Math.min(Math.abs(headY - wipY), Math.abs(headX - nodeX));
+          const r = Math.min(CURVE_RADIUS, maxR);
+          ctx.arcTo(nodeX, headY, headX, headY, r);
+          ctx.lineTo(headX, headY);
+        }
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
@@ -1310,7 +1345,9 @@ export function CommitGraphCanvas({
             if (img === undefined) {
               avatarImageCache.set(cacheKey, null);
               const loadImg = new Image();
-              loadImg.crossOrigin = "anonymous";
+              // No crossOrigin: the canvas only draws avatars (never reads pixels
+              // back), and requiring CORS breaks forge avatars (e.g. GitLab) whose
+              // host doesn't send Access-Control-Allow-Origin headers.
               loadImg.src = activeProfile.avatar_url;
               loadImg.onload = () => {
                 avatarImageCache.set(cacheKey, loadImg);
@@ -1354,7 +1391,6 @@ export function CommitGraphCanvas({
           if (img === undefined) {
             avatarImageCache.set(email, null);
             const loadImg = new Image();
-            loadImg.crossOrigin = "anonymous";
             loadImg.src = gravatarUrl(email, NODE_RADIUS * 4);
             loadImg.onload = () => {
               avatarImageCache.set(email, loadImg);
@@ -1366,7 +1402,6 @@ export function CommitGraphCanvas({
                 searchUserAvatar(email).then((url) => {
                   if (url) {
                     const forgeImg = new Image();
-                    forgeImg.crossOrigin = "anonymous";
                     forgeImg.src = url;
                     forgeImg.onload = () => {
                       avatarImageCache.set(email, forgeImg);
