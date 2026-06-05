@@ -74,6 +74,40 @@ export function detectLang(filePath: string): string | undefined {
   return LANG_MAP[ext];
 }
 
+// Shiki's builtin special languages need no grammar load.
+const BUILTIN_LANGS = new Set(["text", "plaintext", "txt", "ansi"]);
+
+// In-flight on-demand language loads, keyed by language id. Shiki's
+// `loadLanguage` is NOT safe to call concurrently for the same grammar —
+// racing registrations can reject or yield a half-initialized grammar. The
+// conflict editor highlights several panes (ours/theirs/base/output) in the
+// same tick, so without this dedupe the first view of a non-preloaded language
+// (e.g. C#) loses highlighting on every pane until reopened. Share one load
+// promise per language so all callers await the fully-registered grammar.
+const langLoadPromises = new Map<string, Promise<boolean>>();
+
+function ensureLanguageLoaded(
+  hl: Highlighter,
+  lang: string,
+): Promise<boolean> {
+  if (BUILTIN_LANGS.has(lang)) return Promise.resolve(true);
+  if (hl.getLoadedLanguages().includes(lang as never)) return Promise.resolve(true);
+
+  let pending = langLoadPromises.get(lang);
+  if (!pending) {
+    pending = hl
+      .loadLanguage(lang as never)
+      .then(() => true)
+      .catch(() => {
+        // Drop the failed promise so a later attempt can retry the load.
+        langLoadPromises.delete(lang);
+        return false;
+      });
+    langLoadPromises.set(lang, pending);
+  }
+  return pending;
+}
+
 /**
  * Yields control to the browser's macrotask queue (so click/render/paint can run).
  * Plain `await Promise.resolve()` only drains microtasks — clicks won't get a turn.
@@ -94,19 +128,15 @@ export async function highlightLines(
   const resolvedLang = lang ?? "text";
   const resolvedTheme = themeId ?? "vs-dark";
 
-  // Dynamically load language if not preloaded
-  const loadedLangs = hl.getLoadedLanguages();
-  if (!loadedLangs.includes(resolvedLang as never)) {
-    try {
-      await hl.loadLanguage(resolvedLang as never);
-    } catch {
-      const fallbackFg =
-        CODE_THEMES.find((t) => t.shikiTheme.name === resolvedTheme)
-          ?.shikiTheme.colors["editor.foreground"] ?? "#a1a1aa";
-      return code.split("\n").map((line) => [
-        { content: line, color: fallbackFg, offset: 0 },
-      ]);
-    }
+  // Dynamically load language if not preloaded (deduped across concurrent callers)
+  const loaded = await ensureLanguageLoaded(hl, resolvedLang);
+  if (!loaded) {
+    const fallbackFg =
+      CODE_THEMES.find((t) => t.shikiTheme.name === resolvedTheme)
+        ?.shikiTheme.colors["editor.foreground"] ?? "#a1a1aa";
+    return code.split("\n").map((line) => [
+      { content: line, color: fallbackFg, offset: 0 },
+    ]);
   }
 
   return hl.codeToTokensBase(code, {
