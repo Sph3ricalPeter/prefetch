@@ -11,6 +11,7 @@ import {
   type DiffRegion,
 } from "@/lib/conflict-regions";
 import { useRepoStore } from "@/stores/repo-store";
+import { BinaryConflictResolver } from "@/components/staging/binary-conflict-resolver";
 import { getUiState } from "@/lib/database";
 import { getDataAttrFromEvent } from "@/lib/utils";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Eye, EyeOff, FoldVertical, GitCompare, Minus, Plus, RotateCcw, Save, UnfoldVertical } from "lucide-react";
@@ -921,6 +922,13 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
         Loading conflict contents...
       </div>
     );
+  }
+
+  // Binary files (images, etc.) can't be merged line-by-line — show a
+  // whole-side picker instead of the text diff editor, which would otherwise
+  // choke on lossy-decoded binary content and hang the UI.
+  if (conflictContents.is_binary) {
+    return <BinaryConflictResolver filePath={filePath} contents={conflictContents} />;
   }
 
   const oursLabel = conflictContents.ours_branch || "current";

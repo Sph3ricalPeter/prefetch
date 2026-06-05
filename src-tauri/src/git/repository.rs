@@ -1832,9 +1832,45 @@ pub fn get_conflict_contents(
     file_path: &str,
 ) -> Result<types::ConflictContents, AppError> {
     // :1: = base (common ancestor), :2: = git's ours, :3: = git's theirs
-    let base = git_show_stage(repo_path, 1, file_path).ok();
-    let git_ours = git_show_stage(repo_path, 2, file_path).unwrap_or_default();
-    let git_theirs = git_show_stage(repo_path, 3, file_path).unwrap_or_default();
+    let base_bytes = git_show_stage_bytes(repo_path, 1, file_path);
+    let ours_bytes = git_show_stage_bytes(repo_path, 2, file_path);
+    let theirs_bytes = git_show_stage_bytes(repo_path, 3, file_path);
+
+    // Binary files (images, archives, fonts, …) must never be diffed as text:
+    // the line-by-line conflict editor would choke on the lossy-decoded bytes
+    // and hang the UI. Detect with git's own NUL-byte heuristic.
+    let is_binary = [&base_bytes, &ours_bytes, &theirs_bytes]
+        .into_iter()
+        .filter_map(|b| b.as_deref())
+        .any(looks_binary);
+
+    let (base, git_ours, git_theirs, git_ours_image, git_theirs_image) = if is_binary {
+        // Skip text content entirely; ship base64 previews for image files only.
+        let encode = |b: &Option<Vec<u8>>| -> Option<String> {
+            if !is_image_path(file_path) {
+                return None;
+            }
+            use base64::Engine;
+            b.as_deref()
+                .map(|d| base64::engine::general_purpose::STANDARD.encode(d))
+        };
+        (
+            None,
+            String::new(),
+            String::new(),
+            encode(&ours_bytes),
+            encode(&theirs_bytes),
+        )
+    } else {
+        let to_text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        (
+            base_bytes.as_deref().map(to_text),
+            ours_bytes.as_deref().map(to_text).unwrap_or_default(),
+            theirs_bytes.as_deref().map(to_text).unwrap_or_default(),
+            None,
+            None,
+        )
+    };
 
     if is_rebase_in_progress(repo_path) {
         // During rebase of A onto B:
@@ -1882,6 +1918,9 @@ pub fn get_conflict_contents(
             ours_branch,
             theirs_branch,
             rebase_commit_message,
+            is_binary,
+            ours_image: git_theirs_image, // swap to match content
+            theirs_image: git_ours_image,
         })
     } else {
         // Merge and cherry-pick: git's ours/theirs matches user expectations.
@@ -1933,6 +1972,9 @@ pub fn get_conflict_contents(
             ours_branch,
             theirs_branch,
             rebase_commit_message: None,
+            is_binary,
+            ours_image: git_ours_image,
+            theirs_image: git_theirs_image,
         })
     }
 }
@@ -2045,21 +2087,34 @@ fn read_rebase_onto_name(repo_path: &str) -> Option<String> {
     })
 }
 
-fn git_show_stage(repo_path: &str, stage: u8, file_path: &str) -> Result<String, AppError> {
+/// Read a conflict stage as raw bytes (`:1:`=base, `:2:`=ours, `:3:`=theirs).
+/// Returns `None` if the stage doesn't exist (e.g. base for an add/add conflict).
+fn git_show_stage_bytes(repo_path: &str, stage: u8, file_path: &str) -> Option<Vec<u8>> {
     let spec = format!(":{stage}:{file_path}");
     let output = git_cmd()
         .args(["show", &spec])
         .current_dir(repo_path)
         .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git show: {e}")))?;
-
+        .ok()?;
     if !output.status.success() {
-        return Err(AppError::Git(format!(
-            "Stage {stage} not available for {file_path}"
-        )));
+        return None;
     }
+    Some(output.stdout)
+}
 
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+/// Git's binary heuristic: a NUL byte within the first 8000 bytes.
+fn looks_binary(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(8000)].contains(&0)
+}
+
+/// Whether a path has an image extension we can preview in the binary resolver.
+fn is_image_path(file_path: &str) -> bool {
+    let lower = file_path.to_ascii_lowercase();
+    [
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".avif",
+    ]
+    .iter()
+    .any(|ext| lower.ends_with(ext))
 }
 
 /// Resolve a conflict by writing custom content and staging the file.
@@ -3266,6 +3321,80 @@ mod tests {
             .output()
             .expect("commit");
         dir
+    }
+
+    #[test]
+    fn conflict_contents_flags_binary_image_and_skips_text() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        // PNG-like blobs with NUL bytes → git's binary heuristic trips.
+        let ours_png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x00, 0x01, 0x02, 0x03];
+        let theirs_png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x00, 0xAA, 0xBB, 0xCC];
+
+        let main = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Branch A adds img.png
+        run_git(p, &["checkout", "-b", "branch-a"], &[]).unwrap();
+        std::fs::write(dir.path().join("img.png"), ours_png).unwrap();
+        run_git(p, &["add", "img.png"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "a adds img"], &[]).unwrap();
+
+        // Branch B adds a conflicting img.png
+        run_git(p, &["checkout", &main], &[]).unwrap();
+        run_git(p, &["checkout", "-b", "branch-b"], &[]).unwrap();
+        std::fs::write(dir.path().join("img.png"), theirs_png).unwrap();
+        run_git(p, &["add", "img.png"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "b adds img"], &[]).unwrap();
+
+        // Merge A into B → add/add conflict on the binary file.
+        run_git(p, &["checkout", "branch-a"], &[]).unwrap();
+        let _ = run_git(p, &["merge", "branch-b"], &[]); // expected to fail (conflict)
+
+        let contents = get_conflict_contents(p, "img.png").unwrap();
+        assert!(contents.is_binary, "binary file should be flagged");
+        assert!(contents.ours.is_empty(), "binary text content must be empty");
+        assert!(contents.theirs.is_empty(), "binary text content must be empty");
+        assert!(contents.base.is_none());
+        assert!(contents.ours_image.is_some(), "image preview should be set");
+        assert!(contents.theirs_image.is_some(), "image preview should be set");
+        // The two sides differ, so their previews must differ too.
+        assert_ne!(contents.ours_image, contents.theirs_image);
+    }
+
+    #[test]
+    fn conflict_contents_keeps_text_for_text_files() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let main = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        run_git(p, &["checkout", "-b", "branch-a"], &[]).unwrap();
+        std::fs::write(dir.path().join("note.txt"), "alpha\n").unwrap();
+        run_git(p, &["add", "note.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "a"], &[]).unwrap();
+
+        run_git(p, &["checkout", &main], &[]).unwrap();
+        run_git(p, &["checkout", "-b", "branch-b"], &[]).unwrap();
+        std::fs::write(dir.path().join("note.txt"), "beta\n").unwrap();
+        run_git(p, &["add", "note.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "b"], &[]).unwrap();
+
+        run_git(p, &["checkout", "branch-a"], &[]).unwrap();
+        let _ = run_git(p, &["merge", "branch-b"], &[]);
+
+        let contents = get_conflict_contents(p, "note.txt").unwrap();
+        assert!(!contents.is_binary);
+        assert_eq!(contents.ours.trim(), "alpha");
+        assert_eq!(contents.theirs.trim(), "beta");
+        assert!(contents.ours_image.is_none());
+        assert!(contents.theirs_image.is_none());
     }
 
     #[test]

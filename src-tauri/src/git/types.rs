@@ -160,6 +160,16 @@ pub struct ConflictContents {
     pub theirs_branch: String,
     /// During rebase: subject line of the commit being replayed.
     pub rebase_commit_message: Option<String>,
+    /// True if the conflicted file is binary (e.g. an image). When set, the
+    /// text fields (`base`/`ours`/`theirs`) are empty — binary content is never
+    /// shipped as a lossy UTF-8 string, and the UI shows a binary resolver
+    /// instead of the line-by-line conflict editor.
+    pub is_binary: bool,
+    /// Base64-encoded "ours" blob, populated only for binary image files so the
+    /// UI can preview the two versions. `None` for text or non-image binaries.
+    pub ours_image: Option<String>,
+    /// Base64-encoded "theirs" blob, populated only for binary image files.
+    pub theirs_image: Option<String>,
 }
 
 /// Describes the last undoable action from the reflog.

@@ -134,6 +134,13 @@ export interface ConflictContents {
   theirs_branch: string;
   /** During rebase: subject line of the commit being replayed */
   rebase_commit_message: string | null;
+  /** True when the conflicted file is binary; text fields are empty and the UI
+   *  shows a binary resolver instead of the line-by-line conflict editor. */
+  is_binary: boolean;
+  /** Base64 "ours" blob for image preview (binary image files only). */
+  ours_image: string | null;
+  /** Base64 "theirs" blob for image preview (binary image files only). */
+  theirs_image: string | null;
 }
 
 export interface HunkLineSelection {
