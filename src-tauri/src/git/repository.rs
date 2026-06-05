@@ -3360,11 +3360,20 @@ mod tests {
 
         let contents = get_conflict_contents(p, "img.png").unwrap();
         assert!(contents.is_binary, "binary file should be flagged");
-        assert!(contents.ours.is_empty(), "binary text content must be empty");
-        assert!(contents.theirs.is_empty(), "binary text content must be empty");
+        assert!(
+            contents.ours.is_empty(),
+            "binary text content must be empty"
+        );
+        assert!(
+            contents.theirs.is_empty(),
+            "binary text content must be empty"
+        );
         assert!(contents.base.is_none());
         assert!(contents.ours_image.is_some(), "image preview should be set");
-        assert!(contents.theirs_image.is_some(), "image preview should be set");
+        assert!(
+            contents.theirs_image.is_some(),
+            "image preview should be set"
+        );
         // The two sides differ, so their previews must differ too.
         assert_ne!(contents.ours_image, contents.theirs_image);
     }
