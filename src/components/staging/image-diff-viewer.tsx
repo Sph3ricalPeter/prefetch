@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useReducer, useRef } from "react";
-import { ArrowLeft, Columns2, Image as ImageIcon, SwatchBook } from "lucide-react";
+import { ArrowLeft, Columns2, Image as ImageIcon, Loader2, SwatchBook } from "lucide-react";
 import { getBinaryBlobBase64 } from "@/lib/commands";
 import { useRepoStore } from "@/stores/repo-store";
 import type { DiffSource } from "@/hooks/use-expandable-context";
@@ -192,7 +192,6 @@ export function ImageDiffViewer({ filePath, source, staged, onBack }: ImageDiffV
   const [state, dispatch] = useReducer(fetchReducer, { loading: true, oldImg: null, newImg: null });
   const viewMode = useRepoStore((s) => s.imageDiffViewMode);
   const setImageDiffViewMode = useRepoStore((s) => s.setImageDiffViewMode);
-  const setDiffLoading = useRepoStore((s) => s.setDiffLoading);
   const [swipePos, setSwipePos] = useState(50);
   const [zoom, setZoom] = useState<ZoomState>(INITIAL_ZOOM);
 
@@ -228,17 +227,20 @@ export function ImageDiffViewer({ filePath, source, staged, onBack }: ImageDiffV
     ]).then(([oldImg, newImg]) => {
       if (!cancelled) {
         dispatch({ type: "done", oldImg, newImg });
-        setDiffLoading(false);
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [filePath, sourceCommitId, sourceStashIndex, staged, setDiffLoading]);
+  }, [filePath, sourceCommitId, sourceStashIndex, staged]);
 
   if (state.loading) {
-    return <div className="flex flex-col h-full" />;
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   if (!state.oldImg && !state.newImg) {

@@ -120,7 +120,6 @@ import {
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
 import { computeDiffRegions, buildOutputWithSources } from "@/lib/conflict-regions";
 import { MultiStepAction } from "@/lib/multi-step";
-import { isImageFile } from "@/lib/utils";
 import {
   addRecentRepo,
   getRecentRepos,
@@ -1114,9 +1113,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ diffLoading: true });
     try {
       const diff = await getFileDiff(path, staged);
-      const keepLoading = diff.is_binary && isImageFile(path);
-      // Clear CI state only when the diff is ready to display — avoids graph flash
-      set({ activeDiff: diff, diffLoading: keepLoading, ciSelectedJobId: null, ciJobLog: null });
+      // Clear CI state only when the diff is ready to display — avoids graph flash.
+      // Image byte-loading shows its own spinner inside ImageDiffViewer, so the
+      // global overlay clears as soon as the diff metadata arrives.
+      set({ activeDiff: diff, diffLoading: false, ciSelectedJobId: null, ciJobLog: null });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
@@ -1135,8 +1135,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ diffLoading: true });
     try {
       const diff = await getCommitFileDiff(commitId, filePath);
-      const keepLoading = diff.is_binary && isImageFile(filePath);
-      set({ activeDiff: diff, diffLoading: keepLoading, ciSelectedJobId: null, ciJobLog: null });
+      set({ activeDiff: diff, diffLoading: false, ciSelectedJobId: null, ciJobLog: null });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
@@ -1479,8 +1478,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ diffLoading: true });
     try {
       const diff = await getStashFileDiff(index, filePath);
-      const keepLoading = diff.is_binary && isImageFile(filePath);
-      set({ activeDiff: diff, diffLoading: keepLoading });
+      set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
       set({ diffLoading: false });
       toast.error(errorMessage(e));
