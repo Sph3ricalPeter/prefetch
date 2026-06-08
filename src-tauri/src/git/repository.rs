@@ -200,7 +200,21 @@ pub fn get_git_identity(path: &str) -> super::types::GitIdentity {
 /// async boundaries. Each function that needs repo access opens its own
 /// instance inside a `spawn_blocking` closure and drops it before returning.
 pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
-    let repo = Repository::open(path)?;
+    let mut repo = Repository::open(path)?;
+
+    // Collect stash commit OIDs up front. A stash badge is anchored in the UI to
+    // its base commit (the commit the stash was created on top of). If that base
+    // commit is not reachable from any branch tip — e.g. the stash was made on a
+    // since-deleted or rebased-away branch, or mid cherry-pick/rebase — it would
+    // never enter the revwalk below and the stash would silently vanish from the
+    // graph. We push each stash's base commit onto the revwalk so the anchor row
+    // always exists. `stash_foreach` needs `&mut repo`, so gather OIDs before the
+    // revwalk borrows `repo` immutably.
+    let mut stash_oids: Vec<git2::Oid> = Vec::new();
+    let _ = repo.stash_foreach(|_index, _message, oid| {
+        stash_oids.push(*oid);
+        true
+    });
 
     let mut revwalk = repo.revwalk()?;
     revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
@@ -219,6 +233,18 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
     }
     // Fallback: also push HEAD in case it's detached
     let _ = revwalk.push_head();
+
+    // Push each stash's base commit (first parent of the stash commit) so stashes
+    // anchored to otherwise-unreachable commits still render. Pushing the stash
+    // commit itself would add a spurious row, so resolve to parent 0 — which is
+    // the same commit `list_stashes` reports as `parent_commit_id`.
+    for stash_oid in &stash_oids {
+        if let Ok(stash_commit) = repo.find_commit(*stash_oid) {
+            if let Some(parent) = stash_commit.parent_ids().next() {
+                let _ = revwalk.push(parent);
+            }
+        }
+    }
 
     let mut commits: Vec<CommitInfo> = Vec::new();
 
