@@ -15,6 +15,7 @@ import type {
   HunkLineSelection,
   LfsInfo,
   Pipeline,
+  PipelineStatus,
   PrInfo,
   RebaseProgress,
   StashInfo,
@@ -2290,10 +2291,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const pipelines = await getPipelinesForBranch(null, 10);
       set({ ciPipelines: pipelines, ciLoading: false });
 
-      // Fetch jobs — only re-fetch for active/new pipelines, reuse cached for settled ones
+      // Fetch jobs — only re-fetch for active/new pipelines, reuse cached for settled ones.
+      // A pipeline can report settled while its jobs were last cached mid-flight (the poll that
+      // observes the settle is the one that must capture the jobs' final states), so also
+      // re-fetch when any cached job is still non-terminal.
+      const isUnsettled = (s: PipelineStatus) => s === "queued" || s === "in_progress";
       const prevJobsMap = get().ciJobsMap;
       const toFetch = pipelines.filter(
-        (p) => p.status === "queued" || p.status === "in_progress" || !(p.id in prevJobsMap),
+        (p) =>
+          isUnsettled(p.status) ||
+          !(p.id in prevJobsMap) ||
+          (prevJobsMap[p.id] ?? []).some((j) => isUnsettled(j.status)),
       );
       const entries = await Promise.all(
         toFetch.map(async (p) => {
@@ -2317,9 +2325,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         set({ ciSelectedPipelineId: pipelines[0].id });
       }
 
-      // Auto-start polling if any pipeline is still active
+      // Auto-start polling if any pipeline is still active — consider job-level status too,
+      // so we keep polling until the jobs settle, not just the pipeline.
       const hasActive = pipelines.some(
-        (p) => p.status === "queued" || p.status === "in_progress",
+        (p) => isUnsettled(p.status) || (jobsMap[p.id] ?? []).some((j) => isUnsettled(j.status)),
       );
       if (hasActive) get().startCiPolling();
     } catch {
@@ -2363,9 +2372,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       while (get().ciPolling) {
         await get().loadCiPipelines();
 
-        // Stop polling once all pipelines are settled
+        // Stop polling once all pipelines AND their jobs are settled
+        const isUnsettled = (s: PipelineStatus) => s === "queued" || s === "in_progress";
+        const jobsMap = get().ciJobsMap;
         const active = get().ciPipelines.some(
-          (p) => p.status === "queued" || p.status === "in_progress",
+          (p) => isUnsettled(p.status) || (jobsMap[p.id] ?? []).some((j) => isUnsettled(j.status)),
         );
         if (!active) {
           set({ ciPolling: false });
