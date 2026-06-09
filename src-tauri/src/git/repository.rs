@@ -2548,13 +2548,19 @@ pub fn stash_drop(path: &str, index: usize) -> Result<String, AppError> {
 pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
 
+    // `-u` (--include-untracked) is essential: without it, `git stash show`
+    // omits untracked files entirely. A stash made with `git stash push -u`
+    // stores untracked files in a separate `^3` parent, so a stash whose
+    // changes are all-new files would otherwise report zero files here and the
+    // detail panel would show only the description. The flag is harmless on
+    // stashes with no untracked component.
     let output = git_cmd()
-        .args(["stash", "show", "--name-status", &stash_ref])
+        .args(["stash", "show", "-u", "--name-status", &stash_ref])
         .current_dir(path)
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
 
-    let numstat = parse_numstat(path, &["stash", "show", "--numstat", &stash_ref]);
+    let numstat = parse_numstat(path, &["stash", "show", "-u", "--numstat", &stash_ref]);
 
     let text = String::from_utf8_lossy(&output.stdout);
     let mut files = Vec::new();
@@ -2701,7 +2707,29 @@ pub fn get_stash_file_diff(
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
 
-    let diff_text = String::from_utf8_lossy(&output.stdout);
+    let mut diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // Untracked files live in the stash's `^3` parent, not in the main stash
+    // commit, so the diff above is empty for them. Fall back to diffing the base
+    // against the untracked tree, which renders the file as a fresh addition.
+    // `^3` only exists for stashes created with `-u`; if it's absent the diff
+    // errors out and we keep the (empty) original result.
+    if diff_text.is_empty() {
+        let untracked = git_cmd()
+            .args([
+                "diff",
+                &format!("{stash_ref}^"),
+                &format!("{stash_ref}^3"),
+                "--",
+                file_path,
+            ])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
+        if untracked.status.success() {
+            diff_text = String::from_utf8_lossy(&untracked.stdout).to_string();
+        }
+    }
 
     if has_binary_marker(&diff_text) {
         return Ok(FileDiff {
