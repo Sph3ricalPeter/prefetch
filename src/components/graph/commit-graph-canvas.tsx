@@ -7,8 +7,7 @@ import type {
   StashInfo,
   TagInfo,
 } from "@/types/git";
-import { gravatarUrl } from "@/lib/gravatar";
-import { searchUserAvatar } from "@/lib/commands";
+import { loadAvatarForEmail } from "@/lib/avatar-load";
 import { getInitials as authorInitials, getAvatarColor as authorColor, getContrastColor as contrastText, detectBot, type BotInfo, drawProfileIconOnCanvas, getProfileIcon, darkenHex } from "@/lib/avatar";
 import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
 import { useProfileStore } from "@/stores/profile-store";
@@ -239,7 +238,7 @@ function drawBotAvatar(
   ctx.restore();
 }
 
-import { avatarImageCache, forgeAvatarAttempted } from "@/lib/avatar-cache";
+import { avatarImageCache } from "@/lib/avatar-cache";
 
 
 
@@ -1459,32 +1458,10 @@ export function CommitGraphCanvas({
             ctx.restore();
           }
         } else {
-          let img = avatarImageCache.get(email);
-          if (img === undefined) {
-            avatarImageCache.set(email, null);
-            const loadImg = new Image();
-            loadImg.src = gravatarUrl(email, NODE_RADIUS * 4);
-            loadImg.onload = () => {
-              avatarImageCache.set(email, loadImg);
-              requestDrawRef.current();
-            };
-            loadImg.onerror = () => {
-              if (!forgeAvatarAttempted.has(email)) {
-                forgeAvatarAttempted.add(email);
-                searchUserAvatar(email).then((url) => {
-                  if (url) {
-                    const forgeImg = new Image();
-                    forgeImg.src = url;
-                    forgeImg.onload = () => {
-                      avatarImageCache.set(email, forgeImg);
-                      requestDrawRef.current();
-                    };
-                  }
-                }).catch(() => {});
-              }
-            };
-            img = null;
-          }
+          // Read-only: avatars are loaded by the prefetch effect (issue #70),
+          // not initiated here on the scroll hot path. Fall back to initials
+          // until the image is ready.
+          const img = avatarImageCache.get(email) ?? null;
 
           if (img) {
             ctx.save();
@@ -1891,6 +1868,21 @@ export function CommitGraphCanvas({
     dropdownRowRef.current = hoverDropdown?.row ?? null;
     requestDraw();
   }, [hoverDropdown?.row, requestDraw]);
+
+  // Prefetch avatars off the scroll hot path (#70). Keyed by distinct author
+  // email — far fewer than commits — and kicked off once whenever the commit
+  // set changes. The draw loop only reads the cache; loads never start there.
+  // Redraws coalesce through requestDraw's RAF, so a burst of resolving images
+  // collapses to at most one repaint per frame.
+  useEffect(() => {
+    const emails = new Set<string>();
+    for (const c of commits) {
+      if (c.author_email) emails.add(c.author_email);
+    }
+    for (const email of emails) {
+      loadAvatarForEmail(email, NODE_RADIUS * 4, () => requestDrawRef.current());
+    }
+  }, [commits]);
 
   const handleScroll = useCallback(() => {
     requestDraw();
