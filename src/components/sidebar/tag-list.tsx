@@ -12,9 +12,11 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
+import { SectionCount } from "@/components/ui/section-count";
 
-export function TagList({ filter = "" }: { filter?: string }) {
+export function TagList() {
   const allTags = useRepoStore((s) => s.tags);
+  const filter = useRepoStore((s) => s.filterQuery);
   const selectedCommitId = useRepoStore((s) => s.selectedCommitId);
   const createNewTag = useRepoStore((s) => s.createNewTag);
   const deleteExistingTag = useRepoStore((s) => s.deleteExistingTag);
@@ -74,10 +76,8 @@ export function TagList({ filter = "" }: { filter?: string }) {
             <ChevronRight className="h-3 w-3" />
           )}
           Tags
-          {tags.length > 0 && (
-            <span className="ml-1 normal-case tracking-normal text-faint">
-              {tags.length}
-            </span>
+          {allTags.length > 0 && (
+            <SectionCount filtered={tags.length} total={allTags.length} />
           )}
         </button>
 

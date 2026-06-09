@@ -4,14 +4,16 @@ import type { BranchInfo, PipelineStatus, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { effectivePipelineStatus } from "@/lib/ci-utils";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
+import { SectionCount } from "@/components/ui/section-count";
 import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
 
-export function BranchList({ filter = "" }: { filter?: string }) {
+export function BranchList() {
   const branches = useRepoStore((s) => s.branches);
+  const filter = useRepoStore((s) => s.filterQuery);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const headCommitId = useRepoStore((s) => s.headCommitId);
   const checkout = useRepoStore((s) => s.checkout);
@@ -58,6 +60,12 @@ export function BranchList({ filter = "" }: { filter?: string }) {
   const localBranches = useMemo(
     () => filtered.filter((b) => !b.is_remote),
     [filtered],
+  );
+
+  // Unfiltered local count, for the "filtered (total)" header display
+  const totalLocalBranches = useMemo(
+    () => branches.filter((b) => !b.is_remote).length,
+    [branches],
   );
 
   // Build a map: branch name → latest CI pipeline effective status
@@ -136,6 +144,7 @@ export function BranchList({ filter = "" }: { filter?: string }) {
         <BranchSection
           label="Branches"
           count={localBranches.length}
+          total={totalLocalBranches}
           isOpen={isOpen}
           onToggle={() => setSidebarSection("branches", !isOpen)}
         >
@@ -432,12 +441,14 @@ function buildBranchContextMenuItems(
 function BranchSection({
   label,
   count,
+  total,
   isOpen,
   onToggle,
   children,
 }: {
   label: string;
   count: number;
+  total: number;
   isOpen: boolean;
   onToggle: () => void;
   children: React.ReactNode;
@@ -454,9 +465,7 @@ function BranchSection({
           <ChevronRight className="h-3 w-3" />
         )}
         {label}
-        <span className="ml-1 normal-case tracking-normal text-faint">
-          {count}
-        </span>
+        <SectionCount filtered={count} total={total} />
       </button>
       {isOpen && <div>{children}</div>}
     </div>

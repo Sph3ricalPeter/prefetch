@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -29,6 +29,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
+import { SectionCount } from "@/components/ui/section-count";
 import { openUrl } from "@/lib/commands";
 import { formatDuration, effectivePipelineStatus } from "@/lib/ci-utils";
 import type { PipelineStatus, Pipeline, CiJob } from "@/types/git";
@@ -207,7 +208,8 @@ export function CiList() {
   const isOpen = useRepoStore((s) => s.sidebarSections.ci);
   const setSidebarSection = useRepoStore((s) => s.setSidebarSection);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
-  const pipelines = useRepoStore((s) => s.ciPipelines);
+  const allPipelines = useRepoStore((s) => s.ciPipelines);
+  const filter = useRepoStore((s) => s.filterQuery);
   const jobsMap = useRepoStore((s) => s.ciJobsMap);
   const selectedPipelineId = useRepoStore((s) => s.ciSelectedPipelineId);
   const selectedJobId = useRepoStore((s) => s.ciSelectedJobId);
@@ -223,10 +225,22 @@ export function CiList() {
     }
   }, [isOpen, forgeStatus?.has_token, loadCiPipelines]);
 
+  // Filter by workflow name, branch (raw + cleaned), or pipeline id
+  const pipelines = useMemo(() => {
+    if (!filter) return allPipelines;
+    const q = filter.toLowerCase();
+    return allPipelines.filter((p) =>
+      [p.name ?? "", p.branch, cleanBranchName(p.branch), `#${p.id}`].some((f) =>
+        f.toLowerCase().includes(q),
+      ),
+    );
+  }, [allPipelines, filter]);
+
   const hasForge = forgeStatus?.has_token;
-  const latestJobs = pipelines[0] ? (jobsMap[pipelines[0].id] ?? []) : [];
-  const latestStatus = pipelines[0]
-    ? effectivePipelineStatus(pipelines[0], latestJobs)
+  // Status icon reflects the latest pipeline overall, independent of filtering
+  const latestJobs = allPipelines[0] ? (jobsMap[allPipelines[0].id] ?? []) : [];
+  const latestStatus = allPipelines[0]
+    ? effectivePipelineStatus(allPipelines[0], latestJobs)
     : undefined;
 
   return (
@@ -244,10 +258,12 @@ export function CiList() {
           )}
           CI
           {latestStatus && <HeaderStatusIcon status={latestStatus} />}
-          {pipelines.length > 0 && (
-            <span className="ml-1 normal-case tracking-normal font-normal text-faint">
-              {pipelines.length}
-            </span>
+          {allPipelines.length > 0 && (
+            <SectionCount
+              filtered={pipelines.length}
+              total={allPipelines.length}
+              className="font-normal"
+            />
           )}
         </button>
 
@@ -274,11 +290,18 @@ export function CiList() {
             <p className="px-3 py-1 text-xs text-faint">Connect a forge to see CI pipelines</p>
           )}
 
-          {hasForge && pipelines.length === 0 && !ciLoading && (
+          {hasForge && allPipelines.length === 0 && !ciLoading && (
             <p className="px-3 py-1 text-xs text-faint">No pipelines found</p>
           )}
 
-          {hasForge && ciLoading && pipelines.length === 0 && (
+          {hasForge &&
+            allPipelines.length > 0 &&
+            pipelines.length === 0 &&
+            !ciLoading && (
+              <p className="px-3 py-1 text-xs text-faint">No matching pipelines</p>
+            )}
+
+          {hasForge && ciLoading && allPipelines.length === 0 && (
             <div className="flex items-center gap-2 px-3 py-1 text-xs text-faint">
               <Loader2 className="h-3 w-3 animate-spin" />
               Loading…

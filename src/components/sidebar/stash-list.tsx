@@ -13,9 +13,11 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
+import { SectionCount } from "@/components/ui/section-count";
 
-export function StashList({ filter = "" }: { filter?: string }) {
+export function StashList() {
   const stashes = useRepoStore((s) => s.stashes);
+  const filter = useRepoStore((s) => s.filterQuery);
   const selectedStashIndex = useRepoStore((s) => s.selectedStashIndex);
   const selectStash = useRepoStore((s) => s.selectStash);
   const applyStash = useRepoStore((s) => s.applyStash);
@@ -51,10 +53,8 @@ export function StashList({ filter = "" }: { filter?: string }) {
             <ChevronRight className="h-3 w-3" />
           )}
           Stash
-          {filtered.length > 0 && (
-            <span className="ml-1 normal-case tracking-normal text-faint">
-              {filtered.length}
-            </span>
+          {stashes.length > 0 && (
+            <SectionCount filtered={filtered.length} total={stashes.length} />
           )}
         </button>
       </div>

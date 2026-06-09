@@ -272,6 +272,10 @@ interface RepoState {
   isLoading: boolean;
   error: string | null;
 
+  /** Global filter query (debounced). Drives the sidebar lists, the commit
+   *  graph dimming, and the right-column changed-files lists. */
+  filterQuery: string;
+
   // Staging (working tree)
   fileStatuses: FileStatus[];
   selectedFilePath: string | null;
@@ -421,6 +425,7 @@ interface RepoState {
   resolveConflictManual: (filePath: string, content: string) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
   rewordHeadCommit: (message: string) => Promise<void>;
+  setFilterQuery: (query: string) => void;
   setCommitMessage: (msg: string) => void;
   setCommitDescription: (desc: string) => void;
   setAmendMode: (on: boolean) => void;
@@ -570,6 +575,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   largeDiffPending: null,
   commitFiles: [],
   commitFilesLoading: false,
+  filterQuery: "",
   commitMessage: "",
   commitDescription: "",
   amendMode: false,
@@ -1421,6 +1427,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  setFilterQuery: (query) => set({ filterQuery: query }),
   setCommitMessage: (msg) => set({ commitMessage: msg }),
   setCommitDescription: (desc) => set({ commitDescription: desc }),
 
