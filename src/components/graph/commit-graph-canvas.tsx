@@ -12,6 +12,7 @@ import { searchUserAvatar } from "@/lib/commands";
 import { getInitials as authorInitials, getAvatarColor as authorColor, getContrastColor as contrastText, detectBot, type BotInfo, drawProfileIconOnCanvas, getProfileIcon, darkenHex } from "@/lib/avatar";
 import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
 import { useProfileStore } from "@/stores/profile-store";
+import { useRepoStore } from "@/stores/repo-store";
 
 export const ROW_HEIGHT = 32;
 export const LANE_WIDTH = 20;
@@ -29,6 +30,7 @@ const LABEL_RADIUS = 5;
 const ROW_RADIUS = 6;            // Change 1: matches CSS rounded-md
 const GRAPH_PADDING_TOP = 6;     // top padding matching left padding
 const ROW_INSET = 2;             // vertical inset so row highlights don't touch
+const GRAPH_DIM_ALPHA = 0.25;    // opacity for commit rows that don't match the filter
 
 // Mutable font config — updated from the theme store before each draw() call.
 // Module-level so standalone drawing helpers can read it without extra parameters.
@@ -335,6 +337,42 @@ function formatDate(timestamp: number, fmt: DateFormatId, availWidth: number, ct
   const shortTime = `${p.short} ${p.time}`;
   if (fits(shortTime)) return shortTime;
   return p.short;
+}
+
+/** Match a commit against a lowercased, non-empty filter query across sha,
+ *  message/body, author, several date representations, and ref names (branch /
+ *  tag / stash). `refNames` is precomputed by the caller from the ref maps. */
+function commitMatchesQuery(
+  commit: CommitInfo,
+  q: string,
+  refNames: string[],
+): boolean {
+  if (
+    commit.short_id.toLowerCase().includes(q) ||
+    commit.id.toLowerCase().includes(q) ||
+    commit.message.toLowerCase().includes(q) ||
+    commit.body.toLowerCase().includes(q) ||
+    commit.author_name.toLowerCase().includes(q) ||
+    commit.author_email.toLowerCase().includes(q)
+  ) {
+    return true;
+  }
+
+  // Date representations — match regardless of the column's display format.
+  const d = new Date(commit.timestamp * 1000);
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (
+    iso.includes(q) ||
+    time.includes(q) ||
+    intlDateShort.format(d).toLowerCase().includes(q) ||
+    intlDateLong.format(d).toLowerCase().includes(q) ||
+    intlDateFull.format(d).toLowerCase().includes(q)
+  ) {
+    return true;
+  }
+
+  return refNames.some((n) => n.toLowerCase().includes(q));
 }
 
 function truncateText(
@@ -828,6 +866,7 @@ export function CommitGraphCanvas({
   const fontFamilyId = useThemeStore((s) => s.fontFamilyId);
   const fontScale = useThemeStore((s) => s.fontScale);
   const activeProfile = useProfileStore((s) => s.activeProfile);
+  const filterQuery = useRepoStore((s) => s.filterQuery);
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredRowRef = useRef<number | null>(null);
@@ -917,6 +956,23 @@ export function CommitGraphCanvas({
     }
     return map;
   }, [stashes, commits]);
+
+  // Global filter — set of commit ids that match the query. `null` means no
+  // active filter (nothing dimmed). Computed over all commits (cheap, in
+  // memory); the draw loop dims rows whose id is absent from the set.
+  const filterMatchSet = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return null;
+    const set = new Set<string>();
+    for (const c of commits) {
+      const refNames: string[] = [];
+      for (const b of branchMap.get(c.id) ?? []) refNames.push(b.name);
+      for (const t of tagMap.get(c.id) ?? []) refNames.push(t.name);
+      for (const s of stashMap.get(c.id) ?? []) refNames.push(s.message);
+      if (commitMatchesQuery(c, q, refNames)) set.add(c.id);
+    }
+    return set;
+  }, [filterQuery, commits, branchMap, tagMap, stashMap]);
 
   // Change 3: Pre-compute time-group boundaries
   const timeGroupBoundaries = useMemo(() => {
@@ -1326,6 +1382,22 @@ export function CommitGraphCanvas({
       const x = laneX(commit.lane);
       const y = visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
       const color = getCommitColor(commit);
+
+      // Dim the whole row when a filter is active and this commit doesn't match.
+      // Inner save()/restore() blocks preserve this alpha; reset at row end.
+      const dimmed =
+        filterMatchSet !== null && !filterMatchSet.has(commit.id);
+      if (dimmed) {
+        // Paint an opaque background disc over the lane line first, so the
+        // alpha-composited node below blends against the background instead of
+        // revealing the edge beneath it.
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, NODE_RADIUS + 2, 0, Math.PI * 2);
+        ctx.fillStyle = graphColors.bgPage;
+        ctx.fill();
+      }
+      ctx.globalAlpha = dimmed ? GRAPH_DIM_ALPHA : 1;
 
       // Node -- bot icon, avatar image, profile icon, or fallback initial circle
       {
@@ -1761,6 +1833,9 @@ export function CommitGraphCanvas({
           ctx.fillText(formatDate(commit.timestamp, dateFormat, dateAvail, ctx), dateColLeft + 8, y);
         }
       }
+
+      // Reset row dim before the next row / subsequent passes.
+      ctx.globalAlpha = 1;
     }
 
     // Draw time-group separator lines — label right-aligned within the message column
@@ -1800,7 +1875,7 @@ export function CommitGraphCanvas({
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
     authorHitAreasRef.current = authorHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
+  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
