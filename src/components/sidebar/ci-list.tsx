@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -29,7 +29,8 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
-import { SectionCount } from "@/components/ui/section-count";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import { openUrl } from "@/lib/commands";
 import { formatDuration, effectivePipelineStatus } from "@/lib/ci-utils";
 import type { PipelineStatus, Pipeline, CiJob } from "@/types/git";
@@ -225,16 +226,14 @@ export function CiList() {
     }
   }, [isOpen, forgeStatus?.has_token, loadCiPipelines]);
 
-  // Filter by workflow name, branch (raw + cleaned), or pipeline id
-  const pipelines = useMemo(() => {
-    if (!filter) return allPipelines;
-    const q = filter.toLowerCase();
-    return allPipelines.filter((p) =>
-      [p.name ?? "", p.branch, cleanBranchName(p.branch), `#${p.id}`].some((f) =>
-        f.toLowerCase().includes(q),
-      ),
+  // Filter dims non-matching pipelines (by workflow name, branch raw + cleaned,
+  // or pipeline id) rather than hiding them.
+  const q = filter.trim().toLowerCase();
+  const isDimmed = (p: Pipeline) =>
+    q !== "" &&
+    ![p.name ?? "", p.branch, cleanBranchName(p.branch), `#${p.id}`].some((f) =>
+      f.toLowerCase().includes(q),
     );
-  }, [allPipelines, filter]);
 
   const hasForge = forgeStatus?.has_token;
   // Status icon reflects the latest pipeline overall, independent of filtering
@@ -259,11 +258,9 @@ export function CiList() {
           CI
           {latestStatus && <HeaderStatusIcon status={latestStatus} />}
           {allPipelines.length > 0 && (
-            <SectionCount
-              filtered={pipelines.length}
-              total={allPipelines.length}
-              className="font-normal"
-            />
+            <span className="ml-1 normal-case tracking-normal font-normal text-faint">
+              {allPipelines.length}
+            </span>
           )}
         </button>
 
@@ -294,13 +291,6 @@ export function CiList() {
             <p className="px-3 py-1 text-xs text-faint">No pipelines found</p>
           )}
 
-          {hasForge &&
-            allPipelines.length > 0 &&
-            pipelines.length === 0 &&
-            !ciLoading && (
-              <p className="px-3 py-1 text-xs text-faint">No matching pipelines</p>
-            )}
-
           {hasForge && ciLoading && allPipelines.length === 0 && (
             <div className="flex items-center gap-2 px-3 py-1 text-xs text-faint">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -308,13 +298,14 @@ export function CiList() {
             </div>
           )}
 
-          {pipelines.map((pipeline) => (
+          {allPipelines.map((pipeline) => (
             <PipelineEntry
               key={pipeline.id}
               pipeline={pipeline}
               isExpanded={pipeline.id === selectedPipelineId}
               jobs={jobsMap[pipeline.id] ?? []}
               selectedJobId={selectedJobId}
+              dimmed={isDimmed(pipeline)}
               onToggle={() => toggleCiPipeline(pipeline.id)}
               onJobClick={(jobId) => loadCiJobLog(jobId)}
             />
@@ -332,6 +323,7 @@ function PipelineEntry({
   isExpanded,
   jobs,
   selectedJobId,
+  dimmed,
   onToggle,
   onJobClick,
 }: {
@@ -339,6 +331,7 @@ function PipelineEntry({
   isExpanded: boolean;
   jobs: CiJob[];
   selectedJobId: number | null;
+  dimmed?: boolean;
   onToggle: () => void;
   onJobClick: (jobId: number) => void;
 }) {
@@ -346,7 +339,7 @@ function PipelineEntry({
   const branch = cleanBranchName(pipeline.branch);
 
   return (
-    <div>
+    <div className={cn(dimmed && FILTER_DIM_CLASS)}>
       <button
         onClick={onToggle}
         title={pipeline.branch !== branch ? pipeline.branch : undefined}

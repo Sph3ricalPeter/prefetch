@@ -23,8 +23,16 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
-import { buildFileTree, collectFilePaths, flattenTreeFiles } from "@/lib/file-tree";
+import {
+  buildFileTree,
+  collectFilePaths,
+  flattenTreeFiles,
+  fileMatchesFilter,
+  treeNodeMatchesFilter,
+} from "@/lib/file-tree";
 import type { FileTreeNode } from "@/lib/file-tree";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
 function matchesLfsPattern(filePath: string, pattern: string): boolean {
@@ -56,6 +64,9 @@ export function FileList() {
   const deleteFile = useRepoStore((s) => s.deleteFile);
 
   const fileViewMode = useRepoStore((s) => s.fileViewMode);
+  // Filter dims non-matching files (by path) rather than hiding them.
+  const filterQuery = useRepoStore((s) => s.filterQuery);
+  const fileQuery = useMemo(() => filterQuery.trim().toLowerCase(), [filterQuery]);
 
   const isLfsFile = (filePath: string) =>
     lfsInfo?.initialized &&
@@ -226,6 +237,7 @@ export function FileList() {
             <ConflictTreeView
               files={conflicted}
               selectedFilePath={selectedFilePath}
+              fileQuery={fileQuery}
               isAutoResolved={(path) => conflictAutoResolvedFiles.has(path)}
               onSelect={(path) => selectFile(path, false)}
               onResolveOurs={resolveOurs}
@@ -246,6 +258,7 @@ export function FileList() {
                 key={`conflict-${file.path}`}
                 file={file}
                 isSelected={selectedFilePath === file.path}
+                dimmed={fileQuery !== "" && !fileMatchesFilter(file.path, fileQuery)}
                 isAutoResolved={conflictAutoResolvedFiles.has(file.path)}
                 onSelect={() => selectFile(file.path, false)}
                 onResolveOurs={() => resolveOurs(file.path)}
@@ -286,6 +299,7 @@ export function FileList() {
             selectedFilePath={selectedFilePath && !selectedFileStaged ? selectedFilePath : null}
             multiSelected={multiSelected}
             isLfsFile={isLfsFile}
+            fileQuery={fileQuery}
             onSelect={(path, e) => handleFileClick(e, unstaged.find((f) => f.path === path)!, false, unstagedTreeOrder)}
             onToggle={(path) => wrappedStage([path])}
             toggleIcon={<Plus className="h-3 w-3" />}
@@ -305,6 +319,7 @@ export function FileList() {
               isSelected={selectedFilePath === file.path && !selectedFileStaged}
               isMultiSelected={multiSelected.has(file.path)}
               isLfs={!!isLfsFile(file.path)}
+              dimmed={fileQuery !== "" && !fileMatchesFilter(file.path, fileQuery)}
               onSelect={(e) => handleFileClick(e, file, false, unstaged)}
               onToggle={() => wrappedStage([file.path])}
               toggleIcon={<Plus className="h-3 w-3" />}
@@ -341,6 +356,7 @@ export function FileList() {
             selectedFilePath={selectedFilePath && selectedFileStaged ? selectedFilePath : null}
             multiSelected={multiSelected}
             isLfsFile={isLfsFile}
+            fileQuery={fileQuery}
             onSelect={(path, e) => handleFileClick(e, staged.find((f) => f.path === path)!, true, stagedTreeOrder)}
             onToggle={(path) => wrappedUnstage([path])}
             toggleIcon={<Minus className="h-3 w-3" />}
@@ -360,6 +376,7 @@ export function FileList() {
               isSelected={selectedFilePath === file.path && selectedFileStaged}
               isMultiSelected={multiSelected.has(file.path)}
               isLfs={!!isLfsFile(file.path)}
+              dimmed={fileQuery !== "" && !fileMatchesFilter(file.path, fileQuery)}
               onSelect={(e) => handleFileClick(e, file, true, staged)}
               onToggle={() => wrappedUnstage([file.path])}
               toggleIcon={<Minus className="h-3 w-3" />}
@@ -541,6 +558,7 @@ function FileTreeView({
   selectedFilePath,
   multiSelected,
   isLfsFile,
+  fileQuery,
   onSelect,
   onToggle,
   toggleIcon,
@@ -556,6 +574,7 @@ function FileTreeView({
   selectedFilePath: string | null;
   multiSelected?: Set<string>;
   isLfsFile: (path: string) => boolean | undefined;
+  fileQuery: string;
   onSelect: (path: string, e: React.MouseEvent) => void;
   onToggle: (path: string) => void;
   toggleIcon: React.ReactNode;
@@ -579,6 +598,7 @@ function FileTreeView({
           selectedFilePath={selectedFilePath}
           multiSelected={multiSelected}
           isLfsFile={isLfsFile}
+          fileQuery={fileQuery}
           onSelect={onSelect}
           onToggle={onToggle}
           toggleIcon={toggleIcon}
@@ -600,6 +620,7 @@ function FileTreeView({
 function ConflictTreeView({
   files,
   selectedFilePath,
+  fileQuery,
   isAutoResolved,
   onSelect,
   onResolveOurs,
@@ -610,6 +631,7 @@ function ConflictTreeView({
 }: {
   files: FileStatus[];
   selectedFilePath: string | null;
+  fileQuery: string;
   isAutoResolved: (path: string) => boolean;
   onSelect: (path: string) => void;
   onResolveOurs: (path: string) => void;
@@ -628,6 +650,7 @@ function ConflictTreeView({
           node={node}
           depth={0}
           selectedFilePath={selectedFilePath}
+          fileQuery={fileQuery}
           isAutoResolved={isAutoResolved}
           onSelect={onSelect}
           onResolveOurs={onResolveOurs}
@@ -645,6 +668,7 @@ function ConflictTreeNodeView({
   node,
   depth,
   selectedFilePath,
+  fileQuery,
   isAutoResolved,
   onSelect,
   onResolveOurs,
@@ -656,6 +680,7 @@ function ConflictTreeNodeView({
   node: FileTreeNode;
   depth: number;
   selectedFilePath: string | null;
+  fileQuery: string;
   isAutoResolved: (path: string) => boolean;
   onSelect: (path: string) => void;
   onResolveOurs: (path: string) => void;
@@ -666,13 +691,17 @@ function ConflictTreeNodeView({
 }) {
   const [expanded, setExpanded] = useState(true);
   const indent = depth * 16;
+  const dimmed = fileQuery !== "" && !treeNodeMatchesFilter(node, fileQuery);
 
   if (node.type === "directory") {
     const fileCount = collectFilePaths(node).length;
     return (
       <div>
         <div
-          className="group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
+          className={cn(
+            "group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer",
+            dimmed && FILTER_DIM_CLASS,
+          )}
           style={{ paddingLeft: `${12 + indent}px` }}
           onClick={() => setExpanded(!expanded)}
         >
@@ -702,6 +731,7 @@ function ConflictTreeNodeView({
             node={child}
             depth={depth + 1}
             selectedFilePath={selectedFilePath}
+            fileQuery={fileQuery}
             isAutoResolved={isAutoResolved}
             onSelect={onSelect}
             onResolveOurs={onResolveOurs}
@@ -721,11 +751,11 @@ function ConflictTreeNodeView({
 
   return (
     <div
-      className={`group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
-        isSelected
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-secondary"
-      }`}
+      className={cn(
+        "group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
+        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        dimmed && FILTER_DIM_CLASS,
+      )}
       style={{ paddingLeft: `${12 + indent + 16}px` }}
       onClick={() => onSelect(file.path)}
       onContextMenu={(e) => onFileContextMenu(e, file)}
@@ -803,6 +833,7 @@ function TreeNodeView({
   selectedFilePath,
   multiSelected,
   isLfsFile,
+  fileQuery,
   onSelect,
   onToggle,
   toggleIcon,
@@ -819,6 +850,7 @@ function TreeNodeView({
   selectedFilePath: string | null;
   multiSelected?: Set<string>;
   isLfsFile: (path: string) => boolean | undefined;
+  fileQuery: string;
   onSelect: (path: string, e: React.MouseEvent) => void;
   onToggle: (path: string) => void;
   toggleIcon: React.ReactNode;
@@ -832,13 +864,18 @@ function TreeNodeView({
 }) {
   const [expanded, setExpanded] = useState(true);
   const indent = depth * 16;
+  // Dim when filtering and neither this node nor any descendant matches.
+  const dimmed = fileQuery !== "" && !treeNodeMatchesFilter(node, fileQuery);
 
   if (node.type === "directory") {
     const fileCount = collectFilePaths(node).length;
     return (
       <div>
         <div
-          className="group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
+          className={cn(
+            "group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer",
+            dimmed && FILTER_DIM_CLASS,
+          )}
           style={{ paddingLeft: `${12 + indent}px` }}
           onClick={() => setExpanded(!expanded)}
           onContextMenu={(e) => {
@@ -907,6 +944,7 @@ function TreeNodeView({
             selectedFilePath={selectedFilePath}
             multiSelected={multiSelected}
             isLfsFile={isLfsFile}
+            fileQuery={fileQuery}
             onSelect={onSelect}
             onToggle={onToggle}
             toggleIcon={toggleIcon}
@@ -933,13 +971,15 @@ function TreeNodeView({
 
   return (
     <div
-      className={`group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
+      className={cn(
+        "group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
         isMulti
           ? "bg-primary/15 text-accent-foreground"
           : isSelected
             ? "bg-accent text-accent-foreground"
-            : "hover:bg-secondary"
-      }`}
+            : "hover:bg-secondary",
+        dimmed && FILTER_DIM_CLASS,
+      )}
       style={{ paddingLeft: `${12 + indent + 16}px` }}
       onClick={(e) => onSelect(file.path, e)}
       onContextMenu={(e) => {
@@ -1012,6 +1052,7 @@ function FileRow({
   isSelected,
   isMultiSelected,
   isLfs,
+  dimmed,
   onSelect,
   onToggle,
   toggleIcon,
@@ -1024,6 +1065,7 @@ function FileRow({
   isSelected: boolean;
   isMultiSelected?: boolean;
   isLfs: boolean;
+  dimmed?: boolean;
   onSelect: (e: React.MouseEvent) => void;
   onToggle: () => void;
   toggleIcon: React.ReactNode;
@@ -1041,13 +1083,15 @@ function FileRow({
 
   return (
     <div
-      className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
+      className={cn(
+        "group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
         isMultiSelected
           ? "bg-primary/15 text-accent-foreground"
           : isSelected
             ? "bg-accent text-accent-foreground"
-            : "hover:bg-secondary"
-      }`}
+            : "hover:bg-secondary",
+        dimmed && FILTER_DIM_CLASS,
+      )}
       onClick={onSelect}
       onContextMenu={onContextMenu}
     >
@@ -1114,6 +1158,7 @@ function ConflictRow({
   file,
   isSelected,
   isAutoResolved,
+  dimmed,
   onSelect,
   onResolveOurs,
   onResolveTheirs,
@@ -1124,6 +1169,7 @@ function ConflictRow({
   file: FileStatus;
   isSelected: boolean;
   isAutoResolved: boolean;
+  dimmed?: boolean;
   onSelect: () => void;
   onResolveOurs: () => void;
   onResolveTheirs: () => void;
@@ -1138,11 +1184,11 @@ function ConflictRow({
 
   return (
     <div
-      className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors ${
-        isSelected
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-secondary"
-      }`}
+      className={cn(
+        "group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
+        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        dimmed && FILTER_DIM_CLASS,
+      )}
       onClick={onSelect}
       onContextMenu={onContextMenu}
     >

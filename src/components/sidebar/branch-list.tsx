@@ -4,7 +4,8 @@ import type { BranchInfo, PipelineStatus, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { effectivePipelineStatus } from "@/lib/ci-utils";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
-import { SectionCount } from "@/components/ui/section-count";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import {
   Tooltip,
   TooltipTrigger,
@@ -50,21 +51,14 @@ export function BranchList() {
     remoteName: string;
   } | null>(null);
 
-  const filtered = filter
-    ? branches.filter((b) =>
-        b.name.toLowerCase().includes(filter.toLowerCase()),
-      )
-    : branches;
+  // Filter dims non-matching rows rather than hiding them (see store filterQuery).
+  const q = filter.trim().toLowerCase();
+  const isDimmed = (b: BranchInfo) =>
+    q !== "" && !b.name.toLowerCase().includes(q);
 
   // Only show local branches — remote tracking is indicated via icons
   const localBranches = useMemo(
-    () => filtered.filter((b) => !b.is_remote),
-    [filtered],
-  );
-
-  // Unfiltered local count, for the "filtered (total)" header display
-  const totalLocalBranches = useMemo(
-    () => branches.filter((b) => !b.is_remote).length,
+    () => branches.filter((b) => !b.is_remote),
     [branches],
   );
 
@@ -144,7 +138,6 @@ export function BranchList() {
         <BranchSection
           label="Branches"
           count={localBranches.length}
-          total={totalLocalBranches}
           isOpen={isOpen}
           onToggle={() => setSidebarSection("branches", !isOpen)}
         >
@@ -155,6 +148,7 @@ export function BranchList() {
               isCurrent={branch.name === currentBranch}
               pr={prCache[branch.name]}
               ciStatus={branchCiStatus.get(branch.name)}
+              dimmed={isDimmed(branch)}
               disabled={isLoading}
               onClick={() => handleCheckout(branch.name)}
               onPrClick={
@@ -441,14 +435,12 @@ function buildBranchContextMenuItems(
 function BranchSection({
   label,
   count,
-  total,
   isOpen,
   onToggle,
   children,
 }: {
   label: string;
   count: number;
-  total: number;
   isOpen: boolean;
   onToggle: () => void;
   children: React.ReactNode;
@@ -465,7 +457,9 @@ function BranchSection({
           <ChevronRight className="h-3 w-3" />
         )}
         {label}
-        <SectionCount filtered={count} total={total} />
+        <span className="ml-1 normal-case tracking-normal text-faint">
+          {count}
+        </span>
       </button>
       {isOpen && <div>{children}</div>}
     </div>
@@ -488,6 +482,7 @@ function BranchRow({
   isCurrent,
   pr,
   ciStatus,
+  dimmed,
   disabled,
   onClick,
   onPrClick,
@@ -498,6 +493,7 @@ function BranchRow({
   /** undefined = not yet checked; null = no open PR; PrInfo = has open PR */
   pr?: PrInfo | null;
   ciStatus?: PipelineStatus;
+  dimmed?: boolean;
   disabled: boolean;
   onClick: () => void;
   onPrClick?: () => void;
@@ -510,11 +506,13 @@ function BranchRow({
       onDoubleClick={onClick}
       onContextMenu={onContextMenu}
       disabled={disabled && !isCurrent}
-      className={`flex w-full items-center gap-2 px-3 py-1 text-left text-xs transition-colors ${
+      className={cn(
+        "flex w-full items-center gap-2 px-3 py-1 text-left text-xs transition-colors disabled:cursor-default",
         isCurrent
           ? "bg-accent text-accent-foreground"
-          : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-      } disabled:cursor-default`}
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+        dimmed && FILTER_DIM_CLASS,
+      )}
     >
       <GitBranch className="h-3 w-3 shrink-0" />
       <span className="truncate">{displayName}</span>

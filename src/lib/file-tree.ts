@@ -49,6 +49,22 @@ export function buildFileTree(files: FileStatus[]): FileTreeNode[] {
   return root;
 }
 
+/** Case-insensitive substring match of a file path against a (already
+ *  lowercased) filter query. */
+export function fileMatchesFilter(path: string, lowerQuery: string): boolean {
+  return path.toLowerCase().includes(lowerQuery);
+}
+
+/** True when this node, or any file beneath it, matches the (lowercased) query.
+ *  Used so a directory on the path to a match isn't dimmed. */
+export function treeNodeMatchesFilter(
+  node: FileTreeNode,
+  lowerQuery: string,
+): boolean {
+  if (node.type === "file") return node.path.toLowerCase().includes(lowerQuery);
+  return node.children.some((c) => treeNodeMatchesFilter(c, lowerQuery));
+}
+
 /** Recursively collect all file paths under a tree node (including nested directories). */
 export function collectFilePaths(node: FileTreeNode): string[] {
   if (node.type === "file") return [node.path];

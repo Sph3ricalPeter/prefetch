@@ -1703,7 +1703,8 @@ export function CommitGraphCanvas({
           if (linkEndX > linkStartX + 1) {
             ctx.save();
             ctx.strokeStyle = primaryColor;
-            ctx.globalAlpha = 0.7;
+            // Set absolutely (inside save/restore), so fold in the row dim here.
+            ctx.globalAlpha = dimmed ? 0.7 * GRAPH_DIM_ALPHA : 0.7;
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(linkStartX, y);

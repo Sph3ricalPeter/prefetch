@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
-import { SectionCount } from "@/components/ui/section-count";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 
 export function TagList() {
   const allTags = useRepoStore((s) => s.tags);
@@ -33,11 +34,10 @@ export function TagList() {
   } | null>(null);
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
 
-  const tags = filter
-    ? allTags.filter((t) =>
-        t.name.toLowerCase().includes(filter.toLowerCase()),
-      )
-    : allTags;
+  // Filter dims non-matching rows rather than hiding them.
+  const q = filter.trim().toLowerCase();
+  const isDimmed = (name: string) =>
+    q !== "" && !name.toLowerCase().includes(q);
 
   const handleCreate = async () => {
     if (!newTagName.trim()) return;
@@ -77,7 +77,9 @@ export function TagList() {
           )}
           Tags
           {allTags.length > 0 && (
-            <SectionCount filtered={tags.length} total={allTags.length} />
+            <span className="ml-1 normal-case tracking-normal text-faint">
+              {allTags.length}
+            </span>
           )}
         </button>
 
@@ -137,16 +139,19 @@ export function TagList() {
       )}
 
       {/* Tag entries */}
-      {isOpen && tags.length > 0 && (
+      {isOpen && allTags.length > 0 && (
         <div>
-          {tags.map((tag) => (
+          {allTags.map((tag) => (
             <div
               key={tag.name}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setTagContextMenu({ tagName: tag.name, x: e.clientX, y: e.clientY });
               }}
-              className="group flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+              className={cn(
+                "group flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors",
+                isDimmed(tag.name) && FILTER_DIM_CLASS,
+              )}
             >
               <Tag className="h-3 w-3 shrink-0" />
               <span className="shrink-0">{tag.name}</span>

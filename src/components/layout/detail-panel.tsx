@@ -23,8 +23,14 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileList } from "@/components/staging/file-list";
-import { buildFileTree } from "@/lib/file-tree";
+import {
+  buildFileTree,
+  fileMatchesFilter,
+  treeNodeMatchesFilter,
+} from "@/lib/file-tree";
 import type { FileTreeNode } from "@/lib/file-tree";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import { CommitBox } from "@/components/staging/commit-box";
 import { AuthorAvatar } from "@/components/ui/avatar";
 import type { FileStatus } from "@/types/git";
@@ -235,6 +241,9 @@ function CommitDetailView({
   const [bodyExpanded, setBodyExpanded] = useState(false);
   const viewMode = useRepoStore((s) => s.fileViewMode);
   const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
+  // Filter dims non-matching files (by path) rather than hiding them.
+  const filterQuery = useRepoStore((s) => s.filterQuery);
+  const fileQuery = filterQuery.trim().toLowerCase();
 
   const date = new Date(commit.timestamp * 1000);
   const dateStr = date.toLocaleDateString(undefined, {
@@ -365,6 +374,7 @@ function CommitDetailView({
             <CommitFileTreeView
               files={commitFiles}
               selectedFilePath={selectedFilePath}
+              fileQuery={fileQuery}
               onFileClick={onFileClick}
             />
           ) : (
@@ -374,6 +384,7 @@ function CommitDetailView({
                   key={file.path}
                   file={file}
                   isSelected={selectedFilePath === file.path}
+                  dimmed={fileQuery !== "" && !fileMatchesFilter(file.path, fileQuery)}
                   onClick={() => onFileClick(file.path)}
                 />
               ))}
@@ -402,6 +413,7 @@ function StashDetailView({
   const [filesOpen, setFilesOpen] = useState(true);
   const viewMode = useRepoStore((s) => s.fileViewMode);
   const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
+  const fileQuery = useRepoStore((s) => s.filterQuery).trim().toLowerCase();
 
   return (
     <div className="flex h-full flex-col bg-sidebar-background overflow-y-auto">
@@ -456,6 +468,7 @@ function StashDetailView({
             <CommitFileTreeView
               files={stashFiles}
               selectedFilePath={selectedFilePath}
+              fileQuery={fileQuery}
               onFileClick={onFileClick}
             />
           ) : (
@@ -465,6 +478,7 @@ function StashDetailView({
                   key={file.path}
                   file={file}
                   isSelected={selectedFilePath === file.path}
+                  dimmed={fileQuery !== "" && !fileMatchesFilter(file.path, fileQuery)}
                   onClick={() => onFileClick(file.path)}
                 />
               ))}
@@ -559,10 +573,12 @@ function commitFileStatusIcon(type: string): React.ReactNode {
 function CommitFileRow({
   file,
   isSelected,
+  dimmed,
   onClick,
 }: {
   file: FileStatus;
   isSelected: boolean;
+  dimmed?: boolean;
   onClick: () => void;
 }) {
   const statusColor = commitFileStatusColor(file.status_type);
@@ -576,11 +592,11 @@ function CommitFileRow({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors ${
-        isSelected
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-secondary"
-      }`}
+      className={cn(
+        "flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors",
+        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        dimmed && FILTER_DIM_CLASS,
+      )}
     >
       <span
         className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}
@@ -611,10 +627,12 @@ function CommitFileRow({
 function CommitFileTreeView({
   files,
   selectedFilePath,
+  fileQuery,
   onFileClick,
 }: {
   files: FileStatus[];
   selectedFilePath: string | null;
+  fileQuery: string;
   onFileClick: (path: string) => void;
 }) {
   const tree = useMemo(() => buildFileTree(files), [files]);
@@ -627,6 +645,7 @@ function CommitFileTreeView({
           node={node}
           depth={0}
           selectedFilePath={selectedFilePath}
+          fileQuery={fileQuery}
           onFileClick={onFileClick}
         />
       ))}
@@ -638,22 +657,30 @@ function CommitTreeNode({
   node,
   depth,
   selectedFilePath,
+  fileQuery,
   onFileClick,
 }: {
   node: FileTreeNode;
   depth: number;
   selectedFilePath: string | null;
+  fileQuery: string;
   onFileClick: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const indent = depth * 16;
+  // Dim a node when filtering and neither it nor any descendant matches.
+  const dimmed =
+    fileQuery !== "" && !treeNodeMatchesFilter(node, fileQuery);
 
   if (node.type === "directory") {
     return (
       <div>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="relative flex w-full items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          className={cn(
+            "relative flex w-full items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors",
+            dimmed && FILTER_DIM_CLASS,
+          )}
           style={{ paddingLeft: `${16 + indent}px` }}
         >
           {Array.from({ length: depth }, (_, i) => (
@@ -682,6 +709,7 @@ function CommitTreeNode({
               node={child}
               depth={depth + 1}
               selectedFilePath={selectedFilePath}
+              fileQuery={fileQuery}
               onFileClick={onFileClick}
             />
           ))}
@@ -698,11 +726,11 @@ function CommitTreeNode({
   return (
     <button
       onClick={() => onFileClick(file.path)}
-      className={`relative flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors ${
-        isSelected
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-secondary"
-      }`}
+      className={cn(
+        "relative flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors",
+        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        dimmed && FILTER_DIM_CLASS,
+      )}
       style={{ paddingLeft: `${16 + indent + 16}px` }}
     >
       {Array.from({ length: depth }, (_, i) => (

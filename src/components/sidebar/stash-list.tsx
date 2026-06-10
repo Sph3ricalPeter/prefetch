@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
-import { SectionCount } from "@/components/ui/section-count";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 
 export function StashList() {
   const stashes = useRepoStore((s) => s.stashes);
@@ -33,11 +34,10 @@ export function StashList() {
   } | null>(null);
   const [confirmDropStash, setConfirmDropStash] = useState<number | null>(null);
 
-  const filtered = filter
-    ? stashes.filter((s) =>
-        s.message.toLowerCase().includes(filter.toLowerCase()),
-      )
-    : stashes;
+  // Filter dims non-matching rows rather than hiding them.
+  const q = filter.trim().toLowerCase();
+  const isDimmed = (message: string) =>
+    q !== "" && !message.toLowerCase().includes(q);
 
   return (
     <div>
@@ -54,15 +54,17 @@ export function StashList() {
           )}
           Stash
           {stashes.length > 0 && (
-            <SectionCount filtered={filtered.length} total={stashes.length} />
+            <span className="ml-1 normal-case tracking-normal text-faint">
+              {stashes.length}
+            </span>
           )}
         </button>
       </div>
 
       {/* Stash entries */}
-      {isOpen && filtered.length > 0 && (
+      {isOpen && stashes.length > 0 && (
         <div>
-          {filtered.map((stash) => (
+          {stashes.map((stash) => (
             <div
               key={stash.index}
               onClick={() => selectStash(stash.index)}
@@ -70,11 +72,13 @@ export function StashList() {
                 e.preventDefault();
                 setStashContextMenu({ index: stash.index, x: e.clientX, y: e.clientY });
               }}
-              className={`group flex items-center gap-1.5 px-3 py-1 text-xs cursor-pointer transition-colors ${
+              className={cn(
+                "group flex items-center gap-1.5 px-3 py-1 text-xs cursor-pointer transition-colors",
                 selectedStashIndex === stash.index
                   ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-secondary"
-              }`}
+                  : "text-muted-foreground hover:bg-secondary",
+                isDimmed(stash.message) && FILTER_DIM_CLASS,
+              )}
             >
               <Archive className="h-3 w-3 shrink-0" />
               <span className="truncate flex-1">{stash.message}</span>
