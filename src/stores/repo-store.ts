@@ -1550,7 +1550,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getStashes(),
       ]);
       set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
-      toast.success("Stash applied");
+      toast.success("Stash applied & removed from list");
     } catch (e) {
       set({ isLoading: false });
       toast.error(errorMessage(e));
