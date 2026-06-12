@@ -12,6 +12,11 @@ import {
   Pencil,
   ArrowRightLeft,
   HelpCircle,
+  Archive,
+  ExternalLink,
+  Copy,
+  Undo2,
+  Save,
 } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import type { FileStatus } from "@/types/git";
@@ -1308,22 +1313,22 @@ function buildFileContextMenuItems(
 
   // Stage / unstage
   if (isStaged) {
-    items.push({ label: "Unstage file", onClick: () => unstage([file.path]) });
+    items.push({ label: "Unstage file", onClick: () => unstage([file.path]), icon: Minus });
   } else {
-    items.push({ label: "Stage file", onClick: () => stage([file.path]) });
+    items.push({ label: "Stage file", onClick: () => stage([file.path]), icon: Plus });
   }
 
   // Stash (only for unstaged files)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: "Stash this file", onClick: () => stashFiles([file.path]) });
+    items.push({ label: "Stash this file", onClick: () => stashFiles([file.path]), icon: Archive });
   }
 
   items.push({ separator: true });
 
   // External
-  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path) });
-  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path) });
+  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path), icon: ExternalLink });
+  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path), icon: FolderOpen });
 
   items.push({ separator: true });
 
@@ -1331,6 +1336,7 @@ function buildFileContextMenuItems(
   items.push({
     label: "Copy file path",
     onClick: () => navigator.clipboard.writeText(file.path),
+    icon: Copy,
   });
 
   items.push({ separator: true });
@@ -1340,11 +1346,13 @@ function buildFileContextMenuItems(
     label: "Discard changes",
     onClick: () => discard(file.path),
     destructive: true,
+    icon: Undo2,
   });
   items.push({
     label: "Delete file",
     onClick: () => deleteFile(file.path),
     destructive: true,
+    icon: Trash2,
   });
 
   return items;
@@ -1365,21 +1373,21 @@ function buildFolderContextMenuItems(
 
   // Stage / unstage
   if (isStaged) {
-    items.push({ label: `Unstage folder (${count} files)`, onClick: () => unstage(paths) });
+    items.push({ label: `Unstage folder (${count} files)`, onClick: () => unstage(paths), icon: Minus });
   } else {
-    items.push({ label: `Stage folder (${count} files)`, onClick: () => stage(paths) });
+    items.push({ label: `Stage folder (${count} files)`, onClick: () => stage(paths), icon: Plus });
   }
 
   // Stash (only for unstaged)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: "Stash folder", onClick: () => stashFiles(paths) });
+    items.push({ label: "Stash folder", onClick: () => stashFiles(paths), icon: Archive });
   }
 
   items.push({ separator: true });
 
   // External
-  items.push({ label: "Open folder", onClick: () => showInFolder(folderPath) });
+  items.push({ label: "Open folder", onClick: () => showInFolder(folderPath), icon: FolderOpen });
 
   items.push({ separator: true });
 
@@ -1388,6 +1396,7 @@ function buildFolderContextMenuItems(
     label: "Discard folder changes",
     onClick: () => discard(paths),
     destructive: true,
+    icon: Undo2,
   });
 
   return items;
@@ -1406,15 +1415,15 @@ function buildBatchContextMenuItems(
 
   // Stage / unstage
   if (isStaged) {
-    items.push({ label: `Unstage ${count} files`, onClick: () => unstage(paths) });
+    items.push({ label: `Unstage ${count} files`, onClick: () => unstage(paths), icon: Minus });
   } else {
-    items.push({ label: `Stage ${count} files`, onClick: () => stage(paths) });
+    items.push({ label: `Stage ${count} files`, onClick: () => stage(paths), icon: Plus });
   }
 
   // Stash (only for unstaged)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: `Stash ${count} files`, onClick: () => stashFiles(paths) });
+    items.push({ label: `Stash ${count} files`, onClick: () => stashFiles(paths), icon: Archive });
   }
 
   items.push({ separator: true });
@@ -1424,6 +1433,7 @@ function buildBatchContextMenuItems(
     label: `Discard ${count} files`,
     onClick: () => discard(paths),
     destructive: true,
+    icon: Undo2,
   });
 
   return items;
@@ -1440,26 +1450,28 @@ function buildConflictContextMenuItems(
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
-  items.push({ label: "Accept Ours", onClick: () => resolveOurs(file.path) });
-  items.push({ label: "Accept Theirs", onClick: () => resolveTheirs(file.path) });
+  items.push({ label: "Accept Ours", onClick: () => resolveOurs(file.path), icon: Check });
+  items.push({ label: "Accept Theirs", onClick: () => resolveTheirs(file.path), icon: Check });
 
   if (resolveManual && outputText != null) {
     items.push({
       label: "Save Resolution",
       onClick: () => resolveManual(file.path, outputText),
+      icon: Save,
     });
   }
 
   items.push({ separator: true });
 
-  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path) });
-  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path) });
+  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path), icon: ExternalLink });
+  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path), icon: FolderOpen });
 
   items.push({ separator: true });
 
   items.push({
     label: "Copy file path",
     onClick: () => navigator.clipboard.writeText(file.path),
+    icon: Copy,
   });
 
   return items;

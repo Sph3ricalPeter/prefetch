@@ -6,6 +6,21 @@ import {
   X,
   AlertTriangle,
   Loader2,
+  Check,
+  Copy,
+  Trash2,
+  GitMerge,
+  FastForward,
+  Link,
+  Pencil,
+  Cherry,
+  GitBranchPlus,
+  Tag,
+  Undo2,
+  RotateCcw,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ArchiveRestore,
 } from "lucide-react";
 import { getUiState, setUiState } from "@/lib/database";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -691,15 +706,18 @@ export function GraphPanel() {
             {
               label: "Apply (keep in stash list)",
               onClick: () => applyStash(stashContextMenu.index),
+              icon: ArrowDownToLine,
             },
             {
               label: "Pop (apply & remove)",
               onClick: () => popStash(stashContextMenu.index),
+              icon: ArchiveRestore,
             },
             {
               label: "Drop (discard)",
               onClick: () => setConfirmDropStash(stashContextMenu.index),
               destructive: true,
+              icon: Trash2,
             },
           ]}
           onClose={() => setStashContextMenu(null)}
@@ -1232,10 +1250,12 @@ function buildCommitContextMenuItems(
       items.push({
         label: `Checkout ${branch.name}`,
         onClick: () => checkoutBranch(branch.name),
+        icon: Check,
       });
       items.push({
         label: `Copy branch name: ${branch.name}`,
         onClick: () => navigator.clipboard.writeText(branch.name),
+        icon: Copy,
       });
       const slashIdx = branch.name.indexOf("/");
       if (slashIdx > 0) {
@@ -1245,6 +1265,7 @@ function buildCommitContextMenuItems(
           label: `Delete ${branch.name} from ${remote}…`,
           onClick: () => confirmDeleteBranch(remoteBranch, false, true, remote),
           destructive: true,
+          icon: Trash2,
         });
       }
       items.push({ separator: true });
@@ -1254,6 +1275,7 @@ function buildCommitContextMenuItems(
         items.push({
           label: `Checkout ${branch.name}`,
           onClick: () => checkoutBranch(branch.name),
+          icon: Check,
         });
       }
 
@@ -1261,22 +1283,25 @@ function buildCommitContextMenuItems(
         items.push({
           label: `Merge ${branch.name} into ${currentBranch}`,
           onClick: () => mergeInto(branch.name),
+          icon: GitMerge,
         });
         items.push({
           label: branch.can_fast_forward
             ? `Fast-forward ${currentBranch} to ${branch.name}`
             : `Rebase ${currentBranch} onto ${branch.name}`,
           onClick: () => rebaseOnto(branch.name),
+          icon: FastForward,
         });
       }
 
-      items.push({ label: "Pull", onClick: () => pull() });
-      items.push({ label: "Push", onClick: () => push() });
-      items.push({ label: "Set upstream…", onClick: () => setUpstream(branch.name) });
-      items.push({ label: "Rename branch…", onClick: () => renameBranch(branch.name) });
+      items.push({ label: "Pull", onClick: () => pull(), icon: ArrowDownToLine });
+      items.push({ label: "Push", onClick: () => push(), icon: ArrowUpFromLine });
+      items.push({ label: "Set upstream…", onClick: () => setUpstream(branch.name), icon: Link });
+      items.push({ label: "Rename branch…", onClick: () => renameBranch(branch.name), icon: Pencil });
       items.push({
         label: `Copy branch name: ${branch.name}`,
         onClick: () => navigator.clipboard.writeText(branch.name),
+        icon: Copy,
       });
 
       if (!isCurrent) {
@@ -1285,12 +1310,14 @@ function buildCommitContextMenuItems(
           label: `Delete ${branch.name}…`,
           onClick: () => confirmDeleteBranch(branch.name, true, false, "origin"),
           destructive: true,
+          icon: Trash2,
         });
         if (hasRemote) {
           items.push({
             label: `Delete ${branch.name} (local + remote)…`,
             onClick: () => confirmDeleteBranch(branch.name, true, true, "origin"),
             destructive: true,
+            icon: Trash2,
           });
         }
       }
@@ -1306,6 +1333,7 @@ function buildCommitContextMenuItems(
   items.push({
     label: `Cherry-pick onto ${currentBranch ?? "HEAD"}`,
     onClick: () => cherryPick(commitId),
+    icon: Cherry,
   });
 
   // Only show commit-level merge/rebase when no local branch already
@@ -1314,10 +1342,12 @@ function buildCommitContextMenuItems(
     items.push({
       label: `Merge ${shortSha} into ${currentBranch}`,
       onClick: () => mergeInto(commitId),
+      icon: GitMerge,
     });
     items.push({
       label: `Rebase ${currentBranch} onto ${shortSha}`,
       onClick: () => rebaseOnto(commitId),
+      icon: FastForward,
     });
   }
 
@@ -1327,14 +1357,17 @@ function buildCommitContextMenuItems(
   items.push({
     label: `Checkout ${shortSha} (detached HEAD)`,
     onClick: () => checkoutDetached(commitId),
+    icon: Check,
   });
   items.push({
     label: `Create branch at ${shortSha}…`,
     onClick: () => createBranchHere(commitId),
+    icon: GitBranchPlus,
   });
   items.push({
     label: `Create tag at ${shortSha}…`,
     onClick: () => createTagHere(commitId),
+    icon: Tag,
   });
 
   // Per-tag actions for tags already pointing at this commit
@@ -1347,11 +1380,13 @@ function buildCommitContextMenuItems(
     items.push({
       label: `Copy tag name: ${tag.name}`,
       onClick: () => navigator.clipboard.writeText(tag.name),
+      icon: Copy,
     });
     items.push({
       label: `Delete tag ${tag.name}…`,
       onClick: () => confirmDeleteTag(tag.name),
       destructive: true,
+      icon: Trash2,
     });
   }
 
@@ -1362,20 +1397,24 @@ function buildCommitContextMenuItems(
     items.push({
       label: "Edit commit message…",
       onClick: () => openRewordDialog(commitId),
+      icon: Pencil,
     });
   }
   items.push({
     label: `Revert ${shortSha}`,
     onClick: () => revertCommit(commitId),
+    icon: Undo2,
   });
   items.push({
     label: `Reset soft to ${shortSha} (keep changes)`,
     onClick: () => resetTo(commitId, "soft"),
+    icon: RotateCcw,
   });
   items.push({
     label: `Reset hard to ${shortSha}`,
     onClick: () => resetTo(commitId, "hard"),
     destructive: true,
+    icon: RotateCcw,
   });
 
   items.push({ separator: true });
@@ -1384,6 +1423,7 @@ function buildCommitContextMenuItems(
   items.push({
     label: `Copy SHA: ${commitId.slice(0, 7)}`,
     onClick: () => navigator.clipboard.writeText(commitId),
+    icon: Copy,
   });
 
   // Copy link to commit (when forge is detected)
@@ -1394,6 +1434,7 @@ function buildCommitContextMenuItems(
     items.push({
       label: "Copy link to commit",
       onClick: () => navigator.clipboard.writeText(commitUrl),
+      icon: Link,
     });
 
     // Copy link to branch (for branches on this commit)
@@ -1406,6 +1447,7 @@ function buildCommitContextMenuItems(
       items.push({
         label: `Copy link to ${branch.name}`,
         onClick: () => navigator.clipboard.writeText(branchUrl),
+        icon: Link,
       });
     }
   }

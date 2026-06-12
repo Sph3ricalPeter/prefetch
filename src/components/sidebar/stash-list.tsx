@@ -3,7 +3,8 @@ import {
   ChevronDown,
   ChevronRight,
   Archive,
-  ArrowUpFromLine,
+  ArchiveRestore,
+  ArrowDownToLine,
   Trash2,
 } from "lucide-react";
 import {
@@ -94,7 +95,7 @@ export function StashList() {
                     disabled={isLoading}
                     className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground transition-all disabled:opacity-40"
                   >
-                    <ArrowUpFromLine className="h-3 w-3" />
+                    <ArchiveRestore className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>Pop (apply & remove)</TooltipContent>
@@ -178,15 +179,18 @@ function buildStashContextMenuItems(
     {
       label: "Apply (keep in stash list)",
       onClick: () => applyStash(index),
+      icon: ArrowDownToLine,
     },
     {
       label: "Pop (apply & remove)",
       onClick: () => popStash(index),
+      icon: ArchiveRestore,
     },
     {
       label: "Drop (discard)",
       onClick: () => dropStash(index),
       destructive: true,
+      icon: Trash2,
     },
   ];
 }

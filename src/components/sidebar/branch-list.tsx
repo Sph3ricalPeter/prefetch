@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal, Check, Monitor, Cloud } from "lucide-react";
+import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal, GitMerge, Check, Monitor, Cloud, FastForward, ArrowDownToLine, ArrowUpFromLine, Link, Pencil, Copy, Trash2 } from "lucide-react";
 import type { BranchInfo, PipelineStatus, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { effectivePipelineStatus } from "@/lib/ci-utils";
@@ -354,6 +354,7 @@ function buildBranchContextMenuItems(
     items.push({
       label: `Checkout ${branch.name}`,
       onClick: () => checkout(branch.name),
+      icon: Check,
     });
     items.push({ separator: true });
   }
@@ -363,12 +364,14 @@ function buildBranchContextMenuItems(
     items.push({
       label: `Merge ${branch.name} into ${currentBranch}`,
       onClick: () => mergeInto(branch.name),
+      icon: GitMerge,
     });
     items.push({
       label: branch.can_fast_forward
         ? `Fast-forward ${currentBranch} to ${branch.name}`
         : `Rebase ${currentBranch} onto ${branch.name}`,
       onClick: () => rebaseOnto(branch.name),
+      icon: FastForward,
     });
     items.push({ separator: true });
   }
@@ -377,15 +380,18 @@ function buildBranchContextMenuItems(
   items.push({
     label: "Pull",
     onClick: () => pull(),
+    icon: ArrowDownToLine,
   });
   items.push({
     label: "Push",
     onClick: () => push(),
+    icon: ArrowUpFromLine,
   });
   if (!hasRemote) {
     items.push({
       label: "Set upstream…",
       onClick: () => setUpstream(branch.name),
+      icon: Link,
     });
   }
 
@@ -395,10 +401,12 @@ function buildBranchContextMenuItems(
   items.push({
     label: "Rename branch…",
     onClick: () => renameBranch(branch.name, hasRemote),
+    icon: Pencil,
   });
   items.push({
     label: "Copy branch name",
     onClick: () => navigator.clipboard.writeText(branch.name),
+    icon: Copy,
   });
 
   // Delete (not for current branch)
@@ -414,17 +422,20 @@ function buildBranchContextMenuItems(
       label: "Delete local…",
       onClick: () => confirmDeleteBranch(branch.name, true, false, remoteName),
       destructive: true,
+      icon: Trash2,
     });
     if (hasRemote) {
       items.push({
         label: `Delete from ${remoteName}…`,
         onClick: () => confirmDeleteBranch(branch.name, false, true, remoteName),
         destructive: true,
+        icon: Trash2,
       });
       items.push({
         label: "Delete local + remote…",
         onClick: () => confirmDeleteBranch(branch.name, true, true, remoteName),
         destructive: true,
+        icon: Trash2,
       });
     }
   }

@@ -4,6 +4,9 @@ import {
   ChevronRight,
   Tag,
   Plus,
+  ArrowUpFromLine,
+  Copy,
+  Trash2,
 } from "lucide-react";
 import {
   Tooltip,
@@ -218,16 +221,19 @@ function buildTagContextMenuItems(
     {
       label: "Push to remote",
       onClick: () => pushTag(tagName),
+      icon: ArrowUpFromLine,
     },
     {
       label: "Copy tag name",
       onClick: () => navigator.clipboard.writeText(tagName),
+      icon: Copy,
     },
     { separator: true },
     {
       label: `Delete ${tagName}…`,
       onClick: () => confirmDelete(tagName),
       destructive: true,
+      icon: Trash2,
     },
   ];
 }

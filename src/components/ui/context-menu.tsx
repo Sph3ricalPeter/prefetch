@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import type { LucideIcon } from "lucide-react";
 
 export type ContextMenuItem =
-  | { label: string; onClick: () => void; destructive?: boolean; disabled?: boolean }
+  | {
+      label: string;
+      onClick: () => void;
+      destructive?: boolean;
+      disabled?: boolean;
+      icon?: LucideIcon;
+    }
   | { separator: true };
 
 interface ContextMenuProps {
@@ -65,13 +72,16 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               onClose();
             }}
             disabled={item.disabled}
-            className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors disabled:opacity-40 ${
+            className={`flex w-full items-center gap-3 px-3 py-1.5 text-xs transition-colors disabled:opacity-40 ${
               item.destructive
                 ? "text-red-400 hover:bg-destructive/20"
                 : "text-foreground hover:bg-secondary"
             }`}
           >
-            {item.label}
+            <span className="flex-1 text-left">{item.label}</span>
+            {item.icon && (
+              <item.icon className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            )}
           </button>
         ),
       )}
