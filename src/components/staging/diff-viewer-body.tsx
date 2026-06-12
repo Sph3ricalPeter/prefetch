@@ -5,7 +5,7 @@ import { useRepoStore } from "@/stores/repo-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { getDataAttrFromEvent } from "@/lib/utils";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
-import { Plus, Check, Minus, UnfoldVertical, RotateCcw } from "lucide-react";
+import { Plus, Check, Minus, UnfoldVertical, RotateCcw, Copy } from "lucide-react";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import type { ExpandableContext } from "@/hooks/use-expandable-context";
@@ -13,6 +13,17 @@ import type { ThemedToken } from "shiki";
 import { alignBlock, computeHunkIntraLineRanges, type CharRange } from "@/lib/intra-line-diff";
 import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
 import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
+import { useDiffLineSelection } from "@/hooks/use-diff-line-selection";
+import { buildSelectionRef } from "@/lib/diff-selection";
+import { toast } from "sonner";
+
+/** Write text to the clipboard and surface a toast (success or failure). */
+function copyWithToast(text: string, message: string, description?: string) {
+  navigator.clipboard.writeText(text).then(
+    () => toast.success(message, description ? { description } : undefined),
+    () => toast.error("Failed to copy to clipboard"),
+  );
+}
 
 interface ToolbarProps {
   onExpandAll?: () => void;
@@ -22,33 +33,62 @@ interface ToolbarProps {
   onBack?: () => void;
 }
 
-interface DiffViewerInteractiveProps {
+interface DiffViewerBodyProps {
   diff: FileDiff;
   filePath: string;
   expandCtx?: ExpandableContext;
+  /** When true, lines/hunks can be staged/unstaged. When false, the viewer is
+   *  read-only but still supports line selection + copy. */
+  interactive?: boolean;
+  /** Relevant only when interactive: whether the diff shows already-staged changes. */
   staged?: boolean;
+  /** Short/long SHA of the commit being viewed; appended to copied selection refs. */
+  commitSha?: string | null;
   toolbarProps?: ToolbarProps;
 }
 
 /**
- * Wrapper that resets selection state when the diff identity changes
- * by re-keying the inner component.
+ * Shared diff viewer body for both the interactive (working-tree staging) and
+ * read-only (commit/stash) modes. Line selection, syntax highlighting, the
+ * minimap and the copy-selection-reference action are identical across modes;
+ * the `interactive` flag gates the staging-only affordances (stage buttons and
+ * stage/unstage menu items).
+ *
+ * Wrapper resets selection state when the diff identity changes by re-keying
+ * the inner component.
  */
-export function DiffViewerInteractive({ diff, filePath, expandCtx, staged = false, toolbarProps }: DiffViewerInteractiveProps) {
+export function DiffViewerBody({ diff, filePath, expandCtx, interactive = false, staged = false, commitSha, toolbarProps }: DiffViewerBodyProps) {
   const diffKey = useMemo(
-    () => `${diff.path}:${diff.hunks.length}:${diff.hunks.reduce((n, h) => n + h.lines.length, 0)}`,
-    [diff],
+    () => `${diff.path}:${commitSha ?? ""}:${staged}:${diff.hunks.length}:${diff.hunks.reduce((n, h) => n + h.lines.length, 0)}`,
+    [diff, commitSha, staged],
   );
 
-  return <DiffViewerInteractiveInner key={diffKey} diff={diff} filePath={filePath} expandCtx={expandCtx} staged={staged} toolbarProps={toolbarProps} />;
+  return (
+    <DiffViewerBodyInner
+      key={diffKey}
+      diff={diff}
+      filePath={filePath}
+      expandCtx={expandCtx}
+      interactive={interactive}
+      staged={staged}
+      commitSha={commitSha}
+      toolbarProps={toolbarProps}
+    />
+  );
 }
 
-function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false, toolbarProps }: DiffViewerInteractiveProps) {
-  const [selectedLines, setSelectedLines] = useState<Set<string>>(new Set());
+function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, staged = false, commitSha, toolbarProps }: DiffViewerBodyProps) {
   const [tokensByHunk, setTokensByHunk] = useState<Map<number, ThemedToken[][]>>(new Map());
   const [fileTokens, setFileTokens] = useState<ThemedToken[][] | null>(null);
   const [oldFileTokens, setOldFileTokens] = useState<ThemedToken[][] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const {
+    selectedLines,
+    clearSelection,
+    toggleHunk,
+    handleContainerMouseDown,
+    handleContainerMouseMove,
+  } = useDiffLineSelection(diff, scrollRef);
   const stageHunk = useRepoStore((s) => s.stageHunk);
   const unstageHunk = useRepoStore((s) => s.unstageHunk);
   const stageLines = useRepoStore((s) => s.stageLines);
@@ -68,38 +108,6 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
     () => diff.hunks.map(computeHunkIntraLineRanges),
     [diff],
   );
-
-  // Ordered list of all changeable line keys for range calculations
-  const changeableKeys = useMemo(() => {
-    const keys: string[] = [];
-    for (let hi = 0; hi < diff.hunks.length; hi++) {
-      for (let li = 0; li < diff.hunks[hi].lines.length; li++) {
-        if (diff.hunks[hi].lines[li].origin === "+" || diff.hunks[hi].lines[li].origin === "-") {
-          keys.push(`${hi}:${li}`);
-        }
-      }
-    }
-    return keys;
-  }, [diff]);
-
-  const getRange = useCallback((from: string, to: string): string[] => {
-    const fromIdx = changeableKeys.indexOf(from);
-    const toIdx = changeableKeys.indexOf(to);
-    if (fromIdx === -1 || toIdx === -1) return [];
-    const start = Math.min(fromIdx, toIdx);
-    const end = Math.max(fromIdx, toIdx);
-    return changeableKeys.slice(start, end + 1);
-  }, [changeableKeys]);
-
-  // Drag state: tracked via ref to avoid re-renders during drag
-  const dragRef = useRef<{
-    active: boolean;
-    addMode: boolean; // true = selecting, false = deselecting
-    startKey: string;
-    lastKey: string;
-    baseSelection: Set<string>; // selection state before drag started
-  } | null>(null);
-  const anchorRef = useRef<string | null>(null);
 
   // Highlight hunks progressively — render each as it finishes.
   // Yields between hunks so clicks/renders can interrupt long highlighting runs.
@@ -181,91 +189,6 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
     [],
   );
 
-  const handleContainerMouseDown = useCallback((e: React.MouseEvent) => {
-    const key = getLineKeyFromEvent(e);
-    if (e.button !== 0) return;
-    if (!key || !changeableKeys.includes(key)) return;
-
-    // Prevent text selection during drag
-    e.preventDefault();
-
-    if (e.shiftKey && anchorRef.current) {
-      // Shift+click: select range from anchor to clicked line
-      const range = getRange(anchorRef.current, key);
-      setSelectedLines((prev) => {
-        const next = new Set(prev);
-        for (const k of range) next.add(k);
-        return next;
-      });
-      return;
-    }
-
-    // Start drag — add mode is based on whether we're selecting or deselecting
-    const willSelect = !selectedLines.has(key);
-    anchorRef.current = key;
-    dragRef.current = {
-      active: true,
-      addMode: willSelect,
-      startKey: key,
-      lastKey: key,
-      baseSelection: new Set(selectedLines),
-    };
-
-    // Toggle the clicked line
-    setSelectedLines((prev) => {
-      const next = new Set(prev);
-      if (willSelect) next.add(key); else next.delete(key);
-      return next;
-    });
-  }, [getLineKeyFromEvent, changeableKeys, getRange, selectedLines]);
-
-  const handleContainerMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!dragRef.current?.active) return;
-    const key = getLineKeyFromEvent(e);
-    if (!key || !changeableKeys.includes(key) || key === dragRef.current.lastKey) return;
-
-    dragRef.current.lastKey = key;
-    const range = getRange(dragRef.current.startKey, key);
-    setSelectedLines(() => {
-      const next = new Set(dragRef.current!.baseSelection);
-      for (const k of range) {
-        if (dragRef.current!.addMode) next.add(k); else next.delete(k);
-      }
-      return next;
-    });
-  }, [getLineKeyFromEvent, changeableKeys, getRange]);
-
-  // Global mouseup to end drag
-  useEffect(() => {
-    const handleMouseUp = () => {
-      if (dragRef.current?.active) dragRef.current.active = false;
-    };
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => window.removeEventListener("mouseup", handleMouseUp);
-  }, []);
-
-  const toggleHunk = useCallback((hunkIdx: number) => {
-    setSelectedLines((prev) => {
-      const next = new Set(prev);
-      const hunk = diff.hunks[hunkIdx];
-      if (!hunk) return prev;
-
-      const hunkKeys = hunk.lines
-        .map((line, li) => ({ key: `${hunkIdx}:${li}`, line }))
-        .filter(({ line }) => line.origin === "+" || line.origin === "-");
-
-      const allSelected = hunkKeys.every(({ key }) => next.has(key));
-
-      if (allSelected) {
-        for (const { key } of hunkKeys) next.delete(key);
-      } else {
-        for (const { key } of hunkKeys) next.add(key);
-      }
-
-      return next;
-    });
-  }, [diff]);
-
   const handleApplySelected = useCallback(async () => {
     if (selectedLines.size === 0) return;
     const selections = [...selectedLines].map((key) => {
@@ -277,8 +200,8 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
     } else {
       await stageLines(filePath, selections);
     }
-    setSelectedLines(new Set());
-  }, [selectedLines, filePath, stageLines, unstageLines, staged]);
+    clearSelection();
+  }, [selectedLines, filePath, stageLines, unstageLines, staged, clearSelection]);
 
   const handleApplyHunk = useCallback(async (hunkIdx: number) => {
     if (staged) {
@@ -287,6 +210,11 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
       await stageHunk(filePath, hunkIdx);
     }
   }, [filePath, stageHunk, unstageHunk, staged]);
+
+  const copySelectionRef = useCallback(() => {
+    const ref = buildSelectionRef(filePath, diff, selectedLines, commitSha);
+    if (ref) copyWithToast(ref, "Copied selection reference", ref);
+  }, [filePath, diff, selectedLines, commitSha]);
 
   const wrapClass = diffWrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre";
 
@@ -301,61 +229,74 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     const lineKey = getLineKeyFromEvent(e);
     const hunkIndex = getHunkIndexFromEvent(e);
-    if (hunkIndex === null) return;
-
-    e.preventDefault();
     const items: ContextMenuItem[] = [];
     const actionLabel = staged ? "Unstage" : "Stage";
 
+    // Selection group — copy/clear are available in both modes; staging only when interactive.
     if (selectedLines.size > 0) {
-      items.push({
-        label: `${actionLabel} ${selectedLines.size} selected line${selectedLines.size > 1 ? "s" : ""}`,
-        onClick: handleApplySelected,
-      });
-      items.push({ separator: true });
+      if (interactive) {
+        items.push({
+          label: `${actionLabel} ${selectedLines.size} selected line${selectedLines.size > 1 ? "s" : ""}`,
+          onClick: handleApplySelected,
+          icon: staged ? Minus : Plus,
+        });
+      }
+      items.push({ label: "Copy selection reference", onClick: copySelectionRef, icon: Copy });
+      items.push({ label: "Clear selection", onClick: clearSelection, icon: RotateCcw });
     }
 
-    items.push({
-      label: `${actionLabel} this hunk`,
-      onClick: () => handleApplyHunk(hunkIndex),
-    });
+    // Hunk group (interactive only).
+    if (interactive && hunkIndex !== null) {
+      if (items.length > 0) items.push({ separator: true });
+      items.push({
+        label: `${actionLabel} this hunk`,
+        onClick: () => handleApplyHunk(hunkIndex),
+        icon: staged ? Minus : Plus,
+      });
+    }
 
+    // Single-line group.
     if (lineKey) {
       const [hi, li] = lineKey.split(":").map(Number);
       const line = diff.hunks[hi]?.lines[li];
       if (line) {
-        items.push({ separator: true });
+        if (items.length > 0) items.push({ separator: true });
         items.push({
           label: "Copy line content",
-          onClick: () => navigator.clipboard.writeText(line.content),
+          onClick: () => copyWithToast(line.content, "Copied line content"),
+          icon: Copy,
         });
       }
     }
 
+    if (items.length === 0) return;
+    e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, items });
-  }, [getLineKeyFromEvent, getHunkIndexFromEvent, selectedLines, staged, handleApplySelected, handleApplyHunk, diff]);
+  }, [getLineKeyFromEvent, getHunkIndexFromEvent, selectedLines, staged, interactive, handleApplySelected, handleApplyHunk, copySelectionRef, clearSelection, diff]);
 
   const lineLabel = `${selectedLines.size} line${selectedLines.size > 1 ? "s" : ""}`;
   const selectionSlot = selectedLines.size > 0 ? (
     <>
       <button
-        onClick={() => setSelectedLines(new Set())}
+        onClick={clearSelection}
         className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:border-border-hover"
       >
         <RotateCcw className="w-3.5 h-3.5" />
         Clear
       </button>
-      <button
-        onClick={handleApplySelected}
-        className={`flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
-          staged
-            ? "border-orange-500/30 text-orange-400 hover:bg-orange-500/10 hover:border-orange-500/40"
-            : "border-green-500/30 text-green-400 hover:bg-green-500/10 hover:border-green-500/40"
-        }`}
-      >
-        {staged ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-        {staged ? `Unstage ${lineLabel}` : `Stage ${lineLabel}`}
-      </button>
+      {interactive && (
+        <button
+          onClick={handleApplySelected}
+          className={`flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+            staged
+              ? "border-orange-500/30 text-orange-400 hover:bg-orange-500/10 hover:border-orange-500/40"
+              : "border-green-500/30 text-green-400 hover:bg-green-500/10 hover:border-green-500/40"
+          }`}
+        >
+          {staged ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+          {staged ? `Unstage ${lineLabel}` : `Stage ${lineLabel}`}
+        </button>
+      )}
     </>
   ) : null;
 
@@ -391,43 +332,46 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                   <>
                     {gapRender.topLines.length > 0 &&
                       (diffViewMode === "side-by-side" ? (
-                        <InteractiveSideBySideContextBlock lines={gapRender.topLines} wrapClass={wrapClass} fileTokens={fileTokens} />
+                        <SideBySideContextBlock lines={gapRender.topLines} wrapClass={wrapClass} fileTokens={fileTokens} />
                       ) : (
                         gapRender.topLines.map((line, i) => (
-                          <InteractiveContextLine key={`gt-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
+                          <ContextLine key={`gt-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
                         ))
                       ))}
                     {gapRender.remainingCount > 0 && (
-                      <InteractiveExpandSeparator
+                      <ExpandSeparator
                         remainingCount={gapRender.remainingCount}
                         onExpandAll={gapRender.onExpandAll}
                       />
                     )}
                     {gapRender.bottomLines.length > 0 &&
                       (diffViewMode === "side-by-side" ? (
-                        <InteractiveSideBySideContextBlock lines={gapRender.bottomLines} wrapClass={wrapClass} fileTokens={fileTokens} />
+                        <SideBySideContextBlock lines={gapRender.bottomLines} wrapClass={wrapClass} fileTokens={fileTokens} />
                       ) : (
                         gapRender.bottomLines.map((line, i) => (
-                          <InteractiveContextLine key={`gb-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
+                          <ContextLine key={`gb-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
                         ))
                       ))}
                   </>
                 )}
 
-                {/* Hunk header with stage button (hidden when gap fully expanded) */}
+                {/* Hunk header — select-hunk checkbox always; stage button only when interactive
+                    (hidden when gap fully expanded) */}
                 {(!gapRender || gapRender.remainingCount > 0) && (
                   <div className="sticky top-0 z-10 flex items-center bg-secondary px-1 py-0.5 backdrop-blur-sm group">
-                    <button
-                      onClick={() => handleApplyHunk(hi)}
-                      title={staged ? "Unstage this hunk" : "Stage this hunk"}
-                      className={`flex items-center justify-center w-5 h-5 rounded transition-colors mr-1 shrink-0 ${
-                        staged
-                          ? "text-orange-400 hover:bg-orange-500/20"
-                          : "text-green-400 hover:bg-green-500/20"
-                      }`}
-                    >
-                      {staged ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                    </button>
+                    {interactive && (
+                      <button
+                        onClick={() => handleApplyHunk(hi)}
+                        title={staged ? "Unstage this hunk" : "Stage this hunk"}
+                        className={`flex items-center justify-center w-5 h-5 rounded transition-colors mr-1 shrink-0 ${
+                          staged
+                            ? "text-orange-400 hover:bg-orange-500/20"
+                            : "text-green-400 hover:bg-green-500/20"
+                        }`}
+                      >
+                        {staged ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
                     <button
                       onClick={() => toggleHunk(hi)}
                       title={allHunkSelected ? "Deselect hunk" : "Select hunk"}
@@ -460,7 +404,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                   }}
                 >
                   {diffViewMode === "side-by-side" ? (
-                    <InteractiveSideBySideHunk
+                    <SideBySideHunk
                       hunk={hunk}
                       hunkIndex={hi}
                       hunkTokens={hunkTokens}
@@ -472,7 +416,7 @@ function DiffViewerInteractiveInner({ diff, filePath, expandCtx, staged = false,
                     />
                   ) : (
                     hunk.lines.map((line, li) => (
-                      <InteractiveDiffLine
+                      <DiffLine
                         key={li}
                         line={line}
                         hunkIndex={hi}
@@ -522,9 +466,9 @@ function resolveLineTokens(
   return hunkTokens?.[hunkLineIndex];
 }
 
-// ── Unified interactive line ────────────────────────────────────────────────
+// ── Unified single-pane line ────────────────────────────────────────────────
 
-interface InteractiveDiffLineProps {
+interface DiffLineProps {
   line: DiffLine;
   hunkIndex: number;
   lineIndex: number;
@@ -534,9 +478,9 @@ interface InteractiveDiffLineProps {
   wrapClass: string;
 }
 
-const InteractiveDiffLine = memo(InteractiveDiffLineImpl);
+const DiffLine = memo(DiffLineImpl);
 
-function InteractiveDiffLineImpl({
+function DiffLineImpl({
   line,
   hunkIndex,
   lineIndex,
@@ -544,7 +488,7 @@ function InteractiveDiffLineImpl({
   ranges,
   isSelected,
   wrapClass,
-}: InteractiveDiffLineProps) {
+}: DiffLineProps) {
   const isChangeLine = line.origin === "+" || line.origin === "-";
   const isContext = line.origin === " ";
 
@@ -603,9 +547,9 @@ function InteractiveDiffLineImpl({
   );
 }
 
-// ── Side-by-side interactive hunk ───────────────────────────────────────────
+// ── Side-by-side hunk ───────────────────────────────────────────────────────
 
-interface InteractiveSideBySideHunkProps {
+interface SideBySideHunkProps {
   hunk: DiffHunk;
   hunkIndex: number;
   hunkTokens?: ThemedToken[][];
@@ -679,7 +623,7 @@ function buildSideBySidePairs(hunk: DiffHunk): SideBySidePair[] {
   return pairs;
 }
 
-function InteractiveSideBySideHunk({
+function SideBySideHunk({
   hunk,
   hunkIndex,
   hunkTokens,
@@ -688,7 +632,7 @@ function InteractiveSideBySideHunk({
   fileTokens,
   oldFileTokens,
   intraLineRanges,
-}: InteractiveSideBySideHunkProps) {
+}: SideBySideHunkProps) {
   const pairs = useMemo(() => buildSideBySidePairs(hunk), [hunk]);
 
   return (
@@ -828,13 +772,13 @@ function SideBySideCellImpl({
 
 // ── Expanded context lines (unified) ───────────────────────────────────────
 
-interface InteractiveContextLineProps {
+interface ContextLineProps {
   line: DiffLine;
   tokens?: ThemedToken[];
   wrapClass: string;
 }
 
-function InteractiveContextLine({ line, tokens, wrapClass }: InteractiveContextLineProps) {
+function ContextLine({ line, tokens, wrapClass }: ContextLineProps) {
   return (
     <div className="flex opacity-80">
       <span className="w-5 shrink-0" />
@@ -858,13 +802,13 @@ function InteractiveContextLine({ line, tokens, wrapClass }: InteractiveContextL
 
 // ── Expanded context lines (side-by-side) ──────────────────────────────────
 
-interface InteractiveSideBySideContextBlockProps {
+interface SideBySideContextBlockProps {
   lines: DiffLine[];
   wrapClass: string;
   fileTokens?: ThemedToken[][] | null;
 }
 
-function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: InteractiveSideBySideContextBlockProps) {
+function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideContextBlockProps) {
   return (
     <div>
       {lines.map((line, i) => {
@@ -906,14 +850,14 @@ function InteractiveSideBySideContextBlock({ lines, wrapClass, fileTokens }: Int
   );
 }
 
-// ── Expand separator for interactive viewer ────────────────────────────────
+// ── Expand separator ───────────────────────────────────────────────────────
 
-interface InteractiveExpandSeparatorProps {
+interface ExpandSeparatorProps {
   remainingCount: number;
   onExpandAll: () => void;
 }
 
-function InteractiveExpandSeparator({ remainingCount, onExpandAll }: InteractiveExpandSeparatorProps) {
+function ExpandSeparator({ remainingCount, onExpandAll }: ExpandSeparatorProps) {
   return (
     <div className="flex items-center gap-2 px-3 py-0.5 bg-secondary/60 text-muted-foreground border-y border-border/50 select-none">
       <span className="w-5 shrink-0" />

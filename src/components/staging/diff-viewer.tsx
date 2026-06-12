@@ -1,6 +1,5 @@
 import type { FileDiff } from "@/types/git";
-import { DiffViewerReadonly } from "@/components/staging/diff-viewer-readonly";
-import { DiffViewerInteractive } from "@/components/staging/diff-viewer-interactive";
+import { DiffViewerBody } from "@/components/staging/diff-viewer-body";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { useExpandableContext, type DiffSource } from "@/hooks/use-expandable-context";
 import { ImageDiffViewer } from "@/components/staging/image-diff-viewer";
@@ -60,14 +59,15 @@ export function DiffViewer({ diff, filePath, mode = "readonly", source = {}, sta
 
   return (
     <div className="flex flex-col h-full">
-      {mode === "interactive" ? (
-        <DiffViewerInteractive diff={diff} filePath={resolvedPath} expandCtx={ctx} staged={staged} toolbarProps={toolbarProps} />
-      ) : (
-        <>
-          <DiffToolbar {...toolbarProps} />
-          <DiffViewerReadonly diff={diff} filePath={resolvedPath} expandCtx={ctx} />
-        </>
-      )}
+      <DiffViewerBody
+        diff={diff}
+        filePath={resolvedPath}
+        expandCtx={ctx}
+        interactive={mode === "interactive"}
+        staged={staged}
+        commitSha={source.commitId}
+        toolbarProps={toolbarProps}
+      />
       {diff.is_truncated && diff.hunks.length > 0 && (
         <div className="shrink-0 border-t border-border px-4 py-2 text-center text-xs text-muted-foreground">
           Diff truncated — showing first 50,000 of {diff.total_lines.toLocaleString()} lines

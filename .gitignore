@@ -31,6 +31,9 @@ src-tauri/gen/
 # Playwright MCP
 .playwright-mcp/
 
+# Scratch / skill output
+tmp/
+
 # Screenshots
 *.png
 !src-tauri/icons/*.png
