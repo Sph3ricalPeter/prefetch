@@ -78,15 +78,29 @@ export function ResizeHandle({
     <div
       onMouseDown={onMouseDown}
       className={cn(
-        "relative w-px shrink-0 cursor-col-resize transition-colors",
-        // Hit zone positioning: left handle extends equally both ways,
-        // right handle shifts into the detail panel to avoid overlapping
-        // center-panel content (conflict editor resize handles, etc.)
+        // z-10 keeps the handle (and its grab strip) painted above the center
+        // graph panel regardless of DOM order — otherwise the left handle's
+        // strip, which sits before the graph in the DOM, gets covered by it.
+        "group relative z-10 w-px shrink-0 cursor-col-resize transition-colors",
+        // Hit zone positioning: both handles extend OUTWARD into the center
+        // graph panel, never inward into the side panels — otherwise the grab
+        // area overlaps the side panel's vertical scrollbar.
         side === "left"
-          ? "before:absolute before:inset-y-0 before:-left-1.5 before:w-3 before:cursor-col-resize"
-          : "before:absolute before:inset-y-0 before:-left-px before:w-3 before:cursor-col-resize",
+          ? "before:absolute before:inset-y-0 before:left-0 before:w-3 before:cursor-col-resize"
+          : "before:absolute before:inset-y-0 before:right-0 before:w-3 before:cursor-col-resize",
         isDragging ? "bg-accent" : "bg-border hover:bg-accent",
       )}
-    />
+    >
+      {/* Grip: a thicker rounded bar centered vertically that signals the
+          line is a draggable resize handle. */}
+      <div
+        className={cn(
+          "pointer-events-none absolute left-1/2 top-1/2 h-10 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors",
+          isDragging
+            ? "bg-primary"
+            : "bg-muted-foreground/30 group-hover:bg-muted-foreground/60",
+        )}
+      />
+    </div>
   );
 }
