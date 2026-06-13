@@ -12,8 +12,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
 import { getInitials, getContrastColor, PROFILE_COLORS, PROFILE_ICONS } from "@/lib/avatar";
-import { getTokenInfo } from "@/lib/commands";
-import type { TokenInfo } from "@/lib/commands";
+import { fetchProfileForgeAvatars } from "@/lib/forge-avatars";
 import type { Profile, ProfilePath } from "@/types/profile";
 import type { ForgeKind } from "@/types/git";
 import {
@@ -24,12 +23,6 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { ProfileAvatar, IconSvg } from "@/components/ui/avatar";
 import { ForgeIcon } from "@/components/ui/forge-icons";
-
-const FORGE_AVATAR_HOSTS: { host: string; label: string; kind: ForgeKind }[] = [
-  { host: "github.com", label: "GitHub", kind: "github" },
-  { host: "gitlab.com", label: "GitLab", kind: "gitlab" },
-  { host: "bitbucket.org", label: "Bitbucket", kind: "bitbucket" },
-];
 
 // ── Profile list view ───────────────────────────────────────────────────────
 
@@ -168,7 +161,7 @@ function ProfileEditView({
   const [color, setColor] = useState(profile?.color ?? PROFILE_COLORS[0]);
   const [icon, setIcon] = useState<string | null>(profile?.icon ?? null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile?.avatar_url ?? null);
-  const [forgeAvatars, setForgeAvatars] = useState<Record<string, { url: string; kind: ForgeKind; label: string }>>({});
+  const [forgeAvatars, setForgeAvatars] = useState<Record<string, { url: string; kind: string; label: string }>>({});
   const [paths, setPaths] = useState<ProfilePath[]>([]);
   const [saving, setSaving] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -180,26 +173,15 @@ function ProfileEditView({
     }
   }, [profile, getPathsForProfile]);
 
-  // Fetch forge avatar URLs for existing profiles with tokens
+  // Fetch forge avatar URLs for existing profiles with tokens (incl. self-hosted, #72)
   useEffect(() => {
     if (!profile) return;
     let cancelled = false;
-    Promise.all(
-      FORGE_AVATAR_HOSTS.map(({ host, label, kind }) =>
-        getTokenInfo(profile.id, host)
-          .then((info: TokenInfo | null) => ({ host, label, kind, info }))
-          .catch(() => ({ host, label, kind, info: null as TokenInfo | null }))
-      )
-    ).then((results) => {
-      if (cancelled) return;
-      const map: Record<string, { url: string; kind: ForgeKind; label: string }> = {};
-      for (const { host, label, kind, info } of results) {
-        if (info?.avatar_url) {
-          map[host] = { url: info.avatar_url, kind, label };
-        }
-      }
-      setForgeAvatars(map);
-    });
+    fetchProfileForgeAvatars(profile.id)
+      .then((map) => {
+        if (!cancelled) setForgeAvatars(map);
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [profile]);
 
@@ -407,7 +389,7 @@ function ProfileEditView({
                       }}
                     >
                       <img src={url} alt={label} className="h-full w-full rounded-md object-cover" />
-                      <ForgeIcon kind={kind} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-sm bg-popover p-px text-muted-foreground" />
+                      <ForgeIcon kind={kind as ForgeKind} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-sm bg-popover p-px text-muted-foreground" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{label} avatar</TooltipContent>

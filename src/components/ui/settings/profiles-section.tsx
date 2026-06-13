@@ -18,6 +18,7 @@ import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
 import { getProfileForgeHosts, type ProfileForgeHost } from "@/lib/database";
 import { getInitials, getContrastColor, PROFILE_COLORS, PROFILE_ICONS } from "@/lib/avatar";
+import { fetchProfileForgeAvatars } from "@/lib/forge-avatars";
 import {
   saveForgeToken as saveForgeTokenCmd,
   deleteForgeToken as deleteForgeTokenCmd,
@@ -169,26 +170,15 @@ function ProfileEdit({
     }
   }, [profile, getPathsForProfile]);
 
-  // Fetch forge avatar URLs for existing profiles with tokens
+  // Fetch forge avatar URLs for existing profiles with tokens (incl. self-hosted, #72)
   useEffect(() => {
     if (!profile) return;
     let cancelled = false;
-    Promise.all(
-      FORGE_HOSTS.map(({ host, label, kind }) =>
-        getTokenInfo(profile.id, host)
-          .then((info: TokenInfo | null) => ({ host, label, kind, info }))
-          .catch(() => ({ host, label, kind, info: null as TokenInfo | null }))
-      )
-    ).then((results) => {
-      if (cancelled) return;
-      const map: Record<string, { url: string; kind: string; label: string }> = {};
-      for (const { host, label, kind, info } of results) {
-        if (info?.avatar_url) {
-          map[host] = { url: info.avatar_url, kind, label };
-        }
-      }
-      setForgeAvatars(map);
-    });
+    fetchProfileForgeAvatars(profile.id)
+      .then((map) => {
+        if (!cancelled) setForgeAvatars(map);
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [profile]);
 
