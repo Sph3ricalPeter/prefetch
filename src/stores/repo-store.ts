@@ -647,6 +647,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       lfsInfo: null,
       forgeStatus: null,
       gitIdentity: null,
+      // Clear CI state — otherwise the previous repo's pipelines linger when the
+      // new repo has no forge token (loadCiPipelines early-returns) or no pipelines.
+      ciPipelines: [],
+      ciJobsMap: {},
+      ciSelectedPipelineId: null,
+      ciSelectedJobId: null,
+      ciJobLog: null,
+      ciLoading: false,
     });
     try {
       // openRepo MUST complete first — it sets up Rust-side state (watcher,
@@ -2291,7 +2299,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   loadCiPipelines: async () => {
     const forgeStatus = get().forgeStatus;
-    if (!forgeStatus?.has_token) return;
+    if (!forgeStatus?.has_token) {
+      // No forge token — clear any pipelines carried over from a previous repo.
+      set({ ciPipelines: [], ciJobsMap: {}, ciSelectedPipelineId: null, ciLoading: false });
+      return;
+    }
 
     set({ ciLoading: true });
     try {
