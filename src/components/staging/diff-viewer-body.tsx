@@ -229,44 +229,60 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     const lineKey = getLineKeyFromEvent(e);
     const hunkIndex = getHunkIndexFromEvent(e);
-    const items: ContextMenuItem[] = [];
     const actionLabel = staged ? "Unstage" : "Stage";
 
-    // Selection group — copy/clear are available in both modes; staging only when interactive.
-    if (selectedLines.size > 0) {
-      if (interactive) {
-        items.push({
-          label: `${actionLabel} ${selectedLines.size} selected line${selectedLines.size > 1 ? "s" : ""}`,
-          onClick: handleApplySelected,
-          icon: staged ? Minus : Plus,
-        });
-      }
-      items.push({ label: "Copy selection reference", onClick: copySelectionRef, icon: Copy });
-      items.push({ label: "Clear selection", onClick: clearSelection, icon: RotateCcw });
-    }
+    // Build menu grouped by action type, not by scope: all stage/unstage
+    // actions, then all copy actions, then destructive actions. Within each
+    // group the most specific target (selection) comes before the broader one
+    // (hunk/line).
+    const stageItems: ContextMenuItem[] = [];
+    const copyItems: ContextMenuItem[] = [];
+    const destructiveItems: ContextMenuItem[] = [];
 
-    // Hunk group (interactive only).
+    const line = (() => {
+      if (!lineKey) return null;
+      const [hi, li] = lineKey.split(":").map(Number);
+      return diff.hunks[hi]?.lines[li] ?? null;
+    })();
+
+    // Stage / unstage actions (interactive only).
+    if (interactive && selectedLines.size > 0) {
+      stageItems.push({
+        label: `${actionLabel} ${selectedLines.size} selected line${selectedLines.size > 1 ? "s" : ""}`,
+        onClick: handleApplySelected,
+        icon: staged ? Minus : Plus,
+      });
+    }
     if (interactive && hunkIndex !== null) {
-      if (items.length > 0) items.push({ separator: true });
-      items.push({
+      stageItems.push({
         label: `${actionLabel} this hunk`,
         onClick: () => handleApplyHunk(hunkIndex),
         icon: staged ? Minus : Plus,
       });
     }
 
-    // Single-line group.
-    if (lineKey) {
-      const [hi, li] = lineKey.split(":").map(Number);
-      const line = diff.hunks[hi]?.lines[li];
-      if (line) {
-        if (items.length > 0) items.push({ separator: true });
-        items.push({
-          label: "Copy line content",
-          onClick: () => copyWithToast(line.content, "Copied line content"),
-          icon: Copy,
-        });
-      }
+    // Copy actions.
+    if (selectedLines.size > 0) {
+      copyItems.push({ label: "Copy selection reference", onClick: copySelectionRef, icon: Copy });
+    }
+    if (line) {
+      copyItems.push({
+        label: "Copy line content",
+        onClick: () => copyWithToast(line.content, "Copied line content"),
+        icon: Copy,
+      });
+    }
+
+    // Destructive actions.
+    if (selectedLines.size > 0) {
+      destructiveItems.push({ label: "Clear selection", onClick: clearSelection, icon: RotateCcw });
+    }
+
+    const items: ContextMenuItem[] = [];
+    for (const group of [stageItems, copyItems, destructiveItems]) {
+      if (group.length === 0) continue;
+      if (items.length > 0) items.push({ separator: true });
+      items.push(...group);
     }
 
     if (items.length === 0) return;
