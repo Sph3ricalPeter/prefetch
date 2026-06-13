@@ -14,7 +14,20 @@ import {
   Pencil,
   ArrowRightLeft,
   HelpCircle,
+  Sparkles,
+  Bug,
+  BookText,
+  Palette,
+  Hammer,
+  Zap,
+  FlaskConical,
+  Package,
+  Workflow,
+  Wrench,
+  Undo2,
+  type LucideIcon,
 } from "lucide-react";
+import { parseCommitType, COMMIT_TYPE_META, type CommitType } from "@/lib/commit-type";
 import { FileIcon } from "@/components/ui/file-icon";
 import {
   Tooltip,
@@ -34,6 +47,20 @@ import { cn } from "@/lib/utils";
 import { CommitBox } from "@/components/staging/commit-box";
 import { AuthorAvatar } from "@/components/ui/avatar";
 import type { FileStatus } from "@/types/git";
+
+const COMMIT_TYPE_ICONS: Record<CommitType, LucideIcon> = {
+  feat: Sparkles,
+  fix: Bug,
+  docs: BookText,
+  style: Palette,
+  refactor: Hammer,
+  perf: Zap,
+  test: FlaskConical,
+  build: Package,
+  ci: Workflow,
+  chore: Wrench,
+  revert: Undo2,
+};
 
 export function DetailPanel() {
   const commits = useRepoStore((s) => s.commits);
@@ -279,8 +306,30 @@ function CommitDetailView({
             ))}
           </div>
 
-          {/* Message */}
-          <p className="text-sm text-foreground mb-1">{commit.message}</p>
+          {/* Message — tint the conventional-commit type prefix + leading icon */}
+          {(() => {
+            const parsed = parseCommitType(commit.message);
+            if (!parsed) {
+              return <p className="text-sm text-foreground mb-1">{commit.message}</p>;
+            }
+            const meta = COMMIT_TYPE_META[parsed.type];
+            const TypeIcon = COMMIT_TYPE_ICONS[parsed.type];
+            return (
+              <p className="text-sm text-foreground mb-1 flex items-baseline gap-1.5">
+                <TypeIcon
+                  className="h-3 w-3 shrink-0 translate-y-0.5"
+                  style={{ color: meta.color }}
+                  aria-hidden
+                />
+                <span>
+                  <span className="font-medium" style={{ color: meta.color }}>
+                    {parsed.prefix}
+                  </span>
+                  {commit.message.slice(parsed.prefix.length)}
+                </span>
+              </p>
+            );
+          })()}
 
           {/* Body (description) */}
           {commit.body && (() => {

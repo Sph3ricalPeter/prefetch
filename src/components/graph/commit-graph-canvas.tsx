@@ -8,6 +8,7 @@ import type {
   TagInfo,
 } from "@/types/git";
 import { loadAvatarForEmail } from "@/lib/avatar-load";
+import { parseCommitType, COMMIT_TYPE_META, COMMIT_TYPE_ICON_NODES } from "@/lib/commit-type";
 import { getInitials as authorInitials, getAvatarColor as authorColor, getContrastColor as contrastText, detectBot, type BotInfo, drawProfileIconOnCanvas, getProfileIcon, darkenHex } from "@/lib/avatar";
 import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
 import { useProfileStore } from "@/stores/profile-store";
@@ -23,6 +24,8 @@ const SCROLLBAR_PAD = 6;         // visual breathing room for left edge
 const GRAPH_INSET_LEFT = SCROLLBAR_PAD;
 // Inset between the right edge of the graph column and the start of label / message text.
 const MESSAGE_INSET_LEFT = 12;
+const TYPE_ICON_SIZE = 13;
+const TYPE_ICON_GAP = 5;
 const LABEL_HEIGHT = 24;         // badge pill height
 const LABEL_PAD_X = 8;
 const LABEL_RADIUS = 5;
@@ -1734,15 +1737,33 @@ export function CommitGraphCanvas({
       const msgAvail = Math.max(0, msgRight - msgLeft);
       ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
 
+      // Conventional-commit type: draw its icon, then tint the "feat:" prefix
+      // in its color; the rest of the subject stays default foreground.
+      const parsedType = parseCommitType(commit.message);
+      const typeColor = parsedType ? COMMIT_TYPE_META[parsedType.type].color : "";
+      const typeIconAdvance = parsedType ? TYPE_ICON_SIZE + TYPE_ICON_GAP : 0;
+      if (parsedType) {
+        drawLucideIcon(ctx, COMMIT_TYPE_ICON_NODES[parsedType.type], msgLeft, y, TYPE_ICON_SIZE, typeColor);
+      }
+      const textLeft = msgLeft + typeIconAdvance;
+      const textAvail = msgAvail - typeIconAdvance;
       const fullMsgWidth = cachedMeasureText(ctx, commit.message);
-      if (fullMsgWidth <= msgAvail) {
-        ctx.fillStyle = graphColors.fg;
-        ctx.fillText(commit.message, msgLeft, y);
+      if (fullMsgWidth <= textAvail) {
+        if (parsedType) {
+          ctx.fillStyle = typeColor;
+          ctx.fillText(parsedType.prefix, textLeft, y);
+          const prefixW = cachedMeasureText(ctx, parsedType.prefix);
+          ctx.fillStyle = graphColors.fg;
+          ctx.fillText(commit.message.slice(parsedType.prefix.length), textLeft + prefixW, y);
+        } else {
+          ctx.fillStyle = graphColors.fg;
+          ctx.fillText(commit.message, textLeft, y);
+        }
 
         if (commit.body) {
           const bodyGap = 8;
-          const bodyX = msgLeft + fullMsgWidth + bodyGap;
-          const bodyAvailW = msgAvail - fullMsgWidth - bodyGap;
+          const bodyX = textLeft + fullMsgWidth + bodyGap;
+          const bodyAvailW = textAvail - fullMsgWidth - bodyGap;
           if (bodyAvailW > 30) {
             ctx.fillStyle = graphColors.dim;
             const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
@@ -1760,9 +1781,16 @@ export function CommitGraphCanvas({
             });
           }
         }
+      } else if (parsedType) {
+        ctx.fillStyle = typeColor;
+        ctx.fillText(parsedType.prefix, textLeft, y);
+        const prefixW = cachedMeasureText(ctx, parsedType.prefix);
+        ctx.fillStyle = graphColors.fg;
+        const rest = commit.message.slice(parsedType.prefix.length);
+        ctx.fillText(truncateText(ctx, rest, Math.max(0, textAvail - prefixW)), textLeft + prefixW, y);
       } else {
         ctx.fillStyle = graphColors.fg;
-        ctx.fillText(truncateText(ctx, commit.message, msgAvail), msgLeft, y);
+        ctx.fillText(truncateText(ctx, commit.message, textAvail), textLeft, y);
       }
 
       // Author column — show name + email when space allows
