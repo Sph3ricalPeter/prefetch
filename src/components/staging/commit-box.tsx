@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ProfileAvatar } from "@/components/ui/avatar";
+import { ResizableTextarea } from "@/components/ui/resizable-textarea";
 
 const SOURCE_LABELS: Record<string, string> = {
   local: "Local repo config",
@@ -89,15 +90,44 @@ export function CommitBox() {
   }, [rebaseProgress, conflictState, setCommitMessage]);
 
   // ── Draft persistence ─────────────────────────────────────────────────────
-  // Restore the draft once when the component mounts or the repo changes.
-  // Skip if Zustand already has content (e.g. amend mode pre-filled from HEAD)
-  // or if an operation (rebase/merge) is in progress.
+  // Drafts are saved per repo (keyed by path) and only ever written in direct
+  // response to the user typing — NOT from an effect that watches the store.
+  // The store clears commitMessage/commitDescription during a repo switch and
+  // after a commit; an effect-based writer would race those transient empties
+  // and delete the wrong repo's draft (the bug this replaces).
+  const persistDraft = useCallback(
+    (message: string, description: string) => {
+      if (!repoPath) return;
+      if (conflictState?.in_progress) return; // rebase/merge owns the message
+      try {
+        if (message || description) {
+          localStorage.setItem(
+            draftKey(repoPath),
+            JSON.stringify({ message, description }),
+          );
+        } else {
+          localStorage.removeItem(draftKey(repoPath));
+        }
+      } catch {
+        // localStorage full or unavailable — not critical
+      }
+    },
+    [repoPath, conflictState],
+  );
+
+  // Restore the saved draft exactly once per repo, right after a switch when
+  // the store has been cleared. The ref is set only after a real restore
+  // attempt completes — NOT while a rebase/merge is in progress — so a repo
+  // first seen mid-conflict still gets its draft restored once the conflict
+  // clears (the effect re-runs on conflictState change). Persistence lives in
+  // the typing handlers, so the transient empty renders during a switch can't
+  // race this; the restoredForRef guard alone blocks a second restore.
   const restoredForRef = useRef<string | null>(null);
   useEffect(() => {
     if (!repoPath) return;
     if (restoredForRef.current === repoPath) return; // already restored for this repo
-    if (commitMessage || commitDescription) return;  // don't clobber existing content
-    if (conflictState?.in_progress) return;          // rebase/merge fills its own message
+    if (conflictState?.in_progress) return; // rebase/merge fills its own message
+    if (commitMessage || commitDescription) return; // don't clobber existing content
 
     try {
       const raw = localStorage.getItem(draftKey(repoPath));
@@ -110,26 +140,7 @@ export function CommitBox() {
       // Corrupt entry — ignore
     }
     restoredForRef.current = repoPath;
-  }, [repoPath, commitMessage, commitDescription, conflictState, setCommitMessage, setCommitDescription]);
-
-  // Persist draft to localStorage on every change.
-  // Clearing both fields (which happens after a successful commit) removes the
-  // entry so the next session starts fresh.
-  useEffect(() => {
-    if (!repoPath) return;
-    if (commitMessage || commitDescription) {
-      try {
-        localStorage.setItem(
-          draftKey(repoPath),
-          JSON.stringify({ message: commitMessage, description: commitDescription }),
-        );
-      } catch {
-        // localStorage full or unavailable — not critical
-      }
-    } else {
-      localStorage.removeItem(draftKey(repoPath));
-    }
-  }, [repoPath, commitMessage, commitDescription]);
+  }, [repoPath, conflictState, commitMessage, commitDescription, setCommitMessage, setCommitDescription]);
   // ─────────────────────────────────────────────────────────────────────────
 
   const isOperationInProgress = conflictState?.in_progress ?? false;
@@ -168,6 +179,12 @@ export function CommitBox() {
 
   const handleMessageChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setCommitMessage(e.target.value);
+    persistDraft(e.target.value, commitDescription);
+  };
+
+  const handleDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setCommitDescription(e.target.value);
+    persistDraft(commitMessage, e.target.value);
   };
 
   // Build the progress label for rebase: "Rebasing step 1/3 · abc1234"
@@ -229,37 +246,40 @@ export function CommitBox() {
         </Tooltip>
       )}
 
-      <div className="relative">
-        <textarea
-          value={commitMessage}
-          onChange={handleMessageChange}
-          onKeyDown={handleKeyDown}
-          placeholder={isOperationInProgress ? "Commit message for this step..." : "Commit message..."}
-          rows={1}
-          className={`w-full resize-none rounded-md bg-background border px-3 py-2 pr-10 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors ${
-            commitMessage.length > 72
-              ? "border-destructive/60"
-              : commitMessage.length > 50
-                ? "border-yellow-500/40"
-                : isOperationInProgress
-                  ? "border-yellow-500/30"
-                  : "border-border"
-          }`}
-        />
-        {commitMessage.length > 0 && (
-          <span
-            className={`absolute right-2 top-1/2 -translate-y-1/2 text-caption tabular-nums ${
-              commitMessage.length > 72
-                ? "text-destructive"
-                : commitMessage.length > 50
-                  ? "text-yellow-500"
-                  : "text-faint"
-            }`}
-          >
-            {commitMessage.length}
-          </span>
-        )}
-      </div>
+      <ResizableTextarea
+        value={commitMessage}
+        onChange={handleMessageChange}
+        onKeyDown={handleKeyDown}
+        placeholder={isOperationInProgress ? "Commit message for this step..." : "Commit message..."}
+        autoGrow
+        minHeight={34}
+        maxHeight={220}
+        gripPosition="top-right"
+        className={`pr-10 ${
+          commitMessage.length > 72
+            ? "border-destructive/60"
+            : commitMessage.length > 50
+              ? "border-yellow-500/40"
+              : isOperationInProgress
+                ? "border-yellow-500/30"
+                : "border-border"
+        }`}
+        overlay={
+          commitMessage.length > 0 ? (
+            <span
+              className={`pointer-events-none absolute right-2 bottom-2 text-caption tabular-nums ${
+                commitMessage.length > 72
+                  ? "text-destructive"
+                  : commitMessage.length > 50
+                    ? "text-yellow-500"
+                    : "text-faint"
+              }`}
+            >
+              {commitMessage.length}
+            </span>
+          ) : null
+        }
+      />
 
       {/* Description toggle + field — only in normal commit mode */}
       {!isOperationInProgress && (
@@ -277,13 +297,15 @@ export function CommitBox() {
           </button>
 
           {showDescription && (
-            <textarea
+            <ResizableTextarea
               value={commitDescription}
-              onChange={(e) => setCommitDescription(e.target.value)}
+              onChange={handleDescriptionChange}
               onKeyDown={handleKeyDown}
               placeholder="Optional extended description..."
-              rows={3}
-              className="w-full resize-y rounded-md bg-background border border-border px-3 py-2 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors"
+              minHeight={76}
+              maxHeight={320}
+              gripPosition="top-right"
+              className="border-border"
             />
           )}
 
