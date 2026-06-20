@@ -11,7 +11,9 @@ import {
   ListTree,
   FoldVertical,
   UnfoldVertical,
+  Copy,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useRepoStore } from "@/stores/repo-store";
 import { openUrl } from "@/lib/commands";
 import { getUiState, setUiState } from "@/lib/database";
@@ -21,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { useInViewSearch } from "@/hooks/use-in-view-search";
 import { SearchNav } from "@/components/ui/search-nav";
+import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { stripAnsi } from "@/lib/text-search";
 
 /**
@@ -134,8 +137,13 @@ function GroupStatusIcon({ status }: { status: GroupStatus }) {
   }
 }
 
-/** Wrapper around a block of per-line log rows (mono font, padding). */
-const LINES_WRAP = "font-mono text-xs leading-relaxed text-foreground px-3 py-2";
+/** Wrapper around a block of per-line log rows (mono font, padding).
+ *  `select-text` re-enables native text selection here — the app shell sets
+ *  `select-none` globally for a native feel, so logs would otherwise be
+ *  unselectable. Logs are read-only flowing text, so plain browser selection +
+ *  copy is the expected UX (unlike the diff's custom line-selection model). */
+const LINES_WRAP =
+  "font-mono text-xs leading-relaxed text-foreground px-3 py-2 select-text";
 
 /** One log line — its own element so it can be individually dimmed by the filter. */
 function LogLineRow({ html, dimmed }: { html: string; dimmed: boolean }) {
@@ -235,6 +243,78 @@ export function CiLogViewer() {
     return next;
   }, [q, expanded, parsed, segLines]);
 
+  // Copy the full log (ANSI stripped) to the clipboard. Complements native
+  // text selection for grabbing the whole log without a manual drag.
+  const copyLog = () => {
+    if (ciJobLog == null) return;
+    navigator.clipboard.writeText(stripAnsi(ciJobLog)).then(
+      () => toast.success("Copied log"),
+      () => toast.error("Failed to copy to clipboard"),
+    );
+  };
+
+  // Copy a single structured section's lines (ANSI stripped).
+  const copySection = (lines: LogLine[]) => {
+    const text = lines.map((l) => stripAnsi(l.content)).join("\n");
+    navigator.clipboard.writeText(text).then(
+      () => toast.success("Copied section"),
+      () => toast.error("Failed to copy to clipboard"),
+    );
+  };
+
+  // Right-click menu over the log: "Copy" the current text selection (when
+  // any), plus "Copy log" for the whole thing. Plain function (not useCallback)
+  // to stay out of the React Compiler's manual-memo way.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+  // WebView2 recalculates the native text selection on right-click (snapping the
+  // start to the line head and dropping the last line) *after* this handler runs
+  // and regardless of preventDefault — and it re-applies that even if we restore
+  // the selection via the Selection API, so the native highlight can't be kept.
+  // Instead we snapshot the selection's text + client rects on the right-button
+  // mousedown (while it's intact); then, while the menu is open, we hide the
+  // native ::selection highlight and paint our own overlay at those rects. The
+  // snapshot text also backs the "Copy" item so it always grabs the full text.
+  const savedSelectionRef = useRef<{ text: string; rects: DOMRect[] } | null>(null);
+  const [selOverlay, setSelOverlay] = useState<DOMRect[] | null>(null);
+  const handleLogMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 2) return;
+    const sel = window.getSelection();
+    savedSelectionRef.current =
+      sel && !sel.isCollapsed && sel.rangeCount > 0
+        ? { text: sel.toString(), rects: Array.from(sel.getRangeAt(0).getClientRects()) }
+        : null;
+  };
+  const closeContextMenu = () => {
+    setContextMenu(null);
+    setSelOverlay(null);
+    // Drop the engine-recalculated native selection so it doesn't flash once the
+    // overlay and ::selection suppression are removed.
+    window.getSelection()?.removeAllRanges();
+  };
+  const handleLogContextMenu = (e: React.MouseEvent) => {
+    const saved = savedSelectionRef.current;
+    const selectedText = saved?.text ?? window.getSelection()?.toString() ?? "";
+    const items: ContextMenuItem[] = [];
+    if (selectedText.trim() !== "") {
+      items.push({
+        label: "Copy",
+        onClick: () =>
+          navigator.clipboard.writeText(selectedText).then(
+            () => toast.success("Copied"),
+            () => toast.error("Failed to copy to clipboard"),
+          ),
+        icon: Copy,
+      });
+    }
+    if (ciJobLog != null) {
+      items.push({ label: "Copy log", onClick: copyLog, icon: Copy });
+    }
+    if (items.length === 0) return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, items });
+    setSelOverlay(saved && saved.rects.length > 0 ? saved.rects : null);
+  };
+
   // In-view search. The hook watches the container with a MutationObserver, so
   // it re-highlights as a running job's log streams new lines or groups expand
   // (the previous content-key approach went stale on same-shape log growth).
@@ -327,11 +407,23 @@ export function CiLogViewer() {
         {/* Match counter + next/prev — right-aligned while a filter is active */}
         {searchSlot && <div className="ml-auto">{searchSlot}</div>}
 
+        {/* Copy whole log — first of the right-aligned actions when no search slot */}
+        {ciJobLog != null && (
+          <button
+            onClick={copyLog}
+            title="Copy log"
+            className={`${searchSlot ? "" : "ml-auto"} rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0`}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+        )}
+
         {/* Open pipeline in browser — far right, like the diff toolbar's right slot */}
         {selectedPipeline?.url && (
           <button
             onClick={() => openUrl(selectedPipeline.url)}
-            className={`${searchSlot ? "" : "ml-auto"} rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0`}
+            title="Open pipeline in browser"
+            className={`${searchSlot || ciJobLog != null ? "" : "ml-auto"} rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0`}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </button>
@@ -344,7 +436,13 @@ export function CiLogViewer() {
           <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
         </div>
       ) : effectiveMode === "raw" ? (
-        <div ref={containerRef} className="flex-1 overflow-auto">
+        <div
+          ref={containerRef}
+          onMouseDown={handleLogMouseDown}
+          onContextMenu={handleLogContextMenu}
+          onScroll={selOverlay ? closeContextMenu : undefined}
+          className={cn("flex-1 overflow-auto", selOverlay && "[&_*::selection]:bg-transparent")}
+        >
           <div className={LINES_WRAP}>
             {rawLines.map((l, i) => (
               <LogLineRow key={i} html={l.html} dimmed={q !== "" && !l.plain.includes(q)} />
@@ -352,7 +450,13 @@ export function CiLogViewer() {
           </div>
         </div>
       ) : (
-        <div ref={containerRef} className="flex-1 overflow-auto">
+        <div
+          ref={containerRef}
+          onMouseDown={handleLogMouseDown}
+          onContextMenu={handleLogContextMenu}
+          onScroll={selOverlay ? closeContextMenu : undefined}
+          className={cn("flex-1 overflow-auto", selOverlay && "[&_*::selection]:bg-transparent")}
+        >
           {parsed.segments.map((seg, i) =>
             seg.type === "loose" ? (
               <div key={seg.id} className={LINES_WRAP}>
@@ -366,30 +470,41 @@ export function CiLogViewer() {
                 const groupDimmed = q !== "" && !segLines[i].some((l) => l.plain.includes(q));
                 return (
                   <div key={seg.group.id} className="border-b border-border/40">
-                    <button
-                      onClick={() => toggleGroup(seg.group.id)}
+                    <div
                       className={cn(
-                        "sticky top-0 z-10 flex w-full items-center gap-2 bg-background px-2 py-1.5 text-left hover:bg-secondary/50 transition-colors",
+                        "group/cisection sticky top-0 z-10 flex w-full items-center gap-2 bg-background px-2 py-1.5 hover:bg-secondary/50 transition-colors",
                         groupDimmed && FILTER_DIM_CLASS,
                       )}
                     >
-                      <ChevronRight
-                        className={cn(
-                          "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
-                          isOpen && "rotate-90",
-                        )}
-                      />
-                      <GroupStatusIcon status={seg.group.status} />
-                      <span
-                        className="text-xs text-foreground truncate"
-                        dangerouslySetInnerHTML={{ __html: ansiToHtml(seg.group.title) }}
-                      />
+                      <button
+                        onClick={() => toggleGroup(seg.group.id)}
+                        className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                      >
+                        <ChevronRight
+                          className={cn(
+                            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                            isOpen && "rotate-90",
+                          )}
+                        />
+                        <GroupStatusIcon status={seg.group.status} />
+                        <span
+                          className="text-xs text-foreground truncate"
+                          dangerouslySetInnerHTML={{ __html: ansiToHtml(seg.group.title) }}
+                        />
+                      </button>
                       {seg.group.durationSecs != null && (
-                        <span className="ml-auto text-label text-faint shrink-0">
+                        <span className="text-label text-faint shrink-0">
                           {formatDuration(seg.group.durationSecs)}
                         </span>
                       )}
-                    </button>
+                      <button
+                        onClick={() => copySection(seg.group.lines)}
+                        title="Copy section"
+                        className="rounded p-0.5 text-muted-foreground/70 opacity-0 hover:bg-secondary hover:text-foreground focus-visible:opacity-100 group-hover/cisection:opacity-100 transition-colors shrink-0"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                     {isOpen && (
                       <div className={cn(LINES_WRAP, "border-t border-border/40 bg-secondary/20")}>
                         {segLines[i].map((l, j) => (
@@ -403,6 +518,25 @@ export function CiLogViewer() {
             ),
           )}
         </div>
+      )}
+
+      {/* Selection overlay: stands in for the native ::selection highlight (which
+          WebView2 mangles on right-click) while the context menu is open. */}
+      {selOverlay?.map((r, i) => (
+        <div
+          key={i}
+          className="pointer-events-none fixed z-40 bg-blue-500/40"
+          style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
+        />
+      ))}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={closeContextMenu}
+        />
       )}
     </div>
   );
