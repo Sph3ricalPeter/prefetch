@@ -1,5 +1,7 @@
 //! GitLab provider implementation.
 
+use std::collections::HashMap;
+
 use crate::error::AppError;
 use crate::git::forge::ForgeProvider;
 use crate::git::forge::TokenType;
@@ -226,13 +228,14 @@ impl ForgeProvider for GitLabProvider {
             .json()
             .map_err(|e| AppError::Other(format!("Failed to parse pipelines response: {e}")))?;
 
-        Ok(pipelines
+        let mut result: Vec<Pipeline> = pipelines
             .iter()
             .filter_map(|p| {
                 Some(Pipeline {
                     id: p["id"].as_u64()?,
                     name: None,
                     source: p["source"].as_str().map(|s| s.to_string()),
+                    schedule_name: None,
                     status: gl_pipeline_status(p["status"].as_str().unwrap_or("")),
                     branch: p["ref"].as_str().unwrap_or("").to_string(),
                     commit_sha: p["sha"].as_str().unwrap_or("").to_string(),
@@ -244,7 +247,26 @@ impl ForgeProvider for GitLabProvider {
                     url: p["web_url"].as_str().unwrap_or("").to_string(),
                 })
             })
-            .collect())
+            .collect();
+
+        // GitLab's pipeline list exposes `source: "schedule"` but not which
+        // schedule. The name lives on the Pipeline schedules API, which links
+        // each schedule only to its most recent pipeline — so we can label the
+        // latest run of each schedule, not historical ones. Best-effort: only
+        // hit the endpoint when a scheduled pipeline is actually present.
+        if result
+            .iter()
+            .any(|p| p.source.as_deref() == Some("schedule"))
+        {
+            let names = fetch_schedule_names(config, token);
+            for p in &mut result {
+                if let Some(name) = names.get(&p.id) {
+                    p.schedule_name = Some(name.clone());
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     fn list_pipeline_jobs(
@@ -337,6 +359,58 @@ impl ForgeProvider for GitLabProvider {
         resp.text()
             .map_err(|e| AppError::Other(format!("Failed to read log body: {e}")))
     }
+}
+
+/// Best-effort map of `pipeline id → schedule description` for pipelines that
+/// were triggered by a GitLab pipeline schedule. GitLab only links each
+/// schedule to its most recent pipeline (`last_pipeline`), so only the latest
+/// run of each schedule can be named. Any error is swallowed and logged —
+/// schedule names are a nicety, not load-bearing.
+fn fetch_schedule_names(config: &ForgeConfig, token: &str) -> HashMap<u64, String> {
+    let mut map = HashMap::new();
+    let project_path = gitlab_project_path(config);
+    let url = format!(
+        "https://{}/api/v4/projects/{}/pipeline_schedules?per_page=100",
+        config.host, project_path,
+    );
+
+    let (auth_header, auth_value) = gitlab_auth_header(token);
+    let client = reqwest::blocking::Client::new();
+    let resp = match client
+        .get(&url)
+        .header("User-Agent", super::USER_AGENT)
+        .header(auth_header, &auth_value)
+        .send()
+    {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            tracing::debug!(status = %r.status(), "gitlab pipeline_schedules non-success; skipping names");
+            return map;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "gitlab pipeline_schedules request failed");
+            return map;
+        }
+    };
+
+    let schedules: Vec<serde_json::Value> = match resp.json() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to parse gitlab pipeline_schedules response");
+            return map;
+        }
+    };
+
+    for s in &schedules {
+        if let (Some(id), Some(desc)) =
+            (s["last_pipeline"]["id"].as_u64(), s["description"].as_str())
+        {
+            if !desc.is_empty() {
+                map.insert(id, desc.to_string());
+            }
+        }
+    }
+    map
 }
 
 fn gl_pipeline_status(status: &str) -> PipelineStatus {

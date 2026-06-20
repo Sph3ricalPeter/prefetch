@@ -200,6 +200,7 @@ impl ForgeProvider for GitHubProvider {
                     id: r["id"].as_u64()?,
                     name: r["name"].as_str().map(|s| s.to_string()),
                     source: r["event"].as_str().map(|s| s.to_string()),
+                    schedule_name: None,
                     status: gh_run_status(
                         r["status"].as_str().unwrap_or(""),
                         r["conclusion"].as_str(),

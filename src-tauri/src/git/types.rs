@@ -246,6 +246,10 @@ pub struct Pipeline {
     /// What triggered this pipeline — e.g. "push", "pull_request", "schedule",
     /// "merge_request_event", "web", "workflow_dispatch", etc.
     pub source: Option<String>,
+    /// Name/description of the schedule that triggered this pipeline, if any.
+    /// GitLab only links each schedule to its most recent pipeline, so this is
+    /// populated for the latest run of a schedule and `None` otherwise.
+    pub schedule_name: Option<String>,
     pub status: PipelineStatus,
     pub branch: String,
     pub commit_sha: String,

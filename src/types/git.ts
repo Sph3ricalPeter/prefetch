@@ -219,6 +219,8 @@ export interface Pipeline {
   name: string | null;
   /** What triggered this pipeline — e.g. "push", "pull_request", "schedule", "merge_request_event". */
   source: string | null;
+  /** Name of the schedule that triggered this pipeline (latest run per schedule only; GitLab). */
+  schedule_name: string | null;
   status: PipelineStatus;
   branch: string;
   commit_sha: string;
