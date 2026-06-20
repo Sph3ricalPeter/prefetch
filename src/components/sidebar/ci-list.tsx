@@ -15,13 +15,11 @@ import {
   RefreshCw,
   ExternalLink,
   AlertTriangle,
-  Workflow,
   GitPullRequest,
   CalendarClock,
   Play,
   Zap,
   Code,
-  Timer,
 } from "lucide-react";
 import {
   Tooltip,
@@ -50,26 +48,10 @@ function cleanBranchName(raw: string): string {
   return raw;
 }
 
-function PipelineStatusIcon({ status, className = "h-3 w-3" }: { status: PipelineStatus; className?: string }) {
-  switch (status) {
-    case "success":
-      return <Workflow className={`${className} text-green-400`} />;
-    case "warning":
-      return <Workflow className={`${className} text-orange-400`} />;
-    case "failure":
-      return <Workflow className={`${className} text-red-400`} />;
-    case "in_progress":
-      return <Loader2 className={`${className} text-yellow-400 animate-spin`} />;
-    case "queued":
-      return <Workflow className={`${className} text-muted-foreground`} />;
-    case "cancelled":
-      return <Workflow className={`${className} text-muted-foreground`} />;
-    default:
-      return <Workflow className={`${className} text-muted-foreground`} />;
-  }
-}
-
-function JobStatusIcon({ status, className = "h-3 w-3" }: { status: PipelineStatus; className?: string }) {
+/** CI status icon shared by pipeline and job rows. Shape *and* color encode
+ *  status so it reads without relying on hue alone (color-blind safe). Pipeline
+ *  rows pass a slightly larger size to sit a step above their jobs. */
+function CiStatusIcon({ status, className = "h-3 w-3" }: { status: PipelineStatus; className?: string }) {
   switch (status) {
     case "success":
       return <CircleCheck className={`${className} text-green-400`} />;
@@ -101,8 +83,9 @@ function formatTimeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-/** Source icon + tooltip for pipeline trigger type. */
-function SourceIcon({ source }: { source: string | null }) {
+/** Source icon + tooltip for pipeline trigger type. For scheduled pipelines the
+ *  schedule's name is shown in the tooltip when known (GitLab, latest run). */
+function SourceIcon({ source, scheduleName }: { source: string | null; scheduleName?: string | null }) {
   if (!source) return null;
   const cls = "h-3 w-3 shrink-0";
   let icon: React.ReactNode;
@@ -112,7 +95,7 @@ function SourceIcon({ source }: { source: string | null }) {
     case "push": return null; // default trigger — no icon needed
     case "schedule":
       icon = <CalendarClock className={`${cls} text-emerald-400`} />;
-      label = "Scheduled";
+      label = scheduleName ? `Scheduled · ${scheduleName}` : "Scheduled";
       break;
     // GitLab sources
     case "merge_request_event":
@@ -163,22 +146,24 @@ function SourceIcon({ source }: { source: string | null }) {
  *  GitLab pipelines don't → show "#id branch" + source icon. */
 function PipelineLabel({ pipeline, branch }: { pipeline: Pipeline; branch: string }) {
   if (pipeline.name) {
-    // GitHub: workflow name is the primary label, branch secondary
+    // GitHub: workflow name is the primary label, branch secondary. Trigger icon
+    // sits with the name (the identity), not trailing the branch.
     return (
       <>
-        <span className="text-foreground truncate min-w-0 flex-1"><HighlightedText text={pipeline.name} /></span>
+        <span className="text-foreground truncate min-w-0"><HighlightedText text={pipeline.name} /></span>
+        <SourceIcon source={pipeline.source} scheduleName={pipeline.schedule_name} />
         <span className="text-muted-foreground shrink-0">·</span>
-        <span className="shrink-0 text-muted-foreground"><HighlightedText text={branch} /></span>
-        <SourceIcon source={pipeline.source} />
+        <span className="flex-1 truncate min-w-0 text-muted-foreground"><HighlightedText text={branch} /></span>
       </>
     );
   }
-  // GitLab (no workflow name): #id + branch + source
+  // GitLab (no workflow name): #id + trigger icon + branch. Trigger icon sits
+  // next to the id it identifies, not floating after the branch.
   return (
     <>
       <span className="text-foreground shrink-0">#{pipeline.id}</span>
+      <SourceIcon source={pipeline.source} scheduleName={pipeline.schedule_name} />
       <span className="truncate flex-1 text-muted-foreground"><HighlightedText text={branch} /></span>
-      <SourceIcon source={pipeline.source} />
     </>
   );
 }
@@ -344,7 +329,7 @@ function PipelineEntry({
       <button
         onClick={onToggle}
         title={pipeline.branch !== branch ? pipeline.branch : undefined}
-        className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${
+        className={`group flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${
           isExpanded
             ? "bg-accent text-accent-foreground"
             : "text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -355,17 +340,20 @@ function PipelineEntry({
         ) : (
           <ChevronRight className="h-2.5 w-2.5 shrink-0" />
         )}
-        <PipelineStatusIcon status={status} />
+        <CiStatusIcon status={status} className="h-3.5 w-3.5 shrink-0" />
         <PipelineLabel pipeline={pipeline} branch={branch} />
-        {pipeline.duration_secs != null && (
-          <span className="flex items-center gap-0.5 shrink-0 text-muted-foreground">
-            <Timer className="h-3 w-3" />
-            <span className="text-label">{formatDuration(pipeline.duration_secs)}</span>
-          </span>
-        )}
-        <span className="text-faint text-label shrink-0">
-          {formatTimeAgo(pipeline.created_at)}
+        {/* Duration + age as one faint unit; right-aligned by PipelineLabel's flex-1 */}
+        <span className="flex items-center gap-1 shrink-0 text-label text-faint">
+          {pipeline.duration_secs != null && (
+            <>
+              <span>{formatDuration(pipeline.duration_secs)}</span>
+              <span aria-hidden="true">·</span>
+            </>
+          )}
+          <span>{formatTimeAgo(pipeline.created_at)}</span>
         </span>
+        {/* Open-in-browser reveals on row hover/focus so it doesn't repeat down
+            the list or reserve space when idle. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <span
@@ -374,7 +362,7 @@ function PipelineEntry({
                 e.stopPropagation();
                 openUrl(pipeline.url);
               }}
-              className="shrink-0 rounded p-0.5 hover:bg-accent hover:text-foreground transition-colors"
+              className="shrink-0 max-w-0 overflow-hidden rounded p-0.5 opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:max-w-6 group-hover:opacity-100 group-focus-visible:max-w-6 group-focus-visible:opacity-100"
             >
               <ExternalLink className="h-3 w-3" />
             </span>
@@ -400,13 +388,12 @@ function PipelineEntry({
             >
               {/* Icon sits on top of the timeline line */}
               <span className="relative z-10 shrink-0 bg-background rounded-full">
-                <JobStatusIcon status={job.status} />
+                <CiStatusIcon status={job.status} />
               </span>
               <span className="truncate flex-1">{job.name}</span>
               {job.duration_secs != null && (
-                <span className="flex items-center gap-0.5 shrink-0 text-faint">
-                  <Timer className="h-3 w-3" />
-                  <span className="text-label">{formatDuration(job.duration_secs)}</span>
+                <span className="shrink-0 text-label text-faint">
+                  {formatDuration(job.duration_secs)}
                 </span>
               )}
             </button>
