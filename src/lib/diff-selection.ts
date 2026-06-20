@@ -52,3 +52,39 @@ export function buildSelectionRef(
   const base = `${filePath}:${range}`;
   return commitSha ? `${base} (commit ${commitSha.slice(0, 7)})` : base;
 }
+
+/**
+ * Build the concatenated raw text of the selected diff lines, in document order.
+ *
+ * Contiguous runs of selected change lines are joined with single newlines;
+ * disconnected runs — selections with an unselected change line between them, or
+ * spanning a hunk boundary — are separated by one blank line so the copied text
+ * reflects that the sections aren't adjacent in the file. Each line's `content`
+ * is the raw text without the +/- origin marker, matching the single-line
+ * "Copy line content" action. Returns null if nothing is selected.
+ */
+export function buildSelectionContent(diff: FileDiff, selectedLines: Set<string>): string | null {
+  if (selectedLines.size === 0) return null;
+
+  const changeableKeys = buildChangeableKeys(diff);
+  const blocks: string[][] = [];
+  let prevIdx = -2;
+  let prevHunk = -1;
+
+  changeableKeys.forEach((key, idx) => {
+    if (!selectedLines.has(key)) return;
+    const [hi, li] = key.split(":").map(Number);
+    const line = diff.hunks[hi]?.lines[li];
+    if (!line) return;
+    // New block when this line isn't the immediate next changeable line, or it
+    // jumps to a different hunk.
+    const contiguous = idx === prevIdx + 1 && hi === prevHunk;
+    if (!contiguous) blocks.push([]);
+    blocks[blocks.length - 1].push(line.content);
+    prevIdx = idx;
+    prevHunk = hi;
+  });
+
+  if (blocks.length === 0) return null;
+  return blocks.map((b) => b.join("\n")).join("\n\n");
+}

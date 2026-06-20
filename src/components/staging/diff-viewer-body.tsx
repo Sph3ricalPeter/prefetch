@@ -17,7 +17,7 @@ import { alignBlock, computeHunkIntraLineRanges, type CharRange } from "@/lib/in
 import { HighlightedLineContent } from "@/components/staging/highlighted-line-content";
 import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 import { useDiffLineSelection } from "@/hooks/use-diff-line-selection";
-import { buildSelectionRef } from "@/lib/diff-selection";
+import { buildSelectionRef, buildSelectionContent } from "@/lib/diff-selection";
 import { toast } from "sonner";
 
 /** Write text to the clipboard and surface a toast (success or failure). */
@@ -224,6 +224,13 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
     if (ref) copyWithToast(ref, "Copied selection reference", ref);
   }, [filePath, diff, selectedLines, commitSha]);
 
+  const copySelectionContent = useCallback(() => {
+    const content = buildSelectionContent(diff, selectedLines);
+    if (content === null) return;
+    const n = selectedLines.size;
+    copyWithToast(content, `Copied ${n} line${n > 1 ? "s" : ""}`);
+  }, [diff, selectedLines]);
+
   const wrapClass = diffWrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre";
 
   // The hook rebuilds highlights via a MutationObserver, so it tracks Shiki
@@ -276,11 +283,13 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
       });
     }
 
-    // Copy actions.
+    // Copy actions. With a selection active, both copy actions operate on the
+    // whole selection (regardless of which line was right-clicked), mirroring
+    // the stage actions. Without a selection, copy just the right-clicked line.
     if (selectedLines.size > 0) {
       copyItems.push({ label: "Copy selection reference", onClick: copySelectionRef, icon: Copy });
-    }
-    if (line) {
+      copyItems.push({ label: "Copy line content", onClick: copySelectionContent, icon: Copy });
+    } else if (line) {
       copyItems.push({
         label: "Copy line content",
         onClick: () => copyWithToast(line.content, "Copied line content"),
