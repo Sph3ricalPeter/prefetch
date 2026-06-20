@@ -193,6 +193,16 @@ When compacting, always preserve:
 - Current feature being implemented (reference brief section)
 - Any git2-rs limitations encountered and workarounds used
 
+## Build & Disk Hygiene
+
+`src-tauri/target/` is regenerable build cache, **not** source — it's gitignored. It once grew to **131 GB** (86 GB incremental cache + 33 GB `deps/` + orphaned temp archives from killed builds). Rust trades disk for compile speed and never caps or prunes this dir, so it grows without bound until cleaned.
+
+- **The dev profile (`Cargo.toml` `[profile.dev]`) sets `debug = "line-tables-only"` and `incremental = false`.** Artifacts are ~3-4x smaller, and the incremental cache — which hit 86 GB under a continuous `tauri dev` edit-reload loop — is disabled. This fits the AI-driven workflow where rebuild speed isn't watched. Don't re-enable incremental or full `debug = 2` unless you're actively debugging and waiting on builds.
+- **Run `cargo clean` (from `src-tauri/`) when `target/` exceeds ~15-20 GB** or after large dependency churn. Don't let it run untouched for months — that's how it reached 131 GB.
+- **Never commit `target/`** — it's gitignored; keep it that way.
+- `cargo sweep` can prune stale artifacts if `deps/` accumulates across toolchain/version bumps.
+- If a build is killed mid-compile, check for orphaned `target/debug/deps/.tmp*.temp-archive/` dirs (1 GB+ each) and delete them.
+
 ## Git Workflow
 
 ### Branching model: main / dev

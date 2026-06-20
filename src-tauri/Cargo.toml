@@ -42,3 +42,13 @@ chrono = { version = "0.4.44", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.dev]
+# Keep the debug build cache from ballooning — target/ once hit 131 GB.
+#   debug = "line-tables-only": keeps panic/backtrace file:line, drops bulky
+#     per-variable symbols → .lib/.rlib artifacts ~3-4x smaller.
+#   incremental = false: skips the per-edit cache that grew to 86 GB under a
+#     continuous `tauri dev` edit-reload loop. Rebuilds are slower; that's fine
+#     for unattended AI edits. See CLAUDE.md "Build & Disk Hygiene".
+debug = "line-tables-only"
+incremental = false
