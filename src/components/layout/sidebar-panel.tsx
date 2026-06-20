@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRepoStore } from "@/stores/repo-store";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { FILTER_DEBOUNCE_MS } from "@/lib/constants";
+import { Kbd } from "@/components/ui/kbd";
 import { BranchList } from "@/components/sidebar/branch-list";
 import { CiList } from "@/components/sidebar/ci-list";
 import { StashList } from "@/components/sidebar/stash-list";
@@ -9,12 +10,13 @@ import { TagList } from "@/components/sidebar/tag-list";
 
 export function SidebarPanel() {
   const repoPath = useRepoStore((s) => s.repoPath);
+  const input = useRepoStore((s) => s.filterInput);
+  const setInput = useRepoStore((s) => s.setFilterInput);
   const setFilterQuery = useRepoStore((s) => s.setFilterQuery);
 
-  // Local state drives the input for instant typing feedback; the debounced
-  // value is pushed to the store, where the sidebar lists, commit graph, and
-  // file lists read it from.
-  const [input, setInput] = useState("");
+  // The input value lives in the store (so the global Escape handler can clear
+  // it regardless of focus); the debounced copy is pushed to filterQuery, which
+  // the sidebar lists, commit graph, and file lists read from.
   const debounced = useDebouncedValue(input, FILTER_DEBOUNCE_MS);
 
   useEffect(() => {
@@ -33,13 +35,36 @@ export function SidebarPanel() {
     <div className="flex h-full flex-col bg-sidebar-background">
       {/* Filter input */}
       <div className="px-3 pt-2 pb-1.5">
-        <input
-          type="text"
-          placeholder="Filter..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          className="w-full rounded-md bg-background border border-border px-2.5 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors"
-        />
+        <div className="relative">
+          <input
+            id="global-filter-input"
+            type="text"
+            placeholder="Filter..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter / Shift+Enter drive next/prev match in the active diff or
+              // CI-log view (see useInViewSearch). Escape is handled globally
+              // (see EscapeStack in App.tsx) so it works even when the input
+              // isn't focused.
+              if (e.key === "Enter") {
+                e.preventDefault();
+                window.dispatchEvent(
+                  new CustomEvent("prefetch:search-nav", {
+                    detail: { dir: e.shiftKey ? "prev" : "next" },
+                  }),
+                );
+              }
+            }}
+            className="w-full rounded-md bg-background border border-border pl-2.5 pr-12 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors"
+          />
+          {/* Shortcut hint — drops out once the user starts typing. */}
+          {input === "" && (
+            <Kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2">
+              Ctrl+F
+            </Kbd>
+          )}
+        </div>
       </div>
 
       {/* Scrollable content */}

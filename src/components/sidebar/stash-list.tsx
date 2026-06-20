@@ -15,6 +15,8 @@ import {
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { HighlightedText } from "@/components/ui/highlighted-text";
 import { cn } from "@/lib/utils";
 
 export function StashList() {
@@ -34,6 +36,7 @@ export function StashList() {
     y: number;
   } | null>(null);
   const [confirmDropStash, setConfirmDropStash] = useState<number | null>(null);
+  useEscapeKey(confirmDropStash != null, () => setConfirmDropStash(null));
 
   // Filter dims non-matching rows rather than hiding them.
   const q = filter.trim().toLowerCase();
@@ -82,7 +85,7 @@ export function StashList() {
               )}
             >
               <Archive className="h-3 w-3 shrink-0" />
-              <span className="truncate flex-1">{stash.message}</span>
+              <span className="truncate flex-1"><HighlightedText text={stash.message} /></span>
 
               {/* Pop button */}
               <Tooltip>

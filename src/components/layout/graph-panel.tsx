@@ -26,6 +26,7 @@ import { getUiState, setUiState } from "@/lib/database";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
+import { useEscapeKey } from "@/hooks/use-escape-key";
 import {
   CommitGraphCanvas,
   LANE_WIDTH,
@@ -282,6 +283,15 @@ export function GraphPanel() {
   const [editMessageDialog, setEditMessageDialog] = useState<{ commitId: string } | null>(null);
   const [editMsgSubject, setEditMsgSubject] = useState("");
   const [editMsgBody, setEditMsgBody] = useState("");
+
+  // Escape cancels the open confirm/dialog (the global Escape stack yields to it).
+  useEscapeKey(!!confirmDeleteTag, () => setConfirmDeleteTag(null));
+  useEscapeKey(!!confirmResetHard, () => setConfirmResetHard(null));
+  useEscapeKey(!!confirmDeleteBranch, () => setConfirmDeleteBranch(null));
+  useEscapeKey(confirmDropStash != null, () => setConfirmDropStash(null));
+  useEscapeKey(!!dirtyActionPending, cancelDirtyAction);
+  useEscapeKey(!!remoteCheckoutPending, cancelRemoteCheckout);
+  useEscapeKey(!!forcePushPending, cancelForcePush);
 
   // Ctrl+Z undo shortcut (global)
   useEffect(() => {
@@ -726,7 +736,7 @@ export function GraphPanel() {
 
       {/* Dirty working tree dialog */}
       {dirtyActionPending && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-md">
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
@@ -762,7 +772,7 @@ export function GraphPanel() {
 
       {/* Remote checkout dialog */}
       {remoteCheckoutPending && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-md">
             {remoteCheckoutPending.alreadyOnLocal ? (
               <>
@@ -814,7 +824,7 @@ export function GraphPanel() {
 
       {/* Reset hard confirmation */}
       {confirmResetHard && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Reset hard?</p>
             <p className="text-xs text-muted-foreground mb-4">
@@ -843,7 +853,7 @@ export function GraphPanel() {
 
       {/* Delete branch confirmation */}
       {confirmDeleteBranch && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Delete branch?</p>
             <p className="text-xs text-muted-foreground mb-4">
@@ -878,7 +888,7 @@ export function GraphPanel() {
 
       {/* Drop stash confirmation */}
       {confirmDropStash != null && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Drop stash?</p>
             <p className="text-xs text-muted-foreground mb-4">
@@ -907,7 +917,7 @@ export function GraphPanel() {
 
       {/* Delete tag confirmation */}
       {confirmDeleteTag != null && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Delete tag?</p>
             <p className="text-xs text-muted-foreground mb-4">
@@ -936,7 +946,7 @@ export function GraphPanel() {
 
       {/* Force push confirmation */}
       {forcePushPending && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Force push?</p>
             <p className="text-xs text-muted-foreground mb-4">
@@ -962,7 +972,7 @@ export function GraphPanel() {
 
       {/* Create branch at commit dialog */}
       {createBranchDialog && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Create branch</p>
             <p className="text-xs text-muted-foreground mb-3">
@@ -1009,7 +1019,7 @@ export function GraphPanel() {
 
       {/* Edit (reword) HEAD commit message dialog */}
       {editMessageDialog && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg w-full max-w-md">
             <p className="text-sm text-foreground mb-1">Edit commit message</p>
             <p className="text-xs text-muted-foreground mb-3">
@@ -1063,7 +1073,7 @@ export function GraphPanel() {
 
       {/* Rename branch dialog (from graph badge) */}
       {renameDialog && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Rename branch</p>
             <p className="text-xs text-muted-foreground mb-3">
@@ -1110,7 +1120,7 @@ export function GraphPanel() {
 
       {/* Set upstream dialog (from graph badge) */}
       {upstreamDialog && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Set upstream</p>
             <p className="text-xs text-muted-foreground mb-3">
@@ -1157,7 +1167,7 @@ export function GraphPanel() {
 
       {/* Create tag at commit dialog */}
       {createTagDialog && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
             <p className="text-sm text-foreground mb-1">Create tag</p>
             <p className="text-xs text-muted-foreground mb-3">

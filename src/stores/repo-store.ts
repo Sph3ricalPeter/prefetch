@@ -272,6 +272,9 @@ interface RepoState {
   isLoading: boolean;
   error: string | null;
 
+  /** Raw text in the filter input (immediate). Lifted into the store so the
+   *  global Escape handler can clear it regardless of focus. */
+  filterInput: string;
   /** Global filter query (debounced). Drives the sidebar lists, the commit
    *  graph dimming, and the right-column changed-files lists. */
   filterQuery: string;
@@ -425,7 +428,10 @@ interface RepoState {
   resolveConflictManual: (filePath: string, content: string) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
   rewordHeadCommit: (message: string) => Promise<void>;
+  setFilterInput: (value: string) => void;
   setFilterQuery: (query: string) => void;
+  /** Clear both the filter input and the debounced query immediately. */
+  clearFilter: () => void;
   setCommitMessage: (msg: string) => void;
   setCommitDescription: (desc: string) => void;
   setAmendMode: (on: boolean) => void;
@@ -575,6 +581,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   largeDiffPending: null,
   commitFiles: [],
   commitFilesLoading: false,
+  filterInput: "",
   filterQuery: "",
   commitMessage: "",
   commitDescription: "",
@@ -1435,7 +1442,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
+  setFilterInput: (value) => set({ filterInput: value }),
   setFilterQuery: (query) => set({ filterQuery: query }),
+  clearFilter: () => set({ filterInput: "", filterQuery: "" }),
   setCommitMessage: (msg) => set({ commitMessage: msg }),
   setCommitDescription: (desc) => set({ commitDescription: desc }),
 

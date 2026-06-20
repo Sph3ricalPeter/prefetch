@@ -5,6 +5,8 @@ import { useRepoStore } from "@/stores/repo-store";
 import { effectivePipelineStatus } from "@/lib/ci-utils";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { HighlightedText } from "@/components/ui/highlighted-text";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -50,6 +52,7 @@ export function BranchList() {
     deleteRemote: boolean;
     remoteName: string;
   } | null>(null);
+  useEscapeKey(!!confirmDeleteBranch, () => setConfirmDeleteBranch(null));
 
   // Filter dims non-matching rows rather than hiding them (see store filterQuery).
   const q = filter.trim().toLowerCase();
@@ -526,7 +529,7 @@ function BranchRow({
       )}
     >
       <GitBranch className="h-3 w-3 shrink-0" />
-      <span className="truncate">{displayName}</span>
+      <span className="truncate"><HighlightedText text={displayName} /></span>
 
       {/* Local/remote indicators */}
       <span className="flex items-center gap-0.5 shrink-0 text-faint">

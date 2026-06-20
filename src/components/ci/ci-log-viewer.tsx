@@ -17,6 +17,11 @@ import { openUrl } from "@/lib/commands";
 import { getUiState, setUiState } from "@/lib/database";
 import { formatDuration } from "@/lib/ci-utils";
 import { parseCiLog, type LogLine, type GroupStatus } from "@/lib/ci-log-parse";
+import { cn } from "@/lib/utils";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { useInViewSearch } from "@/hooks/use-in-view-search";
+import { SearchNav } from "@/components/ui/search-nav";
+import { stripAnsi } from "@/lib/text-search";
 
 /**
  * Convert basic ANSI escape codes to styled HTML spans.
@@ -93,8 +98,26 @@ function lineToHtml(line: LogLine): string {
   }
 }
 
-function linesToHtml(lines: LogLine[]): string {
-  return lines.map(lineToHtml).join("\n");
+/** Split a raw log into per-line HTML + lowercased plain text (for matching). */
+function rawToRenderLines(text: string): RenderLine[] {
+  return text.split(/\r?\n/).map((l) => ({
+    html: ansiToHtml(l),
+    plain: stripAnsi(l).toLowerCase(),
+  }));
+}
+
+/** Convert parsed LogLines to per-line HTML + lowercased plain text. */
+function toRenderLines(lines: LogLine[]): RenderLine[] {
+  return lines.map((line) => ({
+    html: lineToHtml(line),
+    plain: stripAnsi(line.content).toLowerCase(),
+  }));
+}
+
+interface RenderLine {
+  html: string;
+  /** Lowercased, ANSI-stripped text used to test the filter query. */
+  plain: string;
 }
 
 function GroupStatusIcon({ status }: { status: GroupStatus }) {
@@ -111,8 +134,19 @@ function GroupStatusIcon({ status }: { status: GroupStatus }) {
   }
 }
 
-const PRE_CLASS =
-  "font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap break-all px-3 py-2";
+/** Wrapper around a block of per-line log rows (mono font, padding). */
+const LINES_WRAP = "font-mono text-xs leading-relaxed text-foreground px-3 py-2";
+
+/** One log line — its own element so it can be individually dimmed by the filter. */
+function LogLineRow({ html, dimmed }: { html: string; dimmed: boolean }) {
+  return (
+    <div
+      className={cn("whitespace-pre-wrap break-all", dimmed && FILTER_DIM_CLASS)}
+      // Zero-width space keeps blank lines at full line-height.
+      dangerouslySetInnerHTML={{ __html: html.length ? html : "​" }}
+    />
+  );
+}
 
 export function CiLogViewer() {
   const ciJobLog = useRepoStore((s) => s.ciJobLog);
@@ -128,8 +162,17 @@ export function CiLogViewer() {
   const selectedJob = jobs.find((j) => j.id === selectedJobId);
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
 
-  const rawHtml = useMemo(() => (ciJobLog ? ansiToHtml(ciJobLog) : null), [ciJobLog]);
+  const filterQuery = useRepoStore((s) => s.filterQuery);
+  const q = filterQuery.trim().toLowerCase();
   const parsed = useMemo(() => parseCiLog(ciJobLog ?? "", forgeKind), [ciJobLog, forgeKind]);
+
+  // Per-line render data (HTML + plain text for matching), memoized so toggling
+  // groups / typing in the filter doesn't re-convert every line.
+  const rawLines = useMemo(() => rawToRenderLines(ciJobLog ?? ""), [ciJobLog]);
+  const segLines = useMemo(
+    () => parsed.segments.map((seg) => toRenderLines(seg.type === "loose" ? seg.lines : seg.group.lines)),
+    [parsed],
+  );
 
   // View-mode preference (persisted). Falls back to raw when no groups exist.
   const [viewMode, setViewMode] = useState<"raw" | "structured">("structured");
@@ -179,21 +222,35 @@ export function CiLogViewer() {
       return next;
     });
 
-  // Auto-scroll to bottom on first load — only meaningful for the flat raw view.
+  // While a filter is active, force-expand any group that contains a match so
+  // its lines are rendered (and thus highlightable / navigable).
+  const expandedEffective = useMemo(() => {
+    if (!q) return expanded;
+    const next = new Set(expanded);
+    parsed.segments.forEach((seg, i) => {
+      if (seg.type === "group" && segLines[i].some((l) => l.plain.includes(q))) {
+        next.add(seg.group.id);
+      }
+    });
+    return next;
+  }, [q, expanded, parsed, segLines]);
+
+  // In-view search. The hook watches the container with a MutationObserver, so
+  // it re-highlights as a running job's log streams new lines or groups expand
+  // (the previous content-key approach went stale on same-shape log growth).
+  const search = useInViewSearch(containerRef, filterQuery);
+  const searchSlot = q !== "" ? <SearchNav {...search} /> : null;
+
+  // Auto-scroll to bottom on first load — only meaningful for the flat raw view,
+  // and suppressed while searching so it doesn't fight the scroll-to-match.
   useEffect(() => {
-    if (effectiveMode === "raw" && rawHtml && containerRef.current) {
+    if (effectiveMode === "raw" && ciJobLog && q === "" && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [rawHtml, effectiveMode]);
+  }, [ciJobLog, effectiveMode, q]);
 
-  // Escape key to close
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") clearCiJobLog();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [clearCiJobLog]);
+  // Escape-to-close is handled by the global Escape stack (App.tsx), which
+  // closes the filter first, then the middle-pane context (this log included).
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -267,11 +324,14 @@ export function CiLogViewer() {
           </div>
         )}
 
+        {/* Match counter + next/prev — right-aligned while a filter is active */}
+        {searchSlot && <div className="ml-auto">{searchSlot}</div>}
+
         {/* Open pipeline in browser — far right, like the diff toolbar's right slot */}
         {selectedPipeline?.url && (
           <button
             onClick={() => openUrl(selectedPipeline.url)}
-            className="ml-auto rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+            className={`${searchSlot ? "" : "ml-auto"} rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0`}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </button>
@@ -284,50 +344,62 @@ export function CiLogViewer() {
           <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
         </div>
       ) : effectiveMode === "raw" ? (
-        <div ref={containerRef} className="flex-1 overflow-auto p-3">
-          <pre
-            className="font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap break-all"
-            dangerouslySetInnerHTML={{ __html: rawHtml ?? "" }}
-          />
+        <div ref={containerRef} className="flex-1 overflow-auto">
+          <div className={LINES_WRAP}>
+            {rawLines.map((l, i) => (
+              <LogLineRow key={i} html={l.html} dimmed={q !== "" && !l.plain.includes(q)} />
+            ))}
+          </div>
         </div>
       ) : (
         <div ref={containerRef} className="flex-1 overflow-auto">
-          {parsed.segments.map((seg) =>
+          {parsed.segments.map((seg, i) =>
             seg.type === "loose" ? (
-              <pre
-                key={seg.id}
-                className={PRE_CLASS}
-                dangerouslySetInnerHTML={{ __html: linesToHtml(seg.lines) }}
-              />
-            ) : (
-              <div key={seg.group.id} className="border-b border-border/40">
-                <button
-                  onClick={() => toggleGroup(seg.group.id)}
-                  className="sticky top-0 z-10 flex w-full items-center gap-2 bg-background px-2 py-1.5 text-left hover:bg-secondary/50 transition-colors"
-                >
-                  <ChevronRight
-                    className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
-                      expanded.has(seg.group.id) ? "rotate-90" : ""
-                    }`}
-                  />
-                  <GroupStatusIcon status={seg.group.status} />
-                  <span
-                    className="text-xs text-foreground truncate"
-                    dangerouslySetInnerHTML={{ __html: ansiToHtml(seg.group.title) }}
-                  />
-                  {seg.group.durationSecs != null && (
-                    <span className="ml-auto text-label text-faint shrink-0">
-                      {formatDuration(seg.group.durationSecs)}
-                    </span>
-                  )}
-                </button>
-                {expanded.has(seg.group.id) && (
-                  <pre
-                    className={`${PRE_CLASS} border-t border-border/40 bg-secondary/20`}
-                    dangerouslySetInnerHTML={{ __html: linesToHtml(seg.group.lines) }}
-                  />
-                )}
+              <div key={seg.id} className={LINES_WRAP}>
+                {segLines[i].map((l, j) => (
+                  <LogLineRow key={j} html={l.html} dimmed={q !== "" && !l.plain.includes(q)} />
+                ))}
               </div>
+            ) : (
+              (() => {
+                const isOpen = expandedEffective.has(seg.group.id);
+                const groupDimmed = q !== "" && !segLines[i].some((l) => l.plain.includes(q));
+                return (
+                  <div key={seg.group.id} className="border-b border-border/40">
+                    <button
+                      onClick={() => toggleGroup(seg.group.id)}
+                      className={cn(
+                        "sticky top-0 z-10 flex w-full items-center gap-2 bg-background px-2 py-1.5 text-left hover:bg-secondary/50 transition-colors",
+                        groupDimmed && FILTER_DIM_CLASS,
+                      )}
+                    >
+                      <ChevronRight
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                          isOpen && "rotate-90",
+                        )}
+                      />
+                      <GroupStatusIcon status={seg.group.status} />
+                      <span
+                        className="text-xs text-foreground truncate"
+                        dangerouslySetInnerHTML={{ __html: ansiToHtml(seg.group.title) }}
+                      />
+                      {seg.group.durationSecs != null && (
+                        <span className="ml-auto text-label text-faint shrink-0">
+                          {formatDuration(seg.group.durationSecs)}
+                        </span>
+                      )}
+                    </button>
+                    {isOpen && (
+                      <div className={cn(LINES_WRAP, "border-t border-border/40 bg-secondary/20")}>
+                        {segLines[i].map((l, j) => (
+                          <LogLineRow key={j} html={l.html} dimmed={q !== "" && !l.plain.includes(q)} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             ),
           )}
         </div>

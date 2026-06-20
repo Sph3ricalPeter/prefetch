@@ -37,6 +37,7 @@ import {
 } from "@/lib/file-tree";
 import type { FileTreeNode } from "@/lib/file-tree";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { HighlightedText } from "@/components/ui/highlighted-text";
 import { cn } from "@/lib/utils";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
@@ -727,7 +728,7 @@ function ConflictTreeNodeView({
           ) : (
             <Folder className="h-3 w-3 shrink-0 text-muted-foreground" />
           )}
-          <span className="truncate">{node.name}</span>
+          <span className="truncate"><HighlightedText text={node.name} /></span>
           <span className="text-faint">{fileCount}</span>
         </div>
         {expanded && node.children.map((child) => (
@@ -777,7 +778,7 @@ function ConflictTreeNodeView({
           ? <Check className="h-[13px] w-[13px] inline-block" />
           : <AlertTriangle className="h-[13px] w-[13px] inline-block" />}
       </span>
-      <span className="truncate text-xs text-foreground">{node.name}</span>
+      <span className="truncate text-xs text-foreground"><HighlightedText text={node.name} /></span>
       <FileIcon filename={node.name} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <span className="ml-auto flex items-center gap-1 tabular-nums text-right overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
@@ -906,7 +907,7 @@ function TreeNodeView({
           ) : (
             <Folder className="h-3 w-3 shrink-0 text-muted-foreground" />
           )}
-          <span className="truncate">{node.name}</span>
+          <span className="truncate"><HighlightedText text={node.name} /></span>
           <span className="text-faint">{fileCount}</span>
           <span className="ml-auto shrink-0 flex items-center gap-1">
             <Tooltip>
@@ -1004,7 +1005,7 @@ function TreeNodeView({
         {statusLabel}
       </span>
       <FileIcon filename={node.name} className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="truncate text-xs text-foreground">{node.name}</span>
+      <span className="truncate text-xs text-foreground"><HighlightedText text={node.name} /></span>
       {isLfs && (
         <span className="shrink-0 rounded px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
           LFS
@@ -1105,7 +1106,7 @@ function FileRow({
       </span>
       <FileIcon filename={fileName} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        <span className="truncate text-xs text-foreground">{fileName}</span>
+        <span className="truncate text-xs text-foreground"><HighlightedText text={fileName} /></span>
         {isLfs && (
           <span className="shrink-0 rounded px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
             LFS
@@ -1113,7 +1114,7 @@ function FileRow({
         )}
         {dirPath && (
           <span className="truncate text-xs text-faint">
-            {dirPath}
+            <HighlightedText text={dirPath} />
           </span>
         )}
       </div>
@@ -1204,10 +1205,10 @@ function ConflictRow({
       </span>
       <FileIcon filename={fileName} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        <span className="truncate text-xs text-foreground">{fileName}</span>
+        <span className="truncate text-xs text-foreground"><HighlightedText text={fileName} /></span>
         {dirPath && (
           <span className="truncate text-xs text-faint">
-            {dirPath}
+            <HighlightedText text={dirPath} />
           </span>
         )}
       </div>

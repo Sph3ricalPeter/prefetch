@@ -35,6 +35,8 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { HighlightedText } from "@/components/ui/highlighted-text";
 import { FileList } from "@/components/staging/file-list";
 import {
   buildFileTree,
@@ -80,6 +82,7 @@ export function DetailPanel() {
   const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
 
   const [showDiscardAll, setShowDiscardAll] = useState(false);
+  useEscapeKey(showDiscardAll, () => setShowDiscardAll(false));
 
   const operationInProgress = conflictState?.in_progress ?? false;
 
@@ -182,7 +185,7 @@ export function DetailPanel() {
 
         {/* Discard all confirmation */}
         {showDiscardAll && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
               <p className="text-sm text-foreground mb-1">Discard all changes?</p>
               <p className="text-xs text-muted-foreground mb-4">
@@ -654,10 +657,10 @@ function CommitFileRow({
       </span>
       <FileIcon filename={fileName} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        <span className="truncate text-xs text-foreground">{fileName}</span>
+        <span className="truncate text-xs text-foreground"><HighlightedText text={fileName} /></span>
         {dirPath && (
           <span className="truncate text-xs text-faint">
-            {dirPath}
+            <HighlightedText text={dirPath} />
           </span>
         )}
       </div>
@@ -749,7 +752,7 @@ function CommitTreeNode({
           ) : (
             <Folder className="h-3 w-3 shrink-0 text-muted-foreground" />
           )}
-          <span className="truncate">{node.name}</span>
+          <span className="truncate"><HighlightedText text={node.name} /></span>
         </button>
         {expanded &&
           node.children.map((child) => (
@@ -798,7 +801,7 @@ function CommitTreeNode({
         filename={node.name}
         className="h-4 w-4 shrink-0 text-muted-foreground"
       />
-      <span className="truncate text-xs text-foreground">{node.name}</span>
+      <span className="truncate text-xs text-foreground"><HighlightedText text={node.name} /></span>
       <span className="ml-auto flex items-center gap-1 tabular-nums overflow-hidden min-w-0 shrink-[999]">
         {file.additions != null && (
           <span className="text-xs text-green-400">+{file.additions}</span>

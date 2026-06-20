@@ -45,7 +45,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       }
     };
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        // Stop the global Escape stack (App.tsx) from also acting when a menu closes.
+        e.stopPropagation();
+        onClose();
+      }
     };
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKey);

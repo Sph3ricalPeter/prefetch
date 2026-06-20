@@ -3,7 +3,10 @@ import type { FileDiff, DiffHunk, DiffLine } from "@/types/git";
 import { highlightLines, detectLang, yieldToMacrotask } from "@/lib/shiki";
 import { useRepoStore } from "@/stores/repo-store";
 import { useThemeStore } from "@/stores/theme-store";
-import { getDataAttrFromEvent } from "@/lib/utils";
+import { getDataAttrFromEvent, cn } from "@/lib/utils";
+import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { useInViewSearch } from "@/hooks/use-in-view-search";
+import { SearchNav } from "@/components/ui/search-nav";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
 import { Plus, Check, Minus, UnfoldVertical, RotateCcw, Copy } from "lucide-react";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
@@ -96,7 +99,12 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
   const diffViewMode = useRepoStore((s) => s.diffViewMode);
   const diffWrapLines = useRepoStore((s) => s.diffWrapLines);
   const isLoading = useRepoStore((s) => s.isLoading);
+  const filterQuery = useRepoStore((s) => s.filterQuery);
   const shikiThemeId = useThemeStore((s) => s.codeTheme.shikiTheme.name);
+
+  // Global filter applied to the diff: non-matching lines dim, matching
+  // substrings are highlighted (see useInViewSearch), with next/prev nav.
+  const searchQuery = filterQuery.trim().toLowerCase();
 
   const lang = useMemo(() => detectLang(filePath), [filePath]);
   const hasDeletions = useMemo(
@@ -218,6 +226,11 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
 
   const wrapClass = diffWrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre";
 
+  // The hook rebuilds highlights via a MutationObserver, so it tracks Shiki
+  // tokens loading, view-mode/wrap re-layouts, and context expansion on its own.
+  const search = useInViewSearch(scrollRef, filterQuery);
+  const searchSlot = searchQuery !== "" ? <SearchNav {...search} /> : null;
+
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
@@ -226,7 +239,9 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
     return val !== null ? Number(val) : null;
   }, []);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+  // Plain function (not useCallback): the React Compiler memoizes it, and
+  // manual deps here can't be reconciled with the compiler's inference.
+  const handleContextMenu = (e: React.MouseEvent) => {
     const lineKey = getLineKeyFromEvent(e);
     const hunkIndex = getHunkIndexFromEvent(e);
     const actionLabel = staged ? "Unstage" : "Stage";
@@ -288,7 +303,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
     if (items.length === 0) return;
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, items });
-  }, [getLineKeyFromEvent, getHunkIndexFromEvent, selectedLines, staged, interactive, handleApplySelected, handleApplyHunk, copySelectionRef, clearSelection, diff]);
+  };
 
   const lineLabel = `${selectedLines.size} line${selectedLines.size > 1 ? "s" : ""}`;
   const selectionSlot = selectedLines.size > 0 ? (
@@ -318,7 +333,15 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <DiffToolbar {...toolbarProps} rightSlot={selectionSlot} />
+      <DiffToolbar
+        {...toolbarProps}
+        rightSlot={(searchSlot || selectionSlot) ? (
+          <>
+            {searchSlot}
+            {selectionSlot}
+          </>
+        ) : undefined}
+      />
 
       {/* Diff content + minimap */}
       <div className="relative flex flex-1 min-h-0">
@@ -429,6 +452,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
                       fileTokens={fileTokens}
                       oldFileTokens={oldFileTokens}
                       intraLineRanges={intraLineRanges}
+                      searchQuery={searchQuery}
                     />
                   ) : (
                     hunk.lines.map((line, li) => (
@@ -441,6 +465,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
                         ranges={intraLineRanges.get(li)}
                         isSelected={selectedLines.has(`${hi}:${li}`)}
                         wrapClass={wrapClass}
+                        dimmed={searchQuery !== "" && !line.content.toLowerCase().includes(searchQuery)}
                       />
                     ))
                   )}
@@ -492,6 +517,8 @@ interface DiffLineProps {
   ranges?: CharRange[];
   isSelected: boolean;
   wrapClass: string;
+  /** Dimmed when a filter query is active and this line doesn't match it. */
+  dimmed: boolean;
 }
 
 const DiffLine = memo(DiffLineImpl);
@@ -504,6 +531,7 @@ function DiffLineImpl({
   ranges,
   isSelected,
   wrapClass,
+  dimmed,
 }: DiffLineProps) {
   const isChangeLine = line.origin === "+" || line.origin === "-";
   const isContext = line.origin === " ";
@@ -525,7 +553,11 @@ function DiffLineImpl({
 
   return (
     <div
-      className={`flex ${bgClass} ${isContext ? "opacity-80" : ""} group/line cursor-default`}
+      className={cn(
+        "flex group/line cursor-default",
+        bgClass,
+        dimmed ? FILTER_DIM_CLASS : isContext && "opacity-80",
+      )}
       style={LINE_CONTAINMENT}
       data-line-key={isChangeLine ? `${hunkIndex}:${lineIndex}` : undefined}
     >
@@ -574,6 +606,8 @@ interface SideBySideHunkProps {
   fileTokens?: ThemedToken[][] | null;
   oldFileTokens?: ThemedToken[][] | null;
   intraLineRanges: Map<number, CharRange[]>;
+  /** Lowercased filter query; lines not containing it are dimmed. Empty = off. */
+  searchQuery: string;
 }
 
 interface SideBySidePair {
@@ -648,6 +682,7 @@ function SideBySideHunk({
   fileTokens,
   oldFileTokens,
   intraLineRanges,
+  searchQuery,
 }: SideBySideHunkProps) {
   const pairs = useMemo(() => buildSideBySidePairs(hunk), [hunk]);
 
@@ -666,6 +701,8 @@ function SideBySideHunk({
           : (pair.rightIdx !== null ? hunkTokens?.[pair.rightIdx] : undefined);
         const leftRanges = pair.leftIdx !== null ? intraLineRanges.get(pair.leftIdx) : undefined;
         const rightRanges = pair.rightIdx !== null ? intraLineRanges.get(pair.rightIdx) : undefined;
+        const leftDimmed = searchQuery !== "" && !!pair.left && !pair.left.content.toLowerCase().includes(searchQuery);
+        const rightDimmed = searchQuery !== "" && !!pair.right && !pair.right.content.toLowerCase().includes(searchQuery);
 
         return (
           <div key={i} className="flex group/diffpair">
@@ -680,6 +717,7 @@ function SideBySideHunk({
               isSelected={pair.leftIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.leftIdx}`) : false}
               side="left"
               oppositeLine={pair.right}
+              dimmed={leftDimmed}
             />
             {/* Right (new) side */}
             <SideBySideCell
@@ -692,6 +730,7 @@ function SideBySideHunk({
               isSelected={pair.rightIdx !== null ? selectedLines.has(`${hunkIndex}:${pair.rightIdx}`) : false}
               side="right"
               oppositeLine={pair.left}
+              dimmed={rightDimmed}
             />
           </div>
         );
@@ -710,6 +749,8 @@ interface SideBySideCellProps {
   isSelected: boolean;
   side: "left" | "right";
   oppositeLine: DiffLine | null;
+  /** Dimmed when a filter query is active and this line doesn't match it. */
+  dimmed: boolean;
 }
 
 const SideBySideCell = memo(SideBySideCellImpl);
@@ -724,6 +765,7 @@ function SideBySideCellImpl({
   isSelected,
   side,
   oppositeLine,
+  dimmed,
 }: SideBySideCellProps) {
   const isChangeLine = line !== null && (line.origin === "+" || line.origin === "-");
   const isContext = line !== null && line.origin === " ";
@@ -743,7 +785,12 @@ function SideBySideCellImpl({
 
   return (
     <div
-      className={`flex flex-1 min-w-0 overflow-hidden ${side === "left" ? "border-r border-border" : ""} ${bgClass} ${isContext ? "opacity-80" : ""} group/line cursor-default`}
+      className={cn(
+        "flex flex-1 min-w-0 overflow-hidden group/line cursor-default",
+        side === "left" && "border-r border-border",
+        bgClass,
+        dimmed ? FILTER_DIM_CLASS : isContext && "opacity-80",
+      )}
       style={LINE_CONTAINMENT}
       data-line-key={isChangeLine && lineIdx !== null ? `${hunkIndex}:${lineIdx}` : undefined}
     >

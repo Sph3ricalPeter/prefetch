@@ -180,6 +180,112 @@ function DevToolsBlocker() {
   return null;
 }
 
+/**
+ * Replaces the WebView2 native find bar (Ctrl/Cmd+F) with a focus on the global
+ * filter input, which drives in-view search across the diff and CI-log views.
+ * Capture phase + preventDefault suppresses the built-in find popup.
+ */
+function FilterSearchHotkey() {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        const el = document.getElementById("global-filter-input") as HTMLInputElement | null;
+        if (el) {
+          e.preventDefault();
+          el.focus();
+          el.select();
+        }
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, []);
+
+  return null;
+}
+
+/**
+ * Global Escape "stack" — Escape acts in priority order regardless of focus:
+ *   1. Filter box — if the input is focused, defocus it (clearing any query
+ *      first) so Escape always exits the filter, even when it's empty. If the
+ *      input is *not* focused but a query is active (e.g. clicked into the
+ *      diff), clear the query.
+ *   2. Open middle-pane context (diff / large-diff guard / CI log) → close it,
+ *      returning to the commit graph.
+ *   3. Commit graph (base layer) → Escape does nothing.
+ *
+ * Bails when the event was already handled, when a non-filter input/textarea/
+ * contenteditable is focused (dialogs and the conflict editor own their own
+ * Escape), or when a modal/confirm overlay is open (it owns Escape).
+ */
+function EscapeStack() {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      const isFilterInput = active?.id === "global-filter-input";
+      if (
+        !isFilterInput &&
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+      // A modal/confirm overlay (inset-0 z-50 backdrop) is open — let it own Escape.
+      if (document.querySelector('[class*="inset-0"][class*="z-50"]')) return;
+
+      const s = useRepoStore.getState();
+      // 1a. Filter box is focused → always defocus, clearing any query first.
+      //     Must run even when the filter is empty: otherwise no branch below
+      //     matches, blur never fires, and Escape appears dead (focus stuck).
+      if (isFilterInput) {
+        if (s.filterInput !== "" || s.filterQuery !== "") s.clearFilter();
+        active?.blur();
+        e.preventDefault();
+        return;
+      }
+      // 1b. Filter query active but input not focused (e.g. clicked into the
+      //     diff) → clear it so Escape "exits" the filter.
+      if (s.filterInput !== "" || s.filterQuery !== "") {
+        s.clearFilter();
+        e.preventDefault();
+        return;
+      }
+      // 2. Middle-pane context: diff / large-diff guard / CI log / conflict
+      //    editor → back to the graph. clearDiff() nulls the selected file,
+      //    which also dismisses the conflict editor (shown for conflicted files).
+      const conflictEditorOpen =
+        s.selectedFilePath !== null &&
+        s.selectedCommitId === null &&
+        s.selectedStashIndex === null &&
+        s.fileStatuses.some((f) => f.path === s.selectedFilePath && f.is_conflicted);
+      if (
+        s.activeDiff !== null ||
+        s.largeDiffPending !== null ||
+        s.ciSelectedJobId !== null ||
+        conflictEditorOpen
+      ) {
+        s.clearDiff();
+        // The file row that opened the diff is a <button> and still holds DOM
+        // focus. Without this blur, *this* Escape keydown flips it into
+        // :focus-visible and Chromium paints a stray focus ring on the row that
+        // lingers until the next click. Dropping focus closes the pane cleanly.
+        active?.blur();
+        e.preventDefault();
+        return;
+      }
+      // 3. Commit graph base layer — nothing to close.
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  return null;
+}
+
 function App() {
   return (
     <TooltipProvider delayDuration={300}>
@@ -190,6 +296,8 @@ function App() {
       <UpdateChecker />
       <ContextMenuBlocker />
       <DevToolsBlocker />
+      <FilterSearchHotkey />
+      <EscapeStack />
       <Toaster />
     </TooltipProvider>
   );

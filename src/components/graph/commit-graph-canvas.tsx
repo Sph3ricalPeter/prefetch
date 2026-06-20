@@ -33,6 +33,7 @@ const ROW_RADIUS = 6;            // Change 1: matches CSS rounded-md
 const GRAPH_PADDING_TOP = 6;     // top padding matching left padding
 const ROW_INSET = 2;             // vertical inset so row highlights don't touch
 const GRAPH_DIM_ALPHA = 0.25;    // opacity for commit rows that don't match the filter
+const SEARCH_HIGHLIGHT_COLOR = "rgba(250, 204, 21, 0.28)"; // amber, matches the diff/log search highlight
 
 // Mutable font config — updated from the theme store before each draw() call.
 // Module-level so standalone drawing helpers can read it without extra parameters.
@@ -377,6 +378,39 @@ function commitMatchesQuery(
   return refNames.some((n) => n.toLowerCase().includes(q));
 }
 
+/**
+ * Draw translucent amber rects behind every case-insensitive occurrence of
+ * `query` in the about-to-be-drawn `text` — the canvas equivalent of the
+ * diff/log search highlight. Call it right before the matching `fillText`, with
+ * the same font already set and the same `x`/`y` (textBaseline "middle").
+ * `text` must be the actually-rendered string (already truncated). No-op when
+ * `query` is empty or absent from `text`.
+ */
+function drawSearchHighlight(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  query: string,
+  fontSize: number,
+): void {
+  if (!query || !text) return;
+  const lower = text.toLowerCase();
+  let idx = lower.indexOf(query);
+  if (idx === -1) return;
+  const h = fontSize + 4;
+  const top = y - h / 2;
+  const prevFill = ctx.fillStyle;
+  ctx.fillStyle = SEARCH_HIGHLIGHT_COLOR;
+  while (idx !== -1) {
+    const preW = ctx.measureText(text.slice(0, idx)).width;
+    const matchW = ctx.measureText(text.slice(idx, idx + query.length)).width;
+    ctx.fillRect(x + preW, top, matchW, h);
+    idx = lower.indexOf(query, idx + query.length);
+  }
+  ctx.fillStyle = prevFill;
+}
+
 function truncateText(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -528,6 +562,7 @@ function drawPill(
   drawIcon?: (ctx: CanvasRenderingContext2D, ix: number, iy: number, color: string) => number,
   maxContentWidth?: number,
   cornerRadii?: number | number[],
+  highlightQuery?: string,
 ): number {
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
   const iconWidth = drawIcon ? drawIcon(ctx, 0, -1000, textColor) : 0; // dry-run to measure width
@@ -551,6 +586,7 @@ function drawPill(
   // Text + trailing icon
   ctx.fillStyle = textColor;
   ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
+  if (highlightQuery) drawSearchHighlight(ctx, displayText, x + LABEL_PAD_X, y, highlightQuery, fontCfg.sizeBody);
   ctx.fillText(displayText, x + LABEL_PAD_X, y);
   if (drawIcon) {
     drawIcon(ctx, x + LABEL_PAD_X + textWidth + TRAILING_ICON_GAP, y, textColor);
@@ -655,6 +691,7 @@ function drawMergedBranchPill(
   group: MergedBranchGroup,
   maxContentWidth?: number,
   cornerRadii?: number | number[],
+  highlightQuery?: string,
 ): number {
   const bColor = branchColor(group.baseName);
   const dimColor = branchColorDim(group.baseName);
@@ -698,6 +735,7 @@ function drawMergedBranchPill(
     cursorX += CHECK_ICON_W;
   }
   ctx.fillStyle = textCol;
+  if (highlightQuery) drawSearchHighlight(ctx, displayName, cursorX, y, highlightQuery, fontCfg.sizeBody);
   ctx.fillText(displayName, cursorX, y);
   cursorX += textWidth;
   if (group.local) {
@@ -1376,6 +1414,8 @@ export function CommitGraphCanvas({
     }
 
     // --- Commit rows ---
+    // Lowercased filter query, for drawing the match highlight behind text.
+    const hq = filterQuery.trim().toLowerCase();
     for (let visRow = Math.max(firstVisibleRow, rowOffset); visRow <= lastVisibleRow; visRow++) {
       const commitIdx = visRow - rowOffset;
       const commit = commits[commitIdx];
@@ -1573,7 +1613,7 @@ export function CommitGraphCanvas({
           : undefined;
         if (maxPrimaryW > 20) {
           if (primary.kind === "branch") {
-            primaryW = drawMergedBranchPill(ctx, badgeColLeft, y, primary.group, maxPrimaryW, joinedRadii);
+            primaryW = drawMergedBranchPill(ctx, badgeColLeft, y, primary.group, maxPrimaryW, joinedRadii, hq);
             primaryColor = branchColor(primary.group.baseName);
           } else if (primary.kind === "tag") {
             primaryW = drawPill(
@@ -1586,6 +1626,7 @@ export function CommitGraphCanvas({
               drawTagIcon,
               maxPrimaryW,
               joinedRadii,
+              hq,
             );
           } else {
             primaryW = drawPill(
@@ -1598,6 +1639,7 @@ export function CommitGraphCanvas({
               drawStashIcon,
               maxPrimaryW,
               joinedRadii,
+              hq,
             );
           }
         }
@@ -1729,6 +1771,7 @@ export function CommitGraphCanvas({
       if (columnVisibility.sha) {
         ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
         ctx.fillStyle = graphColors.dim;
+        drawSearchHighlight(ctx, commit.short_id, shaColLeft + 8, y, hq, fontCfg.sizeLabel);
         ctx.fillText(commit.short_id, shaColLeft + 8, y);
       }
 
@@ -1751,12 +1794,16 @@ export function CommitGraphCanvas({
       if (fullMsgWidth <= textAvail) {
         if (parsedType) {
           ctx.fillStyle = typeColor;
+          drawSearchHighlight(ctx, parsedType.prefix, textLeft, y, hq, fontCfg.sizeBody);
           ctx.fillText(parsedType.prefix, textLeft, y);
           const prefixW = cachedMeasureText(ctx, parsedType.prefix);
           ctx.fillStyle = graphColors.fg;
-          ctx.fillText(commit.message.slice(parsedType.prefix.length), textLeft + prefixW, y);
+          const restText = commit.message.slice(parsedType.prefix.length);
+          drawSearchHighlight(ctx, restText, textLeft + prefixW, y, hq, fontCfg.sizeBody);
+          ctx.fillText(restText, textLeft + prefixW, y);
         } else {
           ctx.fillStyle = graphColors.fg;
+          drawSearchHighlight(ctx, commit.message, textLeft, y, hq, fontCfg.sizeBody);
           ctx.fillText(commit.message, textLeft, y);
         }
 
@@ -1768,6 +1815,7 @@ export function CommitGraphCanvas({
             ctx.fillStyle = graphColors.dim;
             const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
             const bodyText = truncateText(ctx, bodyOneLine, bodyAvailW);
+            drawSearchHighlight(ctx, bodyText, bodyX, y, hq, fontCfg.sizeBody);
             ctx.fillText(bodyText, bodyX, y);
 
             const drawnBodyWidth = cachedMeasureText(ctx, bodyText);
@@ -1783,14 +1831,19 @@ export function CommitGraphCanvas({
         }
       } else if (parsedType) {
         ctx.fillStyle = typeColor;
+        drawSearchHighlight(ctx, parsedType.prefix, textLeft, y, hq, fontCfg.sizeBody);
         ctx.fillText(parsedType.prefix, textLeft, y);
         const prefixW = cachedMeasureText(ctx, parsedType.prefix);
         ctx.fillStyle = graphColors.fg;
         const rest = commit.message.slice(parsedType.prefix.length);
-        ctx.fillText(truncateText(ctx, rest, Math.max(0, textAvail - prefixW)), textLeft + prefixW, y);
+        const restTrunc = truncateText(ctx, rest, Math.max(0, textAvail - prefixW));
+        drawSearchHighlight(ctx, restTrunc, textLeft + prefixW, y, hq, fontCfg.sizeBody);
+        ctx.fillText(restTrunc, textLeft + prefixW, y);
       } else {
         ctx.fillStyle = graphColors.fg;
-        ctx.fillText(truncateText(ctx, commit.message, textAvail), textLeft, y);
+        const msgTrunc = truncateText(ctx, commit.message, textAvail);
+        drawSearchHighlight(ctx, msgTrunc, textLeft, y, hq, fontCfg.sizeBody);
+        ctx.fillText(msgTrunc, textLeft, y);
       }
 
       // Author column — show name + email when space allows
@@ -1807,14 +1860,18 @@ export function CommitGraphCanvas({
 
           if (remaining > 10 && commit.author_email) {
             ctx.fillStyle = graphColors.fg;
+            drawSearchHighlight(ctx, commit.author_name, authorX, y, hq, fontCfg.sizeBody);
             ctx.fillText(commit.author_name, authorX, y);
             ctx.fillStyle = graphColors.dim;
             const emailText = truncateText(ctx, commit.author_email, remaining);
+            drawSearchHighlight(ctx, emailText, authorX + nameW + emailGap, y, hq, fontCfg.sizeBody);
             ctx.fillText(emailText, authorX + nameW + emailGap, y);
             emailShown = cachedMeasureText(ctx, commit.author_email) <= remaining;
           } else {
             ctx.fillStyle = graphColors.fg;
-            ctx.fillText(truncateText(ctx, commit.author_name, authorAvail), authorX, y);
+            const nameTrunc = truncateText(ctx, commit.author_name, authorAvail);
+            drawSearchHighlight(ctx, nameTrunc, authorX, y, hq, fontCfg.sizeBody);
+            ctx.fillText(nameTrunc, authorX, y);
           }
 
           if (!emailShown) {
@@ -1836,7 +1893,9 @@ export function CommitGraphCanvas({
         ctx.fillStyle = graphColors.dim;
         const dateAvail = dateEffW - 16;
         if (dateAvail > 10) {
-          ctx.fillText(formatDate(commit.timestamp, dateFormat, dateAvail, ctx), dateColLeft + 8, y);
+          const dateText = formatDate(commit.timestamp, dateFormat, dateAvail, ctx);
+          drawSearchHighlight(ctx, dateText, dateColLeft + 8, y, hq, fontCfg.sizeLabel);
+          ctx.fillText(dateText, dateColLeft + 8, y);
         }
       }
 
@@ -1881,7 +1940,7 @@ export function CommitGraphCanvas({
     bodyHitAreasRef.current = bodyHitAreas;
     avatarHitAreasRef.current = avatarHitAreas;
     authorHitAreasRef.current = authorHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
+  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, filterQuery, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);

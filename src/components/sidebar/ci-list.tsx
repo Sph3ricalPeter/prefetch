@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { HighlightedText } from "@/components/ui/highlighted-text";
 import { cn } from "@/lib/utils";
 import { openUrl } from "@/lib/commands";
 import { formatDuration, effectivePipelineStatus } from "@/lib/ci-utils";
@@ -165,9 +166,9 @@ function PipelineLabel({ pipeline, branch }: { pipeline: Pipeline; branch: strin
     // GitHub: workflow name is the primary label, branch secondary
     return (
       <>
-        <span className="text-foreground truncate min-w-0 flex-1">{pipeline.name}</span>
+        <span className="text-foreground truncate min-w-0 flex-1"><HighlightedText text={pipeline.name} /></span>
         <span className="text-muted-foreground shrink-0">·</span>
-        <span className="shrink-0 text-muted-foreground">{branch}</span>
+        <span className="shrink-0 text-muted-foreground"><HighlightedText text={branch} /></span>
         <SourceIcon source={pipeline.source} />
       </>
     );
@@ -176,7 +177,7 @@ function PipelineLabel({ pipeline, branch }: { pipeline: Pipeline; branch: strin
   return (
     <>
       <span className="text-foreground shrink-0">#{pipeline.id}</span>
-      <span className="truncate flex-1 text-muted-foreground">{branch}</span>
+      <span className="truncate flex-1 text-muted-foreground"><HighlightedText text={branch} /></span>
       <SourceIcon source={pipeline.source} />
     </>
   );

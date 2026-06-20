@@ -16,6 +16,8 @@ import {
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { HighlightedText } from "@/components/ui/highlighted-text";
 import { cn } from "@/lib/utils";
 
 export function TagList() {
@@ -36,6 +38,7 @@ export function TagList() {
     y: number;
   } | null>(null);
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
+  useEscapeKey(confirmDeleteTag != null, () => setConfirmDeleteTag(null));
 
   // Filter dims non-matching rows rather than hiding them.
   const q = filter.trim().toLowerCase();
@@ -157,7 +160,7 @@ export function TagList() {
               )}
             >
               <Tag className="h-3 w-3 shrink-0" />
-              <span className="shrink-0">{tag.name}</span>
+              <span className="shrink-0"><HighlightedText text={tag.name} /></span>
               <span className="ml-auto min-w-0 truncate text-faint text-xs">
                 {tag.commit_id}
               </span>

@@ -10,6 +10,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Kbd } from "@/components/ui/kbd";
 import { ProfileAvatar } from "@/components/ui/avatar";
 import { ResizableTextarea } from "@/components/ui/resizable-textarea";
 
@@ -384,8 +385,9 @@ export function CommitBox() {
                 : "Nothing staged"}
         </button>
       )}
-      <p className="text-center text-xs text-faint">
-        {isOperationInProgress ? "Ctrl+Enter to continue" : "Ctrl+Enter to commit"}
+      <p className="flex items-center justify-center gap-1.5 text-xs text-faint">
+        <Kbd>Ctrl+Enter</Kbd>
+        {isOperationInProgress ? "to continue" : "to commit"}
       </p>
     </div>
   );
