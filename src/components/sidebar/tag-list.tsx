@@ -1,13 +1,12 @@
 import { useState } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
   Tag,
   Plus,
   ArrowUpFromLine,
   Copy,
   Trash2,
 } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 import {
   Tooltip,
   TooltipTrigger,
@@ -16,8 +15,9 @@ import {
 import { useRepoStore } from "@/stores/repo-store";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
-import { useEscapeKey } from "@/hooks/use-escape-key";
+import { ConfirmDialog } from "@/components/ui/modal";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { SectionHeader } from "@/components/ui/section-header";
 import { cn } from "@/lib/utils";
 
 export function TagList() {
@@ -38,7 +38,6 @@ export function TagList() {
     y: number;
   } | null>(null);
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
-  useEscapeKey(confirmDeleteTag != null, () => setConfirmDeleteTag(null));
 
   // Filter dims non-matching rows rather than hiding them.
   const q = filter.trim().toLowerCase();
@@ -71,40 +70,26 @@ export function TagList() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center px-3 py-1.5">
-        <button
-          onClick={() => setSidebarSection("tags", !isOpen)}
-          className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
-        >
-          {isOpen ? (
-            <ChevronDown className="h-3 w-3" />
-          ) : (
-            <ChevronRight className="h-3 w-3" />
-          )}
-          Tags
-          {allTags.length > 0 && (
-            <span className="ml-1 normal-case tracking-normal text-faint">
-              {allTags.length}
-            </span>
-          )}
-        </button>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => setIsCreating(!isCreating)}
-              className="ml-auto rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Create tag</TooltipContent>
-        </Tooltip>
-      </div>
+      <SectionHeader
+        label="Tags"
+        count={allTags.length > 0 ? allTags.length : undefined}
+        isOpen={isOpen}
+        onToggle={() => setSidebarSection("tags", !isOpen)}
+        action={
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton onClick={() => setIsCreating(!isCreating)}>
+                <Plus className="h-3 w-3" />
+              </IconButton>
+            </TooltipTrigger>
+            <TooltipContent>Create tag</TooltipContent>
+          </Tooltip>
+        }
+      />
 
       {/* Create tag inline form */}
       {isCreating && (
-        <div className="px-3 pb-2 space-y-1">
+        <div className="px-2 pb-2 space-y-1">
           <input
             type="text"
             placeholder="Tag name (e.g. v1.0.0)"
@@ -112,7 +97,7 @@ export function TagList() {
             onChange={(e) => setNewTagName(e.target.value)}
             onKeyDown={handleKeyDown}
             autoFocus
-            className="w-full rounded bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
           />
           <input
             type="text"
@@ -120,13 +105,13 @@ export function TagList() {
             value={newTagMessage}
             onChange={(e) => setNewTagMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="w-full rounded bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
           />
           <div className="flex gap-1">
             <button
               onClick={handleCreate}
               disabled={!newTagName.trim()}
-              className="flex-1 rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
             >
               Create
             </button>
@@ -136,7 +121,7 @@ export function TagList() {
                 setNewTagName("");
                 setNewTagMessage("");
               }}
-              className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-secondary"
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary"
             >
               Cancel
             </button>
@@ -155,7 +140,7 @@ export function TagList() {
                 setTagContextMenu({ tagName: tag.name, x: e.clientX, y: e.clientY });
               }}
               className={cn(
-                "group flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors",
+                "group flex items-center gap-1.5 rounded-md px-2 py-1 my-1 text-xs text-muted-foreground hover:bg-secondary transition-colors",
                 isDimmed(tag.name) && FILTER_DIM_CLASS,
               )}
             >
@@ -185,31 +170,18 @@ export function TagList() {
 
       {/* Delete tag confirmation */}
       {confirmDeleteTag != null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Delete tag?</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              This will delete the local tag &quot;{confirmDeleteTag}&quot;. If it has been pushed, the remote tag is not affected.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDeleteTag(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  deleteExistingTag(confirmDeleteTag);
-                  setConfirmDeleteTag(null);
-                }}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmDeleteTag(null)}
+          title="Delete tag?"
+          description={`This will delete the local tag "${confirmDeleteTag}". If it has been pushed, the remote tag is not affected.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={() => {
+            deleteExistingTag(confirmDeleteTag);
+            setConfirmDeleteTag(null);
+          }}
+        />
       )}
     </div>
   );

@@ -104,7 +104,7 @@ export function ResizableTextarea({
         ref={ref}
         value={value}
         className={cn(
-          "w-full resize-none rounded-md bg-background border px-3 py-2 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors",
+          "w-full resize-none rounded-md bg-field border px-3 py-2 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring transition-colors",
           // Auto-grow hides its own overflow (height tracks content); a fixed/
           // manually-sized box scrolls instead of clipping.
           autoGrow ? "overflow-hidden" : "overflow-auto",

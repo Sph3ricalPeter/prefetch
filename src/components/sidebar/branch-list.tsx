@@ -1,13 +1,15 @@
 import { useState, useEffect, useMemo } from "react";
-import { ChevronDown, ChevronRight, GitBranch, GitPullRequest, GitCommitHorizontal, GitMerge, Check, Monitor, Cloud, FastForward, ArrowDownToLine, ArrowUpFromLine, Link, Pencil, Copy, Trash2 } from "lucide-react";
+import { GitBranch, GitPullRequest, GitCommitHorizontal, GitMerge, Check, Monitor, Cloud, FastForward, ArrowDownToLine, ArrowUpFromLine, Link, Pencil, Copy, Trash2 } from "lucide-react";
 import type { BranchInfo, PipelineStatus, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { effectivePipelineStatus } from "@/lib/ci-utils";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
-import { useEscapeKey } from "@/hooks/use-escape-key";
+import { ConfirmDialog } from "@/components/ui/modal";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { SectionHeader } from "@/components/ui/section-header";
 import { cn } from "@/lib/utils";
+import { iconButtonVariants } from "@/components/ui/icon-button";
 import {
   Tooltip,
   TooltipTrigger,
@@ -52,7 +54,6 @@ export function BranchList() {
     deleteRemote: boolean;
     remoteName: string;
   } | null>(null);
-  useEscapeKey(!!confirmDeleteBranch, () => setConfirmDeleteBranch(null));
 
   // Filter dims non-matching rows rather than hiding them (see store filterQuery).
   const q = filter.trim().toLowerCase();
@@ -123,12 +124,12 @@ export function BranchList() {
       <div>
         {/* Detached HEAD indicator */}
         {!currentBranch && headCommitId && (
-          <div className="flex items-center gap-2 px-3 py-1 text-xs bg-accent/60">
+          <div className="flex items-center gap-2 rounded-md px-2 py-1 text-xs bg-accent/60">
             <GitCommitHorizontal className="h-3 w-3 shrink-0 text-muted-foreground" />
             <span className="text-muted-foreground">~HEAD</span>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-label text-faint font-mono">
+                <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-label text-faint font-mono">
                   {headCommitId.slice(0, 7)}
                 </span>
               </TooltipTrigger>
@@ -193,144 +194,103 @@ export function BranchList() {
 
       {/* Rename branch dialog */}
       {renameDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Rename branch</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Renaming &apos;{renameDialog.branch}&apos;
-            </p>
-            <input
-              autoFocus
-              value={renameInput}
-              onChange={(e) => setRenameInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
-                  renameBranch(renameDialog.branch, renameInput.trim(), renameRemote);
-                  setRenameDialog(null);
-                } else if (e.key === "Escape") {
-                  setRenameDialog(null);
-                }
-              }}
-              placeholder="New name"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
-            />
-            {renameDialog.hasRemote && (
-              <label className="flex items-center gap-2 mb-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={renameRemote}
-                  onChange={(e) => setRenameRemote(e.target.checked)}
-                  className="rounded border-border"
-                />
-                <span className="text-xs text-muted-foreground">
-                  Rename on remote too (pushes new name, deletes old)
-                </span>
-              </label>
-            )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setRenameDialog(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
-                    renameBranch(renameDialog.branch, renameInput.trim(), renameRemote);
-                    setRenameDialog(null);
-                  }
-                }}
-                disabled={!renameInput.trim() || renameInput.trim() === renameDialog.branch}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                Rename
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setRenameDialog(null)}
+          title="Rename branch"
+          description={`Renaming '${renameDialog.branch}'`}
+          confirmLabel="Rename"
+          confirmDisabled={!renameInput.trim() || renameInput.trim() === renameDialog.branch}
+          onConfirm={() => {
+            if (renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
+              renameBranch(renameDialog.branch, renameInput.trim(), renameRemote);
+              setRenameDialog(null);
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={renameInput}
+            onChange={(e) => setRenameInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && renameInput.trim() && renameInput.trim() !== renameDialog.branch) {
+                renameBranch(renameDialog.branch, renameInput.trim(), renameRemote);
+                setRenameDialog(null);
+              }
+            }}
+            placeholder="New name"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+          />
+          {renameDialog.hasRemote && (
+            <label className="flex items-center gap-2 mb-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={renameRemote}
+                onChange={(e) => setRenameRemote(e.target.checked)}
+                className="rounded-md border-border"
+              />
+              <span className="text-xs text-muted-foreground">
+                Rename on remote too (pushes new name, deletes old)
+              </span>
+            </label>
+          )}
+        </ConfirmDialog>
       )}
 
       {/* Set upstream dialog */}
       {upstreamDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Set upstream</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Set tracking branch for &apos;{upstreamDialog.branch}&apos;
-            </p>
-            <input
-              autoFocus
-              value={upstreamInput}
-              onChange={(e) => setUpstreamInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && upstreamInput.trim()) {
-                  setUpstream(upstreamInput.trim());
-                  setUpstreamDialog(null);
-                } else if (e.key === "Escape") {
-                  setUpstreamDialog(null);
-                }
-              }}
-              placeholder="e.g. origin/main"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setUpstreamDialog(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (upstreamInput.trim()) {
-                    setUpstream(upstreamInput.trim());
-                    setUpstreamDialog(null);
-                  }
-                }}
-                disabled={!upstreamInput.trim()}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                Set
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setUpstreamDialog(null)}
+          title="Set upstream"
+          description={`Set tracking branch for '${upstreamDialog.branch}'`}
+          confirmLabel="Set"
+          confirmDisabled={!upstreamInput.trim()}
+          onConfirm={() => {
+            if (upstreamInput.trim()) {
+              setUpstream(upstreamInput.trim());
+              setUpstreamDialog(null);
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={upstreamInput}
+            onChange={(e) => setUpstreamInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && upstreamInput.trim()) {
+                setUpstream(upstreamInput.trim());
+                setUpstreamDialog(null);
+              }
+            }}
+            placeholder="e.g. origin/main"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+          />
+        </ConfirmDialog>
       )}
 
       {/* Delete branch confirmation */}
       {confirmDeleteBranch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Delete branch?</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              {confirmDeleteBranch.deleteLocal && confirmDeleteBranch.deleteRemote
-                ? `This will delete "${confirmDeleteBranch.branchName}" locally and from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
-                : confirmDeleteBranch.deleteRemote
-                  ? `This will delete "${confirmDeleteBranch.branchName}" from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
-                  : `This will delete "${confirmDeleteBranch.branchName}" locally. This cannot be undone.`}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDeleteBranch(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const { branchName, deleteLocal, deleteRemote: delRemote, remoteName } = confirmDeleteBranch;
-                  setConfirmDeleteBranch(null);
-                  if (deleteLocal) await deleteBranch(branchName);
-                  if (delRemote) await deleteRemoteBranch(remoteName, branchName);
-                }}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmDeleteBranch(null)}
+          title="Delete branch?"
+          description={
+            confirmDeleteBranch.deleteLocal && confirmDeleteBranch.deleteRemote
+              ? `This will delete "${confirmDeleteBranch.branchName}" locally and from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+              : confirmDeleteBranch.deleteRemote
+                ? `This will delete "${confirmDeleteBranch.branchName}" from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+                : `This will delete "${confirmDeleteBranch.branchName}" locally. This cannot be undone.`
+          }
+          confirmLabel="Delete"
+          destructive
+          onConfirm={async () => {
+            const { branchName, deleteLocal, deleteRemote: delRemote, remoteName } = confirmDeleteBranch;
+            setConfirmDeleteBranch(null);
+            if (deleteLocal) await deleteBranch(branchName);
+            if (delRemote) await deleteRemoteBranch(remoteName, branchName);
+          }}
+        />
       )}
     </div>
   );
@@ -461,20 +421,12 @@ function BranchSection({
 }) {
   return (
     <div>
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center gap-1 px-3 py-1.5 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
-      >
-        {isOpen ? (
-          <ChevronDown className="h-3 w-3" />
-        ) : (
-          <ChevronRight className="h-3 w-3" />
-        )}
-        {label}
-        <span className="ml-1 normal-case tracking-normal text-faint">
-          {count}
-        </span>
-      </button>
+      <SectionHeader
+        label={label}
+        count={count}
+        isOpen={isOpen}
+        onToggle={onToggle}
+      />
       {isOpen && <div>{children}</div>}
     </div>
   );
@@ -521,7 +473,7 @@ function BranchRow({
       onContextMenu={onContextMenu}
       disabled={disabled && !isCurrent}
       className={cn(
-        "flex w-full items-center gap-2 px-3 py-1 text-left text-xs transition-colors disabled:cursor-default",
+        "flex w-full items-center gap-2 rounded-md px-2 py-1 my-1 text-left text-xs transition-colors disabled:cursor-default",
         isCurrent
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -568,7 +520,11 @@ function BranchRow({
                 e.stopPropagation();
                 onPrClick();
               }}
-              className={`ml-auto shrink-0 rounded p-0.5 ${prIconColor(ciStatus)} hover:text-foreground hover:bg-accent transition-colors`}
+              className={cn(
+                iconButtonVariants({ size: "sm" }),
+                "ml-auto shrink-0 hover:bg-accent",
+                prIconColor(ciStatus),
+              )}
             >
               <GitPullRequest className="h-3 w-3" />
             </span>

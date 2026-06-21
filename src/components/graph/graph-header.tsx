@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Settings, Check } from "lucide-react";
+import { SCROLLBAR_PAD_RIGHT } from "./commit-graph-canvas";
 import type { GraphColumnWidths, GraphColumnVisibility } from "./commit-graph-canvas";
+import { GRAPH_DENSITY_OPTIONS, type GraphDensity } from "@/lib/graph-density";
 
 const HEADER_HEIGHT = 24;
 const HANDLE_HIT = 6;
@@ -15,10 +17,19 @@ interface GraphHeaderProps {
   badgeMax: number;
   graphMin: number;
   graphMax: number;
+  /** Effective visibility (post responsive collapse) — drives which column
+   *  labels, dividers and resize handles are laid out. */
   visibility: GraphColumnVisibility;
+  /** User's chosen visibility — drives the settings dropdown checkmarks so an
+   *  auto-collapsed column still reads as "on". */
+  userVisibility: GraphColumnVisibility;
+  density: GraphDensity;
+  dotNodes: boolean;
   onResize: (widths: GraphColumnWidths) => void;
   onResizeEnd: (widths: GraphColumnWidths) => void;
   onVisibilityChange: (visibility: GraphColumnVisibility) => void;
+  onDensityChange: (density: GraphDensity) => void;
+  onDotNodesChange: (on: boolean) => void;
 }
 
 type DragKind = "badge" | "graph" | "author";
@@ -31,9 +42,14 @@ export function GraphHeader({
   graphMin,
   graphMax,
   visibility,
+  userVisibility,
+  density,
+  dotNodes,
   onResize,
   onResizeEnd,
   onVisibilityChange,
+  onDensityChange,
+  onDotNodesChange,
 }: GraphHeaderProps) {
   const [dragging, setDragging] = useState<DragKind | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -114,32 +130,28 @@ export function GraphHeader({
     return () => document.removeEventListener("mousedown", onClick);
   }, [settingsOpen]);
 
-  // Column positions
+  // Column positions. Right-anchored group order: author, date, sha (rightmost).
   const badgeRight = widths.badge;
   const graphRight = badgeRight + widths.graph;
   const shaWidth = visibility.sha ? widths.sha : 0;
-  const shaRight = graphRight + shaWidth;
   const dateWidth = visibility.date ? widths.date : 0;
   const authorWidth = visibility.author ? widths.author : 0;
-  const rightColsWidth = dateWidth + authorWidth;
-  const authorLeft = Math.max(shaRight, containerWidth - rightColsWidth);
-  // Date sits immediately after author when author is visible — otherwise the
-  // pure right-anchored position can overlap author at narrow widths.
-  const dateLeft = visibility.author
-    ? authorLeft + authorWidth
-    : Math.max(shaRight, containerWidth - dateWidth);
+  const rightColsWidth = authorWidth + dateWidth + shaWidth;
+  const authorLeft = Math.max(graphRight, containerWidth - SCROLLBAR_PAD_RIGHT - rightColsWidth);
+  const dateLeft = authorLeft + authorWidth;
+  const shaLeft = dateLeft + dateWidth;
 
   const labelClasses =
-    "text-caption uppercase tracking-widest text-faint select-none";
+    "text-caption tracking-widest text-faint select-none";
   const dividerClasses = "absolute top-1/2 -translate-y-1/2 h-4 w-px bg-border";
 
   const toggleVis = (key: keyof GraphColumnVisibility) => {
-    onVisibilityChange({ ...visibility, [key]: !visibility[key] });
+    onVisibilityChange({ ...userVisibility, [key]: !userVisibility[key] });
   };
 
   return (
     <div
-      className="relative shrink-0 border-b border-border bg-background"
+      className="relative shrink-0 border-border bg-background"
       style={{ height: HEADER_HEIGHT }}
     >
       {/* Column labels */}
@@ -155,18 +167,10 @@ export function GraphHeader({
       >
         Graph
       </div>
-      {visibility.sha && (
-        <div
-          className={`absolute inset-y-0 flex items-center pl-2 ${labelClasses}`}
-          style={{ left: graphRight, width: widths.sha }}
-        >
-          Sha
-        </div>
-      )}
       <div
         className={`absolute inset-y-0 flex items-center pl-3 overflow-hidden whitespace-nowrap ${labelClasses}`}
         style={{
-          left: shaRight,
+          left: graphRight,
           right: rightColsWidth > 0
             ? Math.max(28, containerWidth - authorLeft + 4)
             : 28,
@@ -190,6 +194,14 @@ export function GraphHeader({
           Date
         </div>
       )}
+      {visibility.sha && (
+        <div
+          className={`absolute inset-y-0 flex items-center pl-3 ${labelClasses}`}
+          style={{ left: shaLeft, width: shaWidth }}
+        >
+          Sha
+        </div>
+      )}
 
       {/* Static dividers for right-anchored columns */}
       {visibility.author && (
@@ -197,6 +209,9 @@ export function GraphHeader({
       )}
       {visibility.date && (
         <div className={dividerClasses} style={{ left: dateLeft }} aria-hidden="true" />
+      )}
+      {visibility.sha && (
+        <div className={dividerClasses} style={{ left: shaLeft }} aria-hidden="true" />
       )}
 
       {/* Resize handles */}
@@ -212,9 +227,6 @@ export function GraphHeader({
         onMouseDown={startDrag("graph")}
         ariaLabel="Resize graph column"
       />
-      {visibility.sha && (
-        <div className={dividerClasses} style={{ left: shaRight }} aria-hidden="true" />
-      )}
       {visibility.author && (
         <ResizeDivider
           x={authorLeft}
@@ -234,10 +246,30 @@ export function GraphHeader({
           <Settings className="h-3 w-3" />
         </button>
         {settingsOpen && (
-          <div className="absolute right-0 top-full mt-1 min-w-[160px] rounded-md border border-border bg-card shadow-lg">
-            <SettingsToggle label="Sha" checked={visibility.sha} onChange={() => toggleVis("sha")} />
-            <SettingsToggle label="Author" checked={visibility.author} onChange={() => toggleVis("author")} />
-            <SettingsToggle label="Date" checked={visibility.date} onChange={() => toggleVis("date")} />
+          <div className="absolute right-0 top-full mt-1 min-w-[160px] rounded-md border border-border bg-card shadow-lg py-1 animate-enter-down">
+            <div className="px-3 pb-1 pt-0.5 text-caption uppercase tracking-widest text-faint select-none">
+              Columns
+            </div>
+            <SettingsToggle label="Sha" checked={userVisibility.sha} onChange={() => toggleVis("sha")} />
+            <SettingsToggle label="Author" checked={userVisibility.author} onChange={() => toggleVis("author")} />
+            <SettingsToggle label="Date" checked={userVisibility.date} onChange={() => toggleVis("date")} />
+            <div className="my-1 border-t border-border" />
+            <div className="px-3 pb-1 pt-0.5 text-caption uppercase tracking-widest text-faint select-none">
+              Density
+            </div>
+            {GRAPH_DENSITY_OPTIONS.map((opt) => (
+              <SettingsToggle
+                key={opt.id}
+                label={opt.label}
+                checked={density === opt.id}
+                onChange={() => onDensityChange(opt.id)}
+              />
+            ))}
+            <div className="my-1 border-t border-border" />
+            <div className="px-3 pb-1 pt-0.5 text-caption uppercase tracking-widest text-faint select-none">
+              Nodes
+            </div>
+            <SettingsToggle label="Dots" checked={dotNodes} onChange={() => onDotNodesChange(!dotNodes)} />
           </div>
         )}
       </div>

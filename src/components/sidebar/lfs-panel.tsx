@@ -1,19 +1,19 @@
 import { useState, useEffect, useRef, type KeyboardEvent } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
   Database,
   AlertTriangle,
   Plus,
   X,
   Trash2,
 } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
+import { SectionHeader } from "@/components/ui/section-header";
 import { openUrl } from "@/lib/commands";
 
 /** Format a byte count into a human-readable string. */
@@ -70,43 +70,34 @@ export function LfsPanel() {
   return (
     <div>
       {/* Section header */}
-      <div className="flex items-center px-3 py-1.5">
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
-        >
-          {isOpen ? (
-            <ChevronDown className="h-3 w-3" />
-          ) : (
-            <ChevronRight className="h-3 w-3" />
-          )}
-          LFS
-        </button>
-
-        {/* Status dot */}
-        <span
-          className={`ml-2 h-1.5 w-1.5 rounded-full ${
-            lfsInfo.initialized
-              ? "bg-green-500"
-              : lfsInfo.installed
-                ? "bg-yellow-500"
-                : "bg-faint"
-          }`}
-        />
-
-        {/* Object count badge */}
-        {lfsInfo.initialized && lfsInfo.file_count > 0 && (
-          <span className="ml-1 text-xs text-faint normal-case tracking-normal">
-            {lfsInfo.file_count}
-          </span>
-        )}
-      </div>
+      <SectionHeader
+        label="LFS"
+        isOpen={isOpen}
+        onToggle={() => setIsOpen(!isOpen)}
+        className="px-3"
+        badge={
+          <span
+            className={`ml-1 h-1.5 w-1.5 rounded-full ${
+              lfsInfo.initialized
+                ? "bg-green-500"
+                : lfsInfo.installed
+                  ? "bg-yellow-500"
+                  : "bg-faint"
+            }`}
+          />
+        }
+        count={
+          lfsInfo.initialized && lfsInfo.file_count > 0
+            ? lfsInfo.file_count
+            : undefined
+        }
+      />
 
       {isOpen && (
         <div className="px-3 pb-2 space-y-2">
           {/* Case 1: git-lfs not installed */}
           {!lfsInfo.installed && (
-            <div className="flex items-start gap-1.5 rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+            <div className="flex items-start gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
               <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
               <span>
                 git-lfs not found.{" "}
@@ -131,7 +122,7 @@ export function LfsPanel() {
               <button
                 onClick={initializeLfs}
                 disabled={isLoading}
-                className="flex items-center gap-1 rounded bg-accent px-2 py-1 text-xs hover:bg-accent/80 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs hover:bg-accent/80 transition-colors disabled:opacity-50"
               >
                 <Database className="h-3 w-3" />
                 Initialize LFS
@@ -158,13 +149,16 @@ export function LfsPanel() {
                     <span className="flex-1 font-mono">{p.pattern}</span>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <button
+                        <IconButton
+                          size="sm"
+                          variant="subtle"
+                          reveal="fade"
                           onClick={() => untrackLfsPattern(p.pattern)}
                           disabled={isLoading}
-                          className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive-foreground transition-all disabled:opacity-40"
+                          className="shrink-0 hover:bg-destructive/20 hover:text-destructive-foreground"
                         >
                           <X className="h-3 w-3" />
-                        </button>
+                        </IconButton>
                       </TooltipTrigger>
                       <TooltipContent>Untrack "{p.pattern}"</TooltipContent>
                     </Tooltip>
@@ -182,24 +176,25 @@ export function LfsPanel() {
                     value={newPattern}
                     onChange={(e) => setNewPattern(e.target.value)}
                     onKeyDown={handlePatternKeyDown}
-                    className="flex-1 rounded bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+                    className="flex-1 rounded-md bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
                   />
                   <button
                     onClick={handleAddPattern}
                     disabled={!newPattern.trim() || isLoading}
-                    className="rounded px-1.5 py-0.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 transition-colors"
+                    className="rounded-md px-1.5 py-0.5 text-xs bg-accent hover:bg-accent/80 disabled:opacity-40 transition-colors"
                   >
                     Add
                   </button>
-                  <button
+                  <IconButton
+                    size="sm"
+                    variant="subtle"
                     onClick={() => {
                       setIsAdding(false);
                       setNewPattern("");
                     }}
-                    className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     <X className="h-3 w-3" />
-                  </button>
+                  </IconButton>
                 </div>
               ) : (
                 <button
@@ -218,7 +213,7 @@ export function LfsPanel() {
                     <button
                       onClick={pruneLfsObjects}
                       disabled={isLoading}
-                      className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
                     >
                       <Trash2 className="h-3 w-3" />
                       Prune

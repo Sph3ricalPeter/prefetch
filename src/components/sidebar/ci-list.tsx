@@ -29,7 +29,9 @@ import {
 import { useRepoStore } from "@/stores/repo-store";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { SectionHeader } from "@/components/ui/section-header";
 import { cn } from "@/lib/utils";
+import { IconButton, iconButtonVariants } from "@/components/ui/icon-button";
 import { openUrl } from "@/lib/commands";
 import { formatDuration, effectivePipelineStatus } from "@/lib/ci-utils";
 import type { PipelineStatus, Pipeline, CiJob } from "@/types/git";
@@ -231,40 +233,27 @@ export function CiList() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center px-3 py-1.5">
-        <button
-          onClick={() => setSidebarSection("ci", !isOpen)}
-          className="flex items-center gap-1 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
-        >
-          {isOpen ? (
-            <ChevronDown className="h-3 w-3" />
-          ) : (
-            <ChevronRight className="h-3 w-3" />
-          )}
-          CI
-          {latestStatus && <HeaderStatusIcon status={latestStatus} />}
-          {allPipelines.length > 0 && (
-            <span className="ml-1 normal-case tracking-normal font-normal text-faint">
-              {allPipelines.length}
-            </span>
-          )}
-        </button>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => loadCiPipelines()}
-              disabled={ciLoading || !isOpen || !hasForge}
-              className={`ml-auto rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-40 ${
-                isOpen && hasForge ? "" : "invisible"
-              }`}
-            >
-              <RefreshCw className={`h-3 w-3 ${ciLoading ? "animate-spin" : ""}`} />
-            </button>
-          </TooltipTrigger>
-          {isOpen && hasForge && <TooltipContent>Refresh pipelines</TooltipContent>}
-        </Tooltip>
-      </div>
+      <SectionHeader
+        label="CI"
+        badge={latestStatus && <HeaderStatusIcon status={latestStatus} />}
+        count={allPipelines.length > 0 ? allPipelines.length : undefined}
+        isOpen={isOpen}
+        onToggle={() => setSidebarSection("ci", !isOpen)}
+        action={
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton
+                onClick={() => loadCiPipelines()}
+                disabled={ciLoading || !isOpen || !hasForge}
+                className={isOpen && hasForge ? undefined : "invisible"}
+              >
+                <RefreshCw className={`h-3 w-3 ${ciLoading ? "animate-spin" : ""}`} />
+              </IconButton>
+            </TooltipTrigger>
+            {isOpen && hasForge && <TooltipContent>Refresh pipelines</TooltipContent>}
+          </Tooltip>
+        }
+      />
 
       {/* Content */}
       {isOpen && (
@@ -329,7 +318,7 @@ function PipelineEntry({
       <button
         onClick={onToggle}
         title={pipeline.branch !== branch ? pipeline.branch : undefined}
-        className={`group flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${
+        className={`group flex w-full items-center gap-1.5 rounded-md px-2 py-1 my-1 text-left text-xs transition-colors ${
           isExpanded
             ? "bg-accent text-accent-foreground"
             : "text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -362,7 +351,10 @@ function PipelineEntry({
                 e.stopPropagation();
                 openUrl(pipeline.url);
               }}
-              className="shrink-0 max-w-0 overflow-hidden rounded p-0.5 opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:max-w-6 group-hover:opacity-100 group-focus-visible:max-w-6 group-focus-visible:opacity-100"
+              className={cn(
+                iconButtonVariants({ size: "sm", reveal: "slide" }),
+                "shrink-0 hover:bg-accent",
+              )}
             >
               <ExternalLink className="h-3 w-3" />
             </span>
@@ -380,7 +372,7 @@ function PipelineEntry({
             <button
               key={job.id}
               onClick={() => onJobClick(job.id)}
-              className={`relative flex w-full items-center gap-1.5 pl-7 pr-3 py-0.5 text-left text-xs transition-colors ${
+              className={`relative flex w-full items-center gap-1.5 rounded-md pl-7 pr-3 py-0.5 my-1 text-left text-xs transition-colors ${
                 job.id === selectedJobId
                   ? "bg-accent text-accent-foreground"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground"

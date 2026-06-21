@@ -1,5 +1,6 @@
 import { useRepoStore } from "@/stores/repo-store";
 import { ArrowLeft, Columns2, Rows3, WrapText, UnfoldVertical, FoldVertical } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 
 interface DiffToolbarProps {
   onExpandAll?: () => void;
@@ -17,17 +18,14 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
   const setDiffWrapLines = useRepoStore((s) => s.setDiffWrapLines);
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-card shrink-0">
+    <div className="flex items-center gap-2 py-1 border-b border-border bg-background shrink-0">
       {/* Height anchor — uses same box model as bordered action buttons so toolbar never shifts when rightSlot appears */}
       <div className="w-0 overflow-hidden border border-transparent py-1 text-xs font-medium leading-normal shrink-0" aria-hidden>{"​"}</div>
       {/* Back + file path */}
       {onBack && (
-        <button
-          onClick={onBack}
-          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
-        >
+        <IconButton onClick={onBack} className="shrink-0">
           <ArrowLeft className="h-3.5 w-3.5" />
-        </button>
+        </IconButton>
       )}
       {filePath && (
         <span className="truncate text-xs font-medium text-foreground min-w-0" title={filePath}>
@@ -41,7 +39,7 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
         <button
           onClick={() => setDiffViewMode("unified")}
           title="Unified diff"
-          className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+          className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
             diffViewMode === "unified"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -53,7 +51,7 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
         <button
           onClick={() => setDiffViewMode("side-by-side")}
           title="Side-by-side diff"
-          className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+          className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
             diffViewMode === "side-by-side"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -69,7 +67,7 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
         <button
           onClick={() => setDiffWrapLines(!diffWrapLines)}
           title={diffWrapLines ? "Disable line wrapping" : "Enable line wrapping"}
-          className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+          className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
             diffWrapLines
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -86,7 +84,7 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
           <button
             onClick={isExpanded ? onCollapseAll : onExpandAll}
             title={isExpanded ? "Collapse all context" : "Expand all context"}
-            className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+            className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
               isExpanded
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"

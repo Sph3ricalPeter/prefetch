@@ -12,6 +12,9 @@ interface ResizeHandleProps {
   maxWidth?: number;
   /** Called with the final width when the user finishes dragging */
   onResizeEnd?: (width: number) => void;
+  /** Render with no resting line (transparent until hover). Used for the
+   *  sidebar handle in the mat so the sidebar blends into the shell. */
+  ghost?: boolean;
 }
 
 export function ResizeHandle({
@@ -20,6 +23,7 @@ export function ResizeHandle({
   minWidth = 192,
   maxWidth = 480,
   onResizeEnd,
+  ghost = false,
 }: ResizeHandleProps) {
   const [isDragging, setIsDragging] = useState(false);
   const startX = useRef(0);
@@ -88,7 +92,11 @@ export function ResizeHandle({
         side === "left"
           ? "before:absolute before:inset-y-0 before:left-0 before:w-3 before:cursor-col-resize"
           : "before:absolute before:inset-y-0 before:right-0 before:w-3 before:cursor-col-resize",
-        isDragging ? "bg-accent" : "bg-border hover:bg-accent",
+        isDragging
+          ? "bg-accent"
+          : ghost
+            ? "bg-transparent hover:bg-accent"
+            : "bg-border hover:bg-accent",
       )}
     >
       {/* Grip: a thicker rounded bar centered vertically that signals the
@@ -98,7 +106,9 @@ export function ResizeHandle({
           "pointer-events-none absolute left-1/2 top-1/2 h-10 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors",
           isDragging
             ? "bg-primary"
-            : "bg-muted-foreground/30 group-hover:bg-muted-foreground/60",
+            : ghost
+              ? "bg-transparent group-hover:bg-muted-foreground/50"
+              : "bg-muted-foreground/30 group-hover:bg-muted-foreground/60",
         )}
       />
     </div>

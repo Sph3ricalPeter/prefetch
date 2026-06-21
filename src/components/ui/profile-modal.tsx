@@ -8,6 +8,8 @@ import {
   Star,
   KeyRound,
 } from "lucide-react";
+import { IconButton, iconButtonVariants } from "@/components/ui/icon-button";
+import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
@@ -55,12 +57,9 @@ function ProfileListView({
     <>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-foreground">Profiles</h2>
-        <button
-          onClick={onClose}
-          className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
-        >
+        <IconButton variant="subtle" onClick={onClose}>
           <X className="h-4 w-4" />
-        </button>
+        </IconButton>
       </div>
 
       <p className="text-xs text-muted-foreground mb-4">
@@ -93,7 +92,7 @@ function ProfileListView({
                   )}
                   {activeProfile?.id === profile.id && (
                     <span
-                      className="rounded-sm px-1 py-0.5 text-caption font-medium shrink-0"
+                      className="rounded-md px-1 py-0.5 text-caption font-medium shrink-0"
                       style={{ backgroundColor: `${profile.color}18`, color: profile.color }}
                     >
                       active
@@ -109,7 +108,10 @@ function ProfileListView({
                   <span
                     role="button"
                     onClick={(e) => handleDelete(e, profile)}
-                    className="shrink-0 rounded p-1 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
+                    className={cn(
+                      iconButtonVariants({ variant: "subtle", reveal: "fade" }),
+                      "shrink-0 hover:bg-destructive/10 hover:text-destructive",
+                    )}
                   >
                     <Trash2 className="h-3 w-3" />
                   </span>
@@ -124,7 +126,7 @@ function ProfileListView({
       {/* Create button */}
       <button
         onClick={() => onEdit(null)}
-        className="flex items-center gap-1.5 w-full rounded border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+        className="flex items-center gap-1.5 w-full rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
       >
         <Plus className="h-3 w-3" />
         Create Profile
@@ -318,12 +320,9 @@ function ProfileEditView({
 
       {/* Header */}
       <div className="flex items-center gap-2 mb-4">
-        <button
-          onClick={handleBack}
-          className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
-        >
+        <IconButton variant="subtle" onClick={handleBack}>
           <ChevronLeft className="h-4 w-4" />
-        </button>
+        </IconButton>
         <h2 className="text-sm font-semibold text-foreground">
           {isEditing ? "Edit Profile" : "Create Profile"}
         </h2>
@@ -343,7 +342,7 @@ function ProfileEditView({
               placeholder="e.g. Work, Personal"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
         </div>
@@ -389,7 +388,7 @@ function ProfileEditView({
                       }}
                     >
                       <img src={url} alt={label} className="h-full w-full rounded-md object-cover" />
-                      <ForgeIcon kind={kind as ForgeKind} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-sm bg-popover p-px text-muted-foreground" />
+                      <ForgeIcon kind={kind as ForgeKind} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-xs bg-popover p-px text-muted-foreground" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{label} avatar</TooltipContent>
@@ -453,7 +452,7 @@ function ProfileEditView({
               placeholder="Jane Doe"
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
           <div>
@@ -465,7 +464,7 @@ function ProfileEditView({
               placeholder="jane@example.com"
               value={userEmail}
               onChange={(e) => setUserEmail(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
         </div>
@@ -481,16 +480,17 @@ function ProfileEditView({
               placeholder="~/.ssh/id_ed25519"
               value={sshKeyPath}
               onChange={(e) => setSshKeyPath(e.target.value)}
-              className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <IconButton
+                  variant="outline"
                   onClick={handleBrowseSshKey}
-                  className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                  className="shrink-0"
                 >
                   <KeyRound className="h-3 w-3" />
-                </button>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>Browse for SSH key</TooltipContent>
             </Tooltip>
@@ -520,12 +520,15 @@ function ProfileEditView({
                     <span className="flex-1 font-mono truncate text-label">
                       {p.path_prefix}
                     </span>
-                    <button
+                    <IconButton
+                      size="sm"
+                      variant="subtle"
+                      reveal="fade"
                       onClick={() => handleRemovePath(p.id)}
-                      className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-all"
+                      className="shrink-0 hover:bg-destructive/20 hover:text-destructive"
                     >
                       <X className="h-3 w-3" />
-                    </button>
+                    </IconButton>
                   </div>
                 ))}
               </div>

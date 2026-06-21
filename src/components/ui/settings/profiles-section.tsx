@@ -12,6 +12,8 @@ import {
   LogIn,
   Loader2,
 } from "lucide-react";
+import { IconButton, iconButtonVariants } from "@/components/ui/icon-button";
+import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { useProfileStore } from "@/stores/profile-store";
@@ -36,6 +38,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/modal";
 import { ProfileAvatar, IconSvg } from "@/components/ui/avatar";
 import { ForgeIcon } from "@/components/ui/forge-icons";
 
@@ -90,7 +93,7 @@ function ProfileList({
                     {profile.name}
                   </span>
                   {profile.is_default && (
-                    <span className="flex items-center gap-0.5 rounded-sm bg-secondary px-1 py-0.5 text-caption font-medium text-muted-foreground shrink-0">
+                    <span className="flex items-center gap-0.5 rounded-md bg-secondary px-1 py-0.5 text-caption font-medium text-muted-foreground shrink-0">
                       default
                       <Star className="h-2.5 w-2.5 fill-muted-foreground" />
                     </span>
@@ -108,7 +111,10 @@ function ProfileList({
                   <span
                     role="button"
                     onClick={(e) => handleDelete(e, profile)}
-                    className="shrink-0 rounded p-1 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
+                    className={cn(
+                      iconButtonVariants({ variant: "subtle", reveal: "fade" }),
+                      "shrink-0 hover:bg-destructive/10 hover:text-destructive",
+                    )}
                   >
                     <Trash2 className="h-3 w-3" />
                   </span>
@@ -122,7 +128,7 @@ function ProfileList({
 
       <button
         onClick={() => onEdit(null)}
-        className="flex items-center gap-1.5 w-full rounded border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+        className="flex items-center gap-1.5 w-full rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
       >
         <Plus className="h-3 w-3" />
         Create Profile
@@ -288,38 +294,26 @@ function ProfileEdit({
     <div>
       {/* Discard changes confirmation */}
       {showDiscardConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Unsaved changes</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              You have unsaved changes that will be lost.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowDiscardConfirm(false)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Keep Editing
-              </button>
-              <button
-                onClick={() => { setShowDiscardConfirm(false); onBack(); }}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Discard
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setShowDiscardConfirm(false)}
+          title="Unsaved changes"
+          description="You have unsaved changes that will be lost."
+          cancelLabel="Keep Editing"
+          confirmLabel="Discard"
+          destructive
+          onConfirm={() => {
+            setShowDiscardConfirm(false);
+            onBack();
+          }}
+        />
       )}
 
       {/* Back header */}
       <div className="flex items-center gap-2 mb-4">
-        <button
-          onClick={handleBack}
-          className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
-        >
+        <IconButton variant="subtle" onClick={handleBack}>
           <ChevronLeft className="h-4 w-4" />
-        </button>
+        </IconButton>
         <h3 className="text-xs font-semibold text-foreground">
           {isEditing ? "Edit Profile" : "Create Profile"}
         </h3>
@@ -339,7 +333,7 @@ function ProfileEdit({
               placeholder="e.g. Work, Personal"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
         </div>
@@ -368,7 +362,7 @@ function ProfileEdit({
               ))}
             </div>
             <span
-              className="rounded-sm px-1.5 py-0.5 text-caption font-medium"
+              className="rounded-md px-1.5 py-0.5 text-caption font-medium"
               style={{ backgroundColor: `${color}18`, color }}
             >
               {name || "Preview"}
@@ -397,7 +391,7 @@ function ProfileEdit({
                       }}
                     >
                       <img src={url} alt={label} className="h-full w-full rounded-md object-cover" />
-                      <ForgeIcon kind={kind as ForgeKind} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-sm bg-popover p-px text-muted-foreground" />
+                      <ForgeIcon kind={kind as ForgeKind} className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-xs bg-popover p-px text-muted-foreground" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{label} avatar</TooltipContent>
@@ -461,7 +455,7 @@ function ProfileEdit({
               placeholder="Jane Doe"
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
           <div>
@@ -473,7 +467,7 @@ function ProfileEdit({
               placeholder="jane@example.com"
               value={userEmail}
               onChange={(e) => setUserEmail(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
         </div>
@@ -489,16 +483,17 @@ function ProfileEdit({
               placeholder="~/.ssh/id_ed25519"
               value={sshKeyPath}
               onChange={(e) => setSshKeyPath(e.target.value)}
-              className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+              className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
             />
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <IconButton
+                  variant="outline"
                   onClick={handleBrowseSshKey}
-                  className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                  className="shrink-0"
                 >
                   <KeyRound className="h-3 w-3" />
-                </button>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>Browse for SSH key</TooltipContent>
             </Tooltip>
@@ -533,12 +528,15 @@ function ProfileEdit({
                     <span className="flex-1 font-mono truncate text-label">
                       {p.path_prefix}
                     </span>
-                    <button
+                    <IconButton
+                      size="sm"
+                      variant="subtle"
+                      reveal="fade"
                       onClick={() => handleRemovePath(p.id)}
-                      className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-all"
+                      className="shrink-0 hover:bg-destructive/20 hover:text-destructive"
                     >
                       <X className="h-3 w-3" />
-                    </button>
+                    </IconButton>
                   </div>
                 ))}
               </div>
@@ -817,7 +815,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
               {/* OAuth waiting state */}
               {isWaiting ? (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 rounded bg-secondary px-2.5 py-2 text-label text-muted-foreground">
+                  <div className="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-2 text-label text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
                     <span>Waiting for authorization in browser...</span>
                   </div>
@@ -831,7 +829,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
               ) : isEditing ? (
                 /* Manual PAT input */
                 <div className="space-y-2">
-                  <div className="rounded bg-secondary px-2.5 py-2 text-label text-muted-foreground space-y-0.5">
+                  <div className="rounded-md bg-secondary px-2.5 py-2 text-label text-muted-foreground space-y-0.5">
                     <p className="font-medium">
                       Required scopes{" "}
                       <button
@@ -864,7 +862,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
                       if (e.key === "Escape") { setEditingHost(null); setTokenInput(""); }
                     }}
                     autoFocus
-                    className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
                   />
                   <div className="flex gap-1.5">
                     <button

@@ -107,6 +107,7 @@ export const DEFAULT_CODE_THEME: Record<string, string> = {
   dark: "vs-dark",
   "dark-dimmed": "vs-dark-dimmed",
   "tokyo-night": "tokyo-night",
+  carbon: "carbon",
   light: "light",
 };
 
@@ -122,6 +123,8 @@ const darkAppTheme: AppTheme = {
     "--background": "240 6% 3.9%",
     "--foreground": "240 5% 96%",
     "--card": "240 7% 7%",
+    "--card-hover": "240 6% 14%",
+    "--field": "240 7% 5%",
     "--card-foreground": "240 5% 96%",
     "--popover": "240 7% 7%",
     "--popover-foreground": "240 5% 96%",
@@ -146,6 +149,7 @@ const darkAppTheme: AppTheme = {
     "--sidebar-accent-foreground": "240 5% 96%",
     "--sidebar-border": "240 5% 11.6%",
     "--sidebar-ring": "263 70% 76%",
+    "--shell": "240 6% 2%",
   },
   graph: {
     fg: "hsl(240 5% 96%)",
@@ -176,6 +180,8 @@ const darkDimmedAppTheme: AppTheme = {
     "--background": "220 10% 7%",
     "--foreground": "220 9% 86%",
     "--card": "220 10% 10%",
+    "--card-hover": "220 10% 17%",
+    "--field": "220 10% 8%",
     "--card-foreground": "220 9% 86%",
     "--popover": "220 10% 10%",
     "--popover-foreground": "220 9% 86%",
@@ -200,6 +206,7 @@ const darkDimmedAppTheme: AppTheme = {
     "--sidebar-accent-foreground": "220 9% 86%",
     "--sidebar-border": "220 10% 16%",
     "--sidebar-ring": "220 60% 60%",
+    "--shell": "220 10% 4.5%",
   },
   graph: {
     fg: "hsl(220 9% 86%)",
@@ -230,6 +237,8 @@ const tokyoNightAppTheme: AppTheme = {
     "--background": "235 21% 11%",
     "--foreground": "224 20% 80%",
     "--card": "235 21% 14%",
+    "--card-hover": "235 18% 21%",
+    "--field": "235 21% 12%",
     "--card-foreground": "224 20% 80%",
     "--popover": "235 21% 14%",
     "--popover-foreground": "224 20% 80%",
@@ -254,6 +263,7 @@ const tokyoNightAppTheme: AppTheme = {
     "--sidebar-accent-foreground": "224 20% 80%",
     "--sidebar-border": "235 15% 19%",
     "--sidebar-ring": "263 70% 70%",
+    "--shell": "235 21% 8%",
   },
   graph: {
     fg: "hsl(224 20% 80%)",
@@ -284,6 +294,8 @@ const lightAppTheme: AppTheme = {
     "--background": "0 0% 98%",
     "--foreground": "240 6% 10%",
     "--card": "0 0% 100%",
+    "--card-hover": "240 5% 92%",
+    "--field": "0 0% 98%",
     "--card-foreground": "240 6% 10%",
     "--popover": "0 0% 100%",
     "--popover-foreground": "240 6% 10%",
@@ -308,6 +320,7 @@ const lightAppTheme: AppTheme = {
     "--sidebar-accent-foreground": "240 6% 10%",
     "--sidebar-border": "240 6% 88%",
     "--sidebar-ring": "263 70% 55%",
+    "--shell": "240 5% 93%",
   },
   graph: {
     fg: "hsl(240 6% 10%)",
@@ -330,10 +343,70 @@ const lightAppTheme: AppTheme = {
   noiseOpacity: 0,
 };
 
+// Carbon — near-black UI with Linear-indigo accent; amber/teal diffs.
+// Colors sampled from the ScionAtoms review-tool reference screenshots.
+const carbonAppTheme: AppTheme = {
+  id: "carbon",
+  label: "Carbon",
+  type: "dark",
+  cssVars: {
+    "--background": "240 4% 6%",
+    "--foreground": "240 6% 90%",
+    "--card": "240 2% 9%",
+    "--card-hover": "240 3% 16%",
+    "--field": "240 2% 7%",
+    "--card-foreground": "240 6% 90%",
+    "--popover": "240 2% 9%",
+    "--popover-foreground": "240 6% 90%",
+    "--primary": "240 6% 90%",
+    "--primary-foreground": "240 5% 6%",
+    "--secondary": "240 3% 11%",
+    "--secondary-foreground": "240 6% 90%",
+    "--muted": "240 3% 11%",
+    "--muted-foreground": "240 0.9% 58.4%", // #949496
+    "--accent": "240 3% 11%",
+    "--accent-foreground": "240 6% 90%",
+    "--destructive": "0 65% 47%",
+    "--destructive-foreground": "240 6% 96%",
+    "--border": "220 5% 13%",
+    "--input": "220 5% 13%",
+    "--ring": "234 56% 60%",
+    "--sidebar-background": "240 4% 4.5%",
+    "--sidebar-foreground": "240 6% 90%",
+    "--sidebar-primary": "240 6% 90%",
+    "--sidebar-primary-foreground": "240 5% 6%",
+    "--sidebar-accent": "240 3% 11%",
+    "--sidebar-accent-foreground": "240 6% 90%",
+    "--sidebar-border": "220 5% 13%",
+    "--sidebar-ring": "234 56% 60%",
+    "--shell": "240 4% 3.8%",
+  },
+  graph: {
+    fg: "hsl(240 6% 90%)",
+    muted: "hsl(240 0.9% 58.4%)", // #949496
+    dim: "hsl(240 1.2% 33.7%)", // #555557
+    faint: "hsl(240 2% 23%)",
+    bgPage: "hsl(240 4% 6%)",
+    bgHover: "hsl(240 2% 9%)",
+    bgSelected: "hsl(240 3% 11%)",
+  },
+  extended: {
+    dim: "hsl(240 1.2% 33.7%)", // #555557
+    faint: "hsl(240 2% 23%)",
+    brand: "#5e6ad2",
+    brandDim: "#4751b8",
+    brandGlow: "rgba(94, 106, 210, 0.08)",
+    success: "#3bd75d",
+  },
+  scrollbar: { thumb: "hsl(240 3% 17%)", thumbHover: "hsl(240 2% 25%)" },
+  noiseOpacity: 0.015,
+};
+
 export const APP_THEMES: AppTheme[] = [
   darkAppTheme,
   darkDimmedAppTheme,
   tokyoNightAppTheme,
+  carbonAppTheme,
   lightAppTheme,
 ];
 
@@ -1000,6 +1073,100 @@ const monokaiCodeTheme: CodeTheme = {
   conflict: DARK_CONFLICT,
 };
 
+// ── Carbon theme ────────────────────────────────────────────────────────
+// Muted syntax (gold strings, violet keywords, cyan types) on near-black,
+// with amber old-side / teal new-side diffs. Sampled from reference.
+
+const shikiCarbon: ShikiThemeDef = {
+  name: "carbon",
+  type: "dark",
+  colors: {
+    "editor.background": "#0f1010",
+    "editor.foreground": "#c6c6c9",
+  },
+  tokenColors: [
+    { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#71727b", fontStyle: "italic" } },
+    { scope: ["string", "string.quoted"], settings: { foreground: "#cb9e74" } },
+    { scope: ["constant.numeric"], settings: { foreground: "#5795b0" } },
+    { scope: ["constant.language"], settings: { foreground: "#a07dc8" } },
+    { scope: ["keyword", "storage.type", "storage.modifier"], settings: { foreground: "#a07dc8" } },
+    { scope: ["entity.name.function", "support.function"], settings: { foreground: "#63abcb" } },
+    { scope: ["entity.name.type", "support.type", "support.class"], settings: { foreground: "#5795b0" } },
+    { scope: ["variable", "variable.other"], settings: { foreground: "#c5c5c8" } },
+    { scope: ["entity.name.tag"], settings: { foreground: "#63abcb" } },
+    { scope: ["entity.other.attribute-name"], settings: { foreground: "#a07dc8" } },
+    { scope: ["punctuation"], settings: { foreground: "#6a6a6e" } },
+    { scope: ["meta.object-literal.key"], settings: { foreground: "#63abcb" } },
+    { scope: ["constant.other"], settings: { foreground: "#5795b0" } },
+  ],
+};
+
+const cmCarbon: CodeThemeCodemirror = {
+  bg: "#0f1010",
+  fg: "#c6c6c9",
+  caret: "#e3e3e6",
+  selection: "#26284a",
+  gutterBg: "#0f1010",
+  gutterFg: "#565658",
+  activeLine: "#131314",
+  activeLineGutter: "#171718",
+  foldPlaceholderBg: "#171718",
+  foldPlaceholderFg: "#565658",
+  tooltipBg: "#171718",
+  tooltipBorder: "#1f2022",
+  tooltipFg: "#e3e3e6",
+  scrollbarThumb: "#2a2a2c",
+  scrollbarThumbHover: "#3a3a3c",
+  diffAdded: "rgba(21, 56, 69, 0.5)",
+  diffRemoved: "rgba(59, 49, 10, 0.42)",
+  diffHeader: "#15171a",
+  diffHeaderFg: "#6a6a6e",
+  mergeChanged: "rgba(35, 69, 83, 0.32)",
+  mergeDeleted: "rgba(86, 71, 11, 0.28)",
+  conflictOurs: "rgba(94, 106, 210, 0.12)",
+  conflictTheirs: "rgba(87, 149, 176, 0.12)",
+  conflictEdited: "rgba(59, 215, 93, 0.1)",
+  emptyLineIndicator: "#3a3a3c",
+  gutterOurs: "rgba(94, 106, 210, 0.5)",
+  gutterTheirs: "rgba(87, 149, 176, 0.5)",
+  gutterOursArrow: "rgba(94, 106, 210, 0.85)",
+  gutterTheirsArrow: "rgba(87, 149, 176, 0.85)",
+  gutterRemoveHover: "#eb5757",
+};
+
+const diffCarbon: CodeThemeDiff = {
+  addedBg: "#15262e",
+  addedLineBg: "#1d3845",
+  removedBg: "#201b09",
+  removedLineBg: "#3b310a",
+  hunkHeaderBg: "#15171a",
+  hunkHeaderFg: "#6a6a6e",
+  gutterBg: "#0f1010",
+  gutterFg: "#565658",
+};
+
+const CARBON_CONFLICT: CodeThemeConflict = {
+  ours: "94, 106, 210",
+  theirs: "87, 149, 176",
+  auto: "160, 125, 200",
+  suspicious: "235, 87, 87",
+  output: "59, 215, 93",
+  oursText: "#7b86e0",
+  theirsText: "#7fb4cc",
+  autoText: "#b49ad6",
+  suspiciousText: "#f08585",
+  outputText: "#6fe08a",
+};
+
+const carbonCodeTheme: CodeTheme = {
+  id: "carbon",
+  label: "Carbon",
+  shikiTheme: shikiCarbon,
+  codemirror: cmCarbon,
+  diff: diffCarbon,
+  conflict: CARBON_CONFLICT,
+};
+
 export const CODE_THEMES: CodeTheme[] = [
   vsDarkCodeTheme,
   vsDarkDimmedCodeTheme,
@@ -1008,6 +1175,7 @@ export const CODE_THEMES: CodeTheme[] = [
   tokyoNightCodeTheme,
   githubDarkCodeTheme,
   monokaiCodeTheme,
+  carbonCodeTheme,
   lightCodeTheme,
 ];
 

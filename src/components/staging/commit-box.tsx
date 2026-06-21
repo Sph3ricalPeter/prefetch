@@ -195,9 +195,7 @@ export function CommitBox() {
       : null;
 
   return (
-    <div className="flex flex-col gap-2 pt-0 px-3 pb-3">
-      <div className="mx-0 mb-1 border-t border-border" />
-
+    <div className="flex flex-col gap-2 px-3 py-3">
       {/* Operation progress header */}
       {isOperationInProgress && (
         <div className="flex items-center gap-2">
@@ -212,7 +210,7 @@ export function CommitBox() {
       {!isOperationInProgress && gitIdentity && gitIdentity.name && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="flex items-center gap-2 cursor-default">
+            <div className="flex items-center gap-2 cursor-default px-1">
               <ProfileAvatar
                 name={gitIdentity.name}
                 email={gitIdentity.email}
@@ -224,7 +222,7 @@ export function CommitBox() {
               <span className="text-xs text-muted-foreground truncate">
                 {gitIdentity.name}
               </span>
-              <span className="ml-auto rounded bg-accent px-1.5 py-0.5 text-label text-dim shrink-0">
+              <span className="ml-auto rounded-md bg-accent px-1.5 py-0.5 text-label text-dim shrink-0">
                 {gitIdentity.source}
               </span>
             </div>
@@ -344,22 +342,25 @@ export function CommitBox() {
           <button
             onClick={handleContinue}
             disabled={!canContinue}
-            className={`flex-1 rounded-md border px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:hover:translate-y-0 ${
+            className={`flex min-h-8 flex-1 items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:hover:translate-y-0 ${
               unresolvedCount > 0
                 ? "border-red-500/30 text-red-400 opacity-80"
                 : "border-[rgba(var(--conflict-output),0.3)] text-[var(--conflict-output-text)] hover:bg-[rgba(var(--conflict-output),0.1)] hover:border-[rgba(var(--conflict-output),0.4)] hover:-translate-y-px"
             }`}
           >
-            {isLoading
-              ? "Continuing..."
-              : unresolvedCount > 0
-                ? `${unresolvedCount} conflict${unresolvedCount !== 1 ? "s" : ""} remaining`
-                : `Continue ${operationLabel}`}
+            <span>
+              {isLoading
+                ? "Continuing..."
+                : unresolvedCount > 0
+                  ? `${unresolvedCount} conflict${unresolvedCount !== 1 ? "s" : ""} remaining`
+                  : `Continue ${operationLabel}`}
+            </span>
+            {canContinue && !isLoading && <Kbd>Ctrl+Enter</Kbd>}
           </button>
           <button
             onClick={abortOperation}
             disabled={isLoading}
-            className="rounded-md bg-red-500/20 px-3 py-1.5 text-xs font-semibold text-red-400 transition-all hover:bg-red-500/30 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+            className="flex min-h-8 items-center justify-center rounded-md bg-red-500/20 px-3 text-xs font-semibold text-red-400 transition-all hover:bg-red-500/30 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
           >
             Abort
           </button>
@@ -368,27 +369,28 @@ export function CommitBox() {
         <button
           onClick={handleCommit}
           disabled={!canCommit}
-          className={`w-full rounded-md px-3 py-1.5 text-xs font-semibold transition-all hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 ${
+          className={`flex min-h-8 w-full items-center justify-center gap-2 rounded-md px-3 text-xs font-semibold transition-all hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 ${
             amendMode
               ? "bg-yellow-600 text-white hover:bg-yellow-600/90"
               : "bg-primary text-primary-foreground hover:bg-primary/90"
           }`}
         >
-          {isLoading
-            ? amendMode ? "Amending..." : "Committing..."
-            : amendMode
-              ? stagedCount > 0
-                ? `Amend Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
-                : "Nothing staged"
-              : stagedCount > 0
-                ? `Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
-                : "Nothing staged"}
+          <span>
+            {isLoading
+              ? amendMode ? "Amending..." : "Committing..."
+              : amendMode
+                ? stagedCount > 0
+                  ? `Amend Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
+                  : "Nothing staged"
+                : stagedCount > 0
+                  ? `Commit (${stagedCount} file${stagedCount !== 1 ? "s" : ""})`
+                  : "Nothing staged"}
+          </span>
+          {canCommit && !isLoading && (
+            <Kbd className="bg-black/25 text-white">Ctrl+Enter</Kbd>
+          )}
         </button>
       )}
-      <p className="flex items-center justify-center gap-1.5 text-xs text-faint">
-        <Kbd>Ctrl+Enter</Kbd>
-        {isOperationInProgress ? "to continue" : "to commit"}
-      </p>
     </div>
   );
 }

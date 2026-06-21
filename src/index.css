@@ -49,6 +49,8 @@
     --background: 240 6% 3.9%;      /* #09090b — page/app bg */
     --foreground: 240 5% 96%;         /* cool white — primary text */
     --card: 240 7% 7%;               /* #111113 — surface/panel bg */
+    --card-hover: 240 6% 14%;        /* hover/selected for rows on cards (--card sits too close to --secondary) */
+    --field: 240 7% 5%;              /* text-input fill on cards — gently inset below --card, not dropped to --background */
     --card-foreground: 240 5% 96%;
     --popover: 240 7% 7%;            /* same as card */
     --popover-foreground: 240 5% 96%;
@@ -74,6 +76,7 @@
     --sidebar-accent-foreground: 240 5% 96%;
     --sidebar-border: 240 5% 11.6%;
     --sidebar-ring: 263 70% 76%;
+    --shell: 240 6% 2%;             /* mat behind the floating card — deeper than --background */
   }
 
   * {
@@ -118,7 +121,7 @@ body::before {
 
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb, hsl(240 5% 16%));
-  border-radius: 3px;
+  border-radius: calc(var(--radius) - 5px); /* --radius-xs (3px) */
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -133,6 +136,8 @@ body::before {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-card: hsl(var(--card));
+  --color-card-hover: hsl(var(--card-hover));
+  --color-field: hsl(var(--field));
   --color-card-foreground: hsl(var(--card-foreground));
   --color-popover: hsl(var(--popover));
   --color-popover-foreground: hsl(var(--popover-foreground));
@@ -157,10 +162,14 @@ body::before {
   --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
   --color-sidebar-border: hsl(var(--sidebar-border));
   --color-sidebar-ring: hsl(var(--sidebar-ring));
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --color-shell: hsl(var(--shell));
+  /* Radius scale — single source of truth, all derived from --radius (0.5rem/8px).
+     See DESIGN.md "Radius Scale (App)". xs=3 micro, md=6 controls, lg=8 containers, xl=12 shell. */
+  --radius-xs: calc(var(--radius) - 5px); /* 3px */
+  --radius-sm: calc(var(--radius) - 4px); /* 4px (legacy — prefer xs or md) */
+  --radius-md: calc(var(--radius) - 2px); /* 6px */
+  --radius-lg: var(--radius);             /* 8px */
+  --radius-xl: calc(var(--radius) + 4px); /* 12px */
 
   /* Text scale — 4 levels only, cool hue, no opacity hacks */
   --color-dim: hsl(240 5% 45%);       /* tertiary: labels, timestamps, captions */
@@ -174,6 +183,10 @@ body::before {
 
   /* Animations */
   --animate-fade-in: fade-in 0.25s ease-out;
+  /* Subtle move-up + fade for popovers (context menu, tooltip) */
+  --animate-enter-up: enter-up 0.12s ease-out;
+  /* Mirror, for dropdowns that open downward from their trigger */
+  --animate-enter-down: enter-down 0.12s ease-out;
 
   /* Font families */
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
@@ -206,18 +219,50 @@ body::before {
 
   /* Noise overlay — overridden by app theme at runtime */
   --noise-opacity: 0.025;
+}
 
-  /* Type scale — 4 levels (caption, label, body=text-xs, title=text-sm)
-     caption = UPPERCASE tracked text & badges only; label = min readable size */
-  --text-caption: 9px;
-  --text-caption--line-height: 14px;
-  --text-label: 11px;
-  --text-label--line-height: 16px;
+/* Type scale — 4 levels (caption, label, body=text-xs, title=text-sm).
+   caption = small section headers, badges & uppercase tracked text;
+   label = min readable size (form labels).
+   MUST be a NON-inline @theme: that compiles .text-caption / .text-label to
+   `font-size: var(--text-caption)` so applyFontScale()'s runtime override
+   (theme-store.ts) scales them. An `inline` @theme would bake the px literal
+   into the utility and the font-scale tiers would be ignored — which is why
+   these live outside the @theme inline block above. (Built-in text-xs/text-sm
+   scale for the same reason: Tailwind's default tokens are non-inline too.)
+   Keep values in sync with BASE_TEXT_SIZES; they're the pre-load fallbacks. */
+@theme {
+  --text-caption: 10px;
+  --text-caption--line-height: 16px;
+  --text-label: 14px;
+  --text-label--line-height: 18px;
 }
 
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes enter-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes skeleton-fade-in {

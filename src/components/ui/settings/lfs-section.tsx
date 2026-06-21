@@ -7,6 +7,7 @@ import {
   AlertCircle,
   Database,
 } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 import { useRepoStore } from "@/stores/repo-store";
 import { openUrl } from "@/lib/commands";
 import {
@@ -126,13 +127,16 @@ export function LfsSection() {
                     <span className="flex-1 font-mono">{p.pattern}</span>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <button
+                        <IconButton
+                          size="sm"
+                          variant="subtle"
+                          reveal="fade"
                           onClick={() => untrackLfsPattern(p.pattern)}
                           disabled={isLoading}
-                          className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive-foreground transition-all disabled:opacity-40"
+                          className="shrink-0 hover:bg-destructive/20 hover:text-destructive-foreground"
                         >
                           <X className="h-3 w-3" />
-                        </button>
+                        </IconButton>
                       </TooltipTrigger>
                       <TooltipContent>Untrack &quot;{p.pattern}&quot;</TooltipContent>
                     </Tooltip>
@@ -152,7 +156,7 @@ export function LfsSection() {
                 value={newPattern}
                 onChange={(e) => setNewPattern(e.target.value)}
                 onKeyDown={handlePatternKeyDown}
-                className="flex-1 rounded bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+                className="flex-1 rounded-md bg-background border border-border px-2 py-0.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
               />
               <button
                 onClick={handleAddPattern}
@@ -161,15 +165,16 @@ export function LfsSection() {
               >
                 Add
               </button>
-              <button
+              <IconButton
+                size="sm"
+                variant="subtle"
                 onClick={() => {
                   setIsAdding(false);
                   setNewPattern("");
                 }}
-                className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
               >
                 <X className="h-3 w-3" />
-              </button>
+              </IconButton>
             </div>
           ) : (
             <button

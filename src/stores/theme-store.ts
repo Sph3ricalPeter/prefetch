@@ -41,14 +41,17 @@ export const FONT_SCALES = [
   { label: "120%", value: 1.2 },
 ] as const;
 
-const BASE_TEXT_SIZES = {
-  caption: 9,
-  captionLh: 14,
-  label: 11,
-  labelLh: 16,
-  xs: 12,
-  xsLh: 16,
-  sm: 14,
+// Base (100%-scale) font sizes in px. Drives the DOM type scale via CSS vars
+// (see applyFontScale) AND the Canvas commit graph, which can't read CSS vars
+// and so reads these numbers directly (commit-graph-canvas.tsx).
+export const BASE_TEXT_SIZES = {
+  caption: 12,
+  captionLh: 16,
+  label: 14,
+  labelLh: 18,
+  xs: 14,
+  xsLh: 18,
+  sm: 16,
   smLh: 20,
 };
 
@@ -220,7 +223,10 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       applyAppTheme(appTheme);
       applyCodeTheme(codeTheme);
       applyFonts(sans, mono);
-      if (resolvedFontScale !== 1.0) applyFontScale(resolvedFontScale);
+      // Always apply — BASE_TEXT_SIZES is the source of truth for the type
+      // scale, and the CSS fallbacks in index.css can drift from it. Skipping
+      // at scale 1.0 would leave the stale CSS values in place on restart.
+      applyFontScale(resolvedFontScale);
 
       set({
         appThemeId: resolvedAppId,

@@ -26,6 +26,8 @@ const VISUAL_LAYOUT_KEYS = [
   "file_view_mode",
   "graph_column_visibility",
   "graph_date_format",
+  "graph_density",
+  "graph_dot_nodes",
 ];
 /** Per-repo graph layout entries are stored as `graph_layout:<repoPath>` — wipe
  *  every variant by prefix. */
@@ -159,7 +161,7 @@ export function GeneralSection() {
           <div className="select-none">
             <span className="text-xs text-foreground flex items-center gap-1.5">
               Auto-resolve files with no real conflicts
-              <span className="text-caption font-semibold uppercase tracking-wider text-amber-500 border border-amber-500/30 rounded px-1 py-px leading-none">
+              <span className="text-caption font-semibold uppercase tracking-wider text-amber-500 border border-amber-500/30 rounded-md px-1 py-px leading-none">
                 Experimental
               </span>
             </span>

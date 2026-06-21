@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { Settings, Check, AlertTriangle, GitCommit } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 import { useRepoStore } from "@/stores/repo-store";
 import { ForgeIcon } from "@/components/ui/forge-icons";
 import {
@@ -47,7 +48,7 @@ export function StatusBar({ onOpenSettings }: { onOpenSettings: (target?: Settin
   if (!repoPath) return null;
 
   return (
-    <div className="flex h-6 shrink-0 items-center border-t border-border bg-background px-3 text-xs text-muted-foreground select-none">
+    <div className="flex h-6 shrink-0 items-center bg-shell px-3 text-xs text-muted-foreground select-none">
       <div className="flex-1" />
 
       {/* Right: forge status, user metrics, commit count, LFS, settings */}
@@ -64,7 +65,7 @@ export function StatusBar({ onOpenSettings }: { onOpenSettings: (target?: Settin
               <TooltipTrigger asChild>
                 <button
                   onClick={() => onOpenSettings({ tab: "profiles", profileId: activeProfile?.id })}
-                  className="flex items-center gap-1.5 rounded px-1 -mx-1 hover:bg-accent hover:text-foreground transition-colors"
+                  className="flex items-center gap-1.5 rounded-md px-1 -mx-1 hover:bg-accent hover:text-foreground transition-colors"
                 >
                   <ForgeIcon kind={forgeStatus.kind} className="h-3 w-3" />
                   <span>{forgeStatus.owner}/{forgeStatus.repo}</span>
@@ -107,7 +108,7 @@ export function StatusBar({ onOpenSettings }: { onOpenSettings: (target?: Settin
         {lfsInfo?.initialized && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="rounded bg-accent px-1.5 py-0.5 text-label font-medium text-dim cursor-default">
+              <span className="rounded-md bg-accent px-1.5 py-0.5 text-label font-medium text-dim cursor-default">
                 LFS
               </span>
             </TooltipTrigger>
@@ -118,12 +119,13 @@ export function StatusBar({ onOpenSettings }: { onOpenSettings: (target?: Settin
         )}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
+            <IconButton
+              size="sm"
               onClick={() => onOpenSettings()}
-              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              className="shrink-0 hover:bg-accent"
             >
               <Settings className="h-3 w-3" />
-            </button>
+            </IconButton>
           </TooltipTrigger>
           <TooltipContent>Settings</TooltipContent>
         </Tooltip>

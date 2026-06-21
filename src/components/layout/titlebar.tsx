@@ -24,6 +24,7 @@ import {
   Check,
   ExternalLink,
 } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 
 /** Detect macOS — synchronous, safe to call at module level */
 const IS_MAC = (() => {
@@ -83,7 +84,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: 
   return (
     <>
     <div
-      className="relative flex h-10 shrink-0 items-center border-b border-border bg-background select-none"
+      className="relative flex h-10 shrink-0 items-center bg-shell select-none"
       data-tauri-drag-region
     >
       {/* Left: Brand — extra left padding on macOS for native traffic lights */}
@@ -101,7 +102,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: 
             Prefetch
           </span>
         )}
-        <span className="rounded-sm bg-brand/15 px-1.5 py-0.5 text-label font-medium tracking-wider text-brand">
+        <span className="rounded-md bg-brand/15 px-1.5 py-0.5 text-label font-medium tracking-wider text-brand">
           α{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
         </span>
       </div>
@@ -267,7 +268,7 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-72 rounded-md border border-border bg-popover shadow-lg">
+        <div className="absolute left-0 top-full mt-1 z-50 w-72 rounded-md border border-border bg-popover shadow-lg animate-enter-down">
           <button
             onClick={handleOpenRepo}
             className="flex w-full items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
@@ -326,15 +327,18 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
                     ) : (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <button
+                          <IconButton
+                            size="sm"
+                            variant="subtle"
+                            reveal="fade"
                             onClick={(e) => {
                               e.stopPropagation();
                               removeFromRecentRepos(repo.path);
                             }}
-                            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                            className="shrink-0"
                           >
                             <X className="h-3 w-3" />
-                          </button>
+                          </IconButton>
                         </TooltipTrigger>
                         <TooltipContent>Remove from recent</TooltipContent>
                       </Tooltip>

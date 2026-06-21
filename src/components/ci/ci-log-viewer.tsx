@@ -14,6 +14,7 @@ import {
   Copy,
 } from "lucide-react";
 import { toast } from "sonner";
+import { IconButton } from "@/components/ui/icon-button";
 import { useRepoStore } from "@/stores/repo-store";
 import { openUrl } from "@/lib/commands";
 import { getUiState, setUiState } from "@/lib/database";
@@ -335,13 +336,10 @@ export function CiLogViewer() {
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header bar */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 shrink-0">
-        <button
-          onClick={clearCiJobLog}
-          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-        >
+      <div className="flex items-center gap-2 border-b border-border px-2 py-2 shrink-0">
+        <IconButton onClick={clearCiJobLog}>
           <ArrowLeft className="h-4 w-4" />
-        </button>
+        </IconButton>
 
         <span className="text-xs font-medium text-foreground truncate">
           {selectedJob?.name ?? `Job #${selectedJobId}`}
@@ -362,7 +360,7 @@ export function CiLogViewer() {
             <button
               onClick={() => changeViewMode("structured")}
               title="Grouped, collapsible steps"
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+              className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
                 viewMode === "structured"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -374,7 +372,7 @@ export function CiLogViewer() {
             <button
               onClick={() => changeViewMode("raw")}
               title="Raw log output"
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+              className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
                 viewMode === "raw"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -392,7 +390,7 @@ export function CiLogViewer() {
             <button
               onClick={toggleAll}
               title={allExpanded ? "Collapse all groups" : "Expand all groups"}
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+              className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
                 allExpanded
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -409,24 +407,24 @@ export function CiLogViewer() {
 
         {/* Copy whole log — first of the right-aligned actions when no search slot */}
         {ciJobLog != null && (
-          <button
+          <IconButton
             onClick={copyLog}
             title="Copy log"
-            className={`${searchSlot ? "" : "ml-auto"} rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0`}
+            className={`${searchSlot ? "" : "ml-auto"} shrink-0`}
           >
             <Copy className="h-3.5 w-3.5" />
-          </button>
+          </IconButton>
         )}
 
         {/* Open pipeline in browser — far right, like the diff toolbar's right slot */}
         {selectedPipeline?.url && (
-          <button
+          <IconButton
             onClick={() => openUrl(selectedPipeline.url)}
             title="Open pipeline in browser"
-            className={`${searchSlot || ciJobLog != null ? "" : "ml-auto"} rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0`}
+            className={`${searchSlot || ciJobLog != null ? "" : "ml-auto"} shrink-0`}
           >
             <ExternalLink className="h-3.5 w-3.5" />
-          </button>
+          </IconButton>
         )}
       </div>
 
@@ -497,13 +495,14 @@ export function CiLogViewer() {
                           {formatDuration(seg.group.durationSecs)}
                         </span>
                       )}
-                      <button
+                      <IconButton
+                        size="sm"
                         onClick={() => copySection(seg.group.lines)}
                         title="Copy section"
-                        className="rounded p-0.5 text-muted-foreground/70 opacity-0 hover:bg-secondary hover:text-foreground focus-visible:opacity-100 group-hover/cisection:opacity-100 transition-colors shrink-0"
+                        className="text-muted-foreground/70 opacity-0 focus-visible:opacity-100 group-hover/cisection:opacity-100 shrink-0"
                       >
                         <Copy className="h-3.5 w-3.5" />
-                      </button>
+                      </IconButton>
                     </div>
                     {isOpen && (
                       <div className={cn(LINES_WRAP, "border-t border-border/40 bg-secondary/20")}>

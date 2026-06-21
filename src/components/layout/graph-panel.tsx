@@ -22,16 +22,20 @@ import {
   ArrowUpFromLine,
   ArchiveRestore,
 } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 import { getUiState, setUiState } from "@/lib/database";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
-import { useEscapeKey } from "@/hooks/use-escape-key";
+import { Modal, ConfirmDialog } from "@/components/ui/modal";
 import {
   CommitGraphCanvas,
-  LANE_WIDTH,
+  MESSAGE_INSET_LEFT,
+  SCROLLBAR_PAD_RIGHT,
   type GraphColumnWidths,
+  type GraphColumnVisibility,
 } from "@/components/graph/commit-graph-canvas";
+import { laneWidthFor, LANE_WIDTH } from "@/lib/graph-density";
 import { GraphHeader } from "@/components/graph/graph-header";
 import { DiffViewer } from "@/components/staging/diff-viewer";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
@@ -45,18 +49,18 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 
-// ── Graph column layout (badge / graph / sha / message / author / date) ──────
+// ── Graph column layout (badge / graph / message / author / date / sha) ──────
 // Static columns (user-resizable pixels, or fixed constants):
 //   - badge (branch/tag): pixels, user-resizable
 //   - graph:              pixels, user-resizable (floored by lane count)
-//   - sha:                fixed constant (not resizable, not persisted)
 //   - date:               fixed constant (not resizable, not persisted)
+//   - sha:                fixed constant (not resizable, not persisted), rightmost
 // Flexible columns: message + author share the remaining ("flex") width in a
 // persisted ratio so each scales with the middle pane while preserving the
 // visible-text ratio between them.
 const COL_BADGE_MIN = 120;
 const COL_BADGE_MAX = 420;
-const COL_GRAPH_MIN = 80;
+const COL_GRAPH_MIN = 55;
 const COL_GRAPH_MAX = 800;
 const COL_AUTHOR_MIN = 80;
 const COL_AUTHOR_MAX = 400;
@@ -68,6 +72,10 @@ const COL_GRAPH_PAD_RIGHT = 24;
 const COL_SHA = 70;
 /** Fixed pixel width of the date column. Not persisted, not resizable. */
 const COL_DATE = 100;
+/** Minimum readable width for the message column. When showing all enabled
+ *  optional columns would shrink the message below this, columns are
+ *  auto-collapsed (sha → date → author) until it fits again. */
+const COL_MSG_MIN = 160;
 /** Default share of the flexible (message + author) area allocated to author.
  *  Message gets the remaining (1 − ratio). */
 const AUTHOR_RATIO_DEFAULT = 0.25;
@@ -87,17 +95,18 @@ const LAYOUT_DEFAULT: GraphLayout = {
   authorRatio: AUTHOR_RATIO_DEFAULT,
 };
 
-/** Default graph column width derived from the topology's lane count. */
-function defaultGraphWidth(totalLanes: number): number {
+/** Default graph column width derived from the topology's lane count and the
+ *  active lane pitch (narrower when dot nodes are on). */
+function defaultGraphWidth(totalLanes: number, laneWidth: number): number {
   return Math.max(
     COL_GRAPH_MIN,
-    Math.min(COL_GRAPH_MAX, totalLanes * LANE_WIDTH + COL_GRAPH_PAD_RIGHT),
+    Math.min(COL_GRAPH_MAX, totalLanes * laneWidth + COL_GRAPH_PAD_RIGHT),
   );
 }
 
 /** Minimum allowed graph column width — must fit every lane in the current topology. */
-function minGraphWidth(totalLanes: number): number {
-  return Math.max(COL_GRAPH_MIN, totalLanes * LANE_WIDTH + 8);
+function minGraphWidth(totalLanes: number, laneWidth: number): number {
+  return Math.max(COL_GRAPH_MIN, totalLanes * laneWidth + 8);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -110,9 +119,10 @@ function flexAreaPx(
   containerWidth: number,
   totalLanes: number,
   visibility: { sha: boolean; date: boolean },
+  laneWidth: number,
 ): number {
   const badge = clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX);
-  const graph = clamp(layout.graph, minGraphWidth(totalLanes), COL_GRAPH_MAX);
+  const graph = clamp(layout.graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX);
   const sha = visibility.sha ? COL_SHA : 0;
   const date = visibility.date ? COL_DATE : 0;
   return Math.max(0, containerWidth - badge - graph - sha - date);
@@ -125,12 +135,54 @@ function deriveWidths(
   containerWidth: number,
   totalLanes: number,
   visibility: { sha: boolean; author: boolean; date: boolean },
+  laneWidth: number,
 ): GraphColumnWidths {
   const badge = clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX);
-  const graph = clamp(layout.graph, minGraphWidth(totalLanes), COL_GRAPH_MAX);
-  const flex = flexAreaPx(layout, containerWidth, totalLanes, visibility);
-  const author = clamp(layout.authorRatio * flex, COL_AUTHOR_MIN, COL_AUTHOR_MAX);
+  const graph = clamp(layout.graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX);
+  const flex = flexAreaPx(layout, containerWidth, totalLanes, visibility, laneWidth);
+  let author = clamp(layout.authorRatio * flex, COL_AUTHOR_MIN, COL_AUTHOR_MAX);
+  // Never let a wide author ratio starve the message below its minimum — cap
+  // author at whatever leaves COL_MSG_MIN for the message (floored at its min).
+  if (flex - author < COL_MSG_MIN) {
+    author = Math.max(COL_AUTHOR_MIN, flex - COL_MSG_MIN);
+  }
   return { badge, graph, sha: COL_SHA, author, date: COL_DATE };
+}
+
+/** Responsive column collapse. Starting from the user's chosen visibility, drop
+ *  optional columns in priority order (sha → date → author) until the message
+ *  column would have at least COL_MSG_MIN px. Columns dropped here are still
+ *  "on" from the user's perspective — the canvas surfaces their values in a
+ *  hover tooltip. Mirrors the message-width arithmetic in the canvas draw(). */
+function deriveEffectiveVisibility(
+  badge: number,
+  graph: number,
+  containerWidth: number,
+  userVisibility: GraphColumnVisibility,
+): GraphColumnVisibility {
+  const vis = { ...userVisibility };
+  // Not measured yet — honor the user's choice; a later resize re-derives.
+  if (containerWidth <= 0) return vis;
+
+  const msgFits = (v: GraphColumnVisibility): boolean => {
+    const rightCols =
+      (v.sha ? COL_SHA : 0) +
+      (v.date ? COL_DATE : 0) +
+      (v.author ? COL_AUTHOR_MIN : 0);
+    // Matches draw(): msgRight = width - SCROLLBAR_PAD_RIGHT - rightCols - 8
+    // when any right column is shown, else width - 16.
+    const msgRight =
+      rightCols > 0
+        ? containerWidth - SCROLLBAR_PAD_RIGHT - rightCols - 8
+        : containerWidth - 16;
+    const msgLeft = badge + graph + MESSAGE_INSET_LEFT;
+    return msgRight - msgLeft >= COL_MSG_MIN;
+  };
+
+  if (!msgFits(vis) && vis.sha) vis.sha = false;
+  if (!msgFits(vis) && vis.date) vis.date = false;
+  if (!msgFits(vis) && vis.author) vis.author = false;
+  return vis;
 }
 
 /** Convert the pixel widths reported by the header (after a drag) back into
@@ -143,6 +195,7 @@ function pxWidthsToLayout(
   totalLanes: number,
   visibility: { sha: boolean; date: boolean },
   prev: GraphLayout,
+  laneWidth: number,
 ): GraphLayout {
   const next: GraphLayout = {
     badge: w.badge,
@@ -150,7 +203,7 @@ function pxWidthsToLayout(
     authorRatio: prev.authorRatio,
   };
   if (containerWidth > 0) {
-    const flex = flexAreaPx(next, containerWidth, totalLanes, visibility);
+    const flex = flexAreaPx(next, containerWidth, totalLanes, visibility, laneWidth);
     if (flex > 0) {
       next.authorRatio = clamp(w.author / flex, 0.05, 0.9);
     }
@@ -161,7 +214,7 @@ function pxWidthsToLayout(
 /** Parse the persisted layout blob `{ badge, graph, authorRatio }`. Invalid
  *  or missing entries reject so callers fall back to defaults — there is no
  *  migration from older formats. */
-function parseStoredLayout(raw: string | null, totalLanes: number): GraphLayout | null {
+function parseStoredLayout(raw: string | null, totalLanes: number, laneWidth: number): GraphLayout | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -180,7 +233,7 @@ function parseStoredLayout(raw: string | null, totalLanes: number): GraphLayout 
     }
     return {
       badge: clamp(badge, COL_BADGE_MIN, COL_BADGE_MAX),
-      graph: clamp(graph, minGraphWidth(totalLanes), COL_GRAPH_MAX),
+      graph: clamp(graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX),
       authorRatio: clamp(authorRatio, 0.05, 0.9),
     };
   } catch {
@@ -284,15 +337,6 @@ export function GraphPanel() {
   const [editMsgSubject, setEditMsgSubject] = useState("");
   const [editMsgBody, setEditMsgBody] = useState("");
 
-  // Escape cancels the open confirm/dialog (the global Escape stack yields to it).
-  useEscapeKey(!!confirmDeleteTag, () => setConfirmDeleteTag(null));
-  useEscapeKey(!!confirmResetHard, () => setConfirmResetHard(null));
-  useEscapeKey(!!confirmDeleteBranch, () => setConfirmDeleteBranch(null));
-  useEscapeKey(confirmDropStash != null, () => setConfirmDropStash(null));
-  useEscapeKey(!!dirtyActionPending, cancelDirtyAction);
-  useEscapeKey(!!remoteCheckoutPending, cancelRemoteCheckout);
-  useEscapeKey(!!forcePushPending, cancelForcePush);
-
   // Ctrl+Z undo shortcut (global)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -330,11 +374,17 @@ export function GraphPanel() {
   // fixed constant; date is a static pixel width.
   const [layout, setLayout] = useState<GraphLayout>({
     ...LAYOUT_DEFAULT,
-    graph: defaultGraphWidth(totalLanes),
+    graph: defaultGraphWidth(totalLanes, LANE_WIDTH),
   });
   const columnVisibility = useRepoStore((s) => s.graphColumnVisibility);
   const setColumnVisibility = useRepoStore((s) => s.setGraphColumnVisibility);
   const dateFormat = useRepoStore((s) => s.graphDateFormat);
+  const graphDensity = useRepoStore((s) => s.graphDensity);
+  const setGraphDensity = useRepoStore((s) => s.setGraphDensity);
+  const graphDotNodes = useRepoStore((s) => s.graphDotNodes);
+  const setGraphDotNodes = useRepoStore((s) => s.setGraphDotNodes);
+  // Lanes pack tighter when commit nodes are dots — feeds the column-width math.
+  const laneWidth = laneWidthFor(graphDotNodes);
   const [graphContainerWidth, setGraphContainerWidth] = useState<number>(0);
   // Keep refs alongside the state so async load + drag-end callbacks can read
   // the latest container width and visibility without needing them in deps.
@@ -342,10 +392,6 @@ export function GraphPanel() {
   useEffect(() => {
     containerWidthRef.current = graphContainerWidth;
   }, [graphContainerWidth]);
-  const visibilityRef = useRef(columnVisibility);
-  useEffect(() => {
-    visibilityRef.current = columnVisibility;
-  }, [columnVisibility]);
   const graphObserverRef = useRef<ResizeObserver | null>(null);
   const graphContainerRef = useCallback((el: HTMLDivElement | null) => {
     if (graphObserverRef.current) {
@@ -367,14 +413,15 @@ export function GraphPanel() {
   useEffect(() => {
     if (!repoPath) return;
     let cancelled = false;
+    const lw = laneWidthFor(graphDotNodes);
     const defaults: GraphLayout = {
       ...LAYOUT_DEFAULT,
-      graph: defaultGraphWidth(totalLanes),
+      graph: defaultGraphWidth(totalLanes, lw),
     };
     getUiState(`graph_layout:${repoPath}`)
       .then((raw) => {
         if (cancelled) return;
-        setLayout(parseStoredLayout(raw, totalLanes) ?? defaults);
+        setLayout(parseStoredLayout(raw, totalLanes, lw) ?? defaults);
       })
       .catch(() => {
         if (!cancelled) setLayout(defaults);
@@ -384,6 +431,17 @@ export function GraphPanel() {
   }, [repoPath]);
 
 
+  // Responsive visibility — drops optional columns (sha → date → author) when
+  // the panel is too narrow to keep a readable message column. The user's
+  // chosen `columnVisibility` stays the source of truth (settings checkmarks +
+  // tooltip surfacing); this derived value drives what's actually laid out.
+  const effectiveVisibility: GraphColumnVisibility = deriveEffectiveVisibility(
+    clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX),
+    clamp(layout.graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX),
+    graphContainerWidth,
+    columnVisibility,
+  );
+
   // Effective pixel widths fed to header + canvas — derived each render from
   // the persisted layout, the current container width, the topology's lane
   // count (which floors the graph column), and which optional columns are on.
@@ -391,7 +449,8 @@ export function GraphPanel() {
     layout,
     graphContainerWidth,
     totalLanes,
-    columnVisibility,
+    effectiveVisibility,
+    laneWidth,
   );
 
 
@@ -450,21 +509,24 @@ export function GraphPanel() {
                       </span>
                     </div>
                     {profileName && (
-                      <span className="shrink-0 rounded-sm bg-brand/10 px-1.5 py-0.5 text-caption font-medium text-brand-dim">
+                      <span className="shrink-0 rounded-md bg-brand/10 px-1.5 py-0.5 text-caption font-medium text-brand-dim">
                         {profileName}
                       </span>
                     )}
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <button
+                        <IconButton
+                          size="sm"
+                          variant="subtle"
+                          reveal="fade"
                           onClick={(e) => {
                             e.stopPropagation();
                             removeFromRecentRepos(repo.path);
                           }}
-                          className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                          className="shrink-0"
                         >
                           <X className="h-3 w-3" />
-                        </button>
+                        </IconButton>
                       </TooltipTrigger>
                       <TooltipContent>Remove from recent</TooltipContent>
                     </Tooltip>
@@ -516,12 +578,9 @@ export function GraphPanel() {
       {!showDiff && (showLargeDiffGuard || (diffLoading && selectedFilePath)) && (
         <div className="shrink-0">
           <div className="flex min-h-9 items-center px-3 py-1">
-            <button
-              onClick={clearDiff}
-              className="mr-2 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            >
+            <IconButton onClick={clearDiff} className="mr-2">
               <ArrowLeft className="h-3.5 w-3.5" />
-            </button>
+            </IconButton>
             <span className="truncate text-xs font-medium text-foreground">
               {selectedFilePath}
             </span>
@@ -601,15 +660,20 @@ export function GraphPanel() {
               containerWidth={graphContainerWidth}
               badgeMin={COL_BADGE_MIN}
               badgeMax={COL_BADGE_MAX}
-              graphMin={minGraphWidth(totalLanes)}
+              graphMin={minGraphWidth(totalLanes, laneWidth)}
               graphMax={COL_GRAPH_MAX}
-              visibility={columnVisibility}
+              visibility={effectiveVisibility}
+              userVisibility={columnVisibility}
+              density={graphDensity}
+              dotNodes={graphDotNodes}
+              onDensityChange={setGraphDensity}
+              onDotNodesChange={setGraphDotNodes}
               onResize={(w) => {
-                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, visibilityRef.current, layout);
+                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, effectiveVisibility, layout, laneWidth);
                 setLayout(next);
               }}
               onResizeEnd={(w) => {
-                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, visibilityRef.current, layout);
+                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, effectiveVisibility, layout, laneWidth);
                 setLayout(next);
                 if (repoPath) {
                   setUiState(`graph_layout:${repoPath}`, JSON.stringify(next)).catch(() => {});
@@ -643,8 +707,10 @@ export function GraphPanel() {
                   setStashContextMenu({ index, x, y });
                 }}
                 columnWidths={effectiveWidths}
-                columnVisibility={columnVisibility}
+                columnVisibility={effectiveVisibility}
                 dateFormat={dateFormat}
+                density={graphDensity}
+                dotNodes={graphDotNodes}
                 refMru={refMru}
               />
             </div>
@@ -736,480 +802,335 @@ export function GraphPanel() {
 
       {/* Dirty working tree dialog */}
       {dirtyActionPending && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-md">
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
-              <p className="text-sm text-foreground">Uncommitted changes</p>
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">
-              You have {dirtyActionPending.changesCount} unsaved {dirtyActionPending.changesCount === 1 ? "change" : "changes"}.
-              How would you like to proceed?
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={cancelDirtyAction}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={stashAndProceed}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Stash &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
-              </button>
-              <button
-                onClick={discardAndProceed}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Discard &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
-              </button>
-            </div>
+        <Modal open onClose={cancelDirtyAction} className="max-w-md p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
+            <p className="text-sm text-foreground">Uncommitted changes</p>
           </div>
-        </div>
+          <p className="text-xs text-muted-foreground mb-4">
+            You have {dirtyActionPending.changesCount} unsaved {dirtyActionPending.changesCount === 1 ? "change" : "changes"}.
+            How would you like to proceed?
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={cancelDirtyAction}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={stashAndProceed}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
+            >
+              Stash &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
+            </button>
+            <button
+              onClick={discardAndProceed}
+              className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
+            >
+              Discard &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Remote checkout dialog */}
       {remoteCheckoutPending && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-md">
-            {remoteCheckoutPending.alreadyOnLocal ? (
-              <>
-                <p className="text-sm text-foreground mb-1">
-                  Reset &apos;{remoteCheckoutPending.localName}&apos; to match &apos;{remoteCheckoutPending.remoteName}&apos;?
-                </p>
-                <p className="text-xs text-muted-foreground mb-4">
-                  This will hard-reset your local branch to the remote version. Any uncommitted changes will be lost.
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm text-foreground mb-1">
-                  A local &apos;{remoteCheckoutPending.localName}&apos; already exists.
-                </p>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Choose how to handle the remote branch checkout.
-                </p>
-              </>
+        <Modal open onClose={cancelRemoteCheckout} className="max-w-md p-4">
+          {remoteCheckoutPending.alreadyOnLocal ? (
+            <>
+              <p className="text-sm text-foreground mb-1">
+                Reset &apos;{remoteCheckoutPending.localName}&apos; to match &apos;{remoteCheckoutPending.remoteName}&apos;?
+              </p>
+              <p className="text-xs text-muted-foreground mb-4">
+                This will hard-reset your local branch to the remote version. Any uncommitted changes will be lost.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-foreground mb-1">
+                A local &apos;{remoteCheckoutPending.localName}&apos; already exists.
+              </p>
+              <p className="text-xs text-muted-foreground mb-4">
+                Choose how to handle the remote branch checkout.
+              </p>
+            </>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={cancelRemoteCheckout}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
+            >
+              Cancel
+            </button>
+            {!remoteCheckoutPending.alreadyOnLocal && (
+              <button
+                onClick={() => {
+                  cancelRemoteCheckout();
+                  checkout(remoteCheckoutPending.localName);
+                }}
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
+              >
+                Switch to Local
+              </button>
             )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={cancelRemoteCheckout}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              {!remoteCheckoutPending.alreadyOnLocal && (
-                <button
-                  onClick={() => {
-                    cancelRemoteCheckout();
-                    checkout(remoteCheckoutPending.localName);
-                  }}
-                  className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-                >
-                  Switch to Local
-                </button>
-              )}
-              <button
-                onClick={resetLocalToRemote}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Reset Local to Remote
-              </button>
-            </div>
+            <button
+              onClick={resetLocalToRemote}
+              className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
+            >
+              Reset Local to Remote
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Reset hard confirmation */}
       {confirmResetHard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Reset hard?</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              This will discard all changes and move the branch to {confirmResetHard.slice(0, 7)}. This cannot be undone.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmResetHard(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  resetTo(confirmResetHard, "hard");
-                  setConfirmResetHard(null);
-                }}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Reset Hard
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmResetHard(null)}
+          title="Reset hard?"
+          description={`This will discard all changes and move the branch to ${confirmResetHard.slice(0, 7)}. This cannot be undone.`}
+          confirmLabel="Reset Hard"
+          destructive
+          onConfirm={() => {
+            resetTo(confirmResetHard, "hard");
+            setConfirmResetHard(null);
+          }}
+        />
       )}
 
       {/* Delete branch confirmation */}
       {confirmDeleteBranch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Delete branch?</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              {confirmDeleteBranch.deleteLocal && confirmDeleteBranch.deleteRemote
-                ? `This will delete "${confirmDeleteBranch.branchName}" locally and from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
-                : confirmDeleteBranch.deleteRemote
-                  ? `This will delete "${confirmDeleteBranch.branchName}" from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
-                  : `This will delete "${confirmDeleteBranch.branchName}" locally. This cannot be undone.`}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDeleteBranch(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const { branchName, deleteLocal, deleteRemote, remoteName } = confirmDeleteBranch;
-                  setConfirmDeleteBranch(null);
-                  if (deleteLocal) await deleteBranch(branchName);
-                  if (deleteRemote) await deleteRemoteBranch(remoteName, branchName);
-                }}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmDeleteBranch(null)}
+          title="Delete branch?"
+          description={
+            confirmDeleteBranch.deleteLocal && confirmDeleteBranch.deleteRemote
+              ? `This will delete "${confirmDeleteBranch.branchName}" locally and from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+              : confirmDeleteBranch.deleteRemote
+                ? `This will delete "${confirmDeleteBranch.branchName}" from ${confirmDeleteBranch.remoteName}. This cannot be undone.`
+                : `This will delete "${confirmDeleteBranch.branchName}" locally. This cannot be undone.`
+          }
+          confirmLabel="Delete"
+          destructive
+          onConfirm={async () => {
+            const { branchName, deleteLocal, deleteRemote, remoteName } = confirmDeleteBranch;
+            setConfirmDeleteBranch(null);
+            if (deleteLocal) await deleteBranch(branchName);
+            if (deleteRemote) await deleteRemoteBranch(remoteName, branchName);
+          }}
+        />
       )}
 
       {/* Drop stash confirmation */}
       {confirmDropStash != null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Drop stash?</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              This will permanently discard stash@&#123;{confirmDropStash}&#125;. This cannot be undone.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDropStash(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  dropStash(confirmDropStash);
-                  setConfirmDropStash(null);
-                }}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Drop
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmDropStash(null)}
+          title="Drop stash?"
+          description={`This will permanently discard stash@{${confirmDropStash}}. This cannot be undone.`}
+          confirmLabel="Drop"
+          destructive
+          onConfirm={() => {
+            dropStash(confirmDropStash);
+            setConfirmDropStash(null);
+          }}
+        />
       )}
 
       {/* Delete tag confirmation */}
       {confirmDeleteTag != null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Delete tag?</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              This will delete the local tag "{confirmDeleteTag}". If it has been pushed, the remote tag is not affected.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDeleteTag(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  deleteExistingTag(confirmDeleteTag);
-                  setConfirmDeleteTag(null);
-                }}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmDeleteTag(null)}
+          title="Delete tag?"
+          description={`This will delete the local tag "${confirmDeleteTag}". If it has been pushed, the remote tag is not affected.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={() => {
+            deleteExistingTag(confirmDeleteTag);
+            setConfirmDeleteTag(null);
+          }}
+        />
       )}
 
       {/* Force push confirmation */}
       {forcePushPending && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Force push?</p>
-            <p className="text-xs text-muted-foreground mb-4">
-              The remote branch has diverged from your local branch. Force pushing will overwrite the remote history. This uses --force-with-lease for safety.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={cancelForcePush}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={forcePush}
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-              >
-                Force Push
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={cancelForcePush}
+          title="Force push?"
+          description="The remote branch has diverged from your local branch. Force pushing will overwrite the remote history. This uses --force-with-lease for safety."
+          confirmLabel="Force Push"
+          destructive
+          onConfirm={forcePush}
+        />
       )}
 
       {/* Create branch at commit dialog */}
       {createBranchDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Create branch</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              New branch at {createBranchDialog.commitId.slice(0, 7)}
-            </p>
-            <input
-              autoFocus
-              value={dialogInput}
-              onChange={(e) => setDialogInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && dialogInput.trim()) {
-                  createBranchAtAction(dialogInput.trim(), createBranchDialog.commitId);
-                  setCreateBranchDialog(null);
-                } else if (e.key === "Escape") {
-                  setCreateBranchDialog(null);
-                }
-              }}
-              placeholder="Branch name"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setCreateBranchDialog(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (dialogInput.trim()) {
-                    createBranchAtAction(dialogInput.trim(), createBranchDialog.commitId);
-                    setCreateBranchDialog(null);
-                  }
-                }}
-                disabled={!dialogInput.trim()}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setCreateBranchDialog(null)}
+          title="Create branch"
+          description={`New branch at ${createBranchDialog.commitId.slice(0, 7)}`}
+          confirmLabel="Create"
+          confirmDisabled={!dialogInput.trim()}
+          onConfirm={() => {
+            if (dialogInput.trim()) {
+              createBranchAtAction(dialogInput.trim(), createBranchDialog.commitId);
+              setCreateBranchDialog(null);
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={dialogInput}
+            onChange={(e) => setDialogInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && dialogInput.trim()) {
+                createBranchAtAction(dialogInput.trim(), createBranchDialog.commitId);
+                setCreateBranchDialog(null);
+              }
+            }}
+            placeholder="Branch name"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+          />
+        </ConfirmDialog>
       )}
 
       {/* Edit (reword) HEAD commit message dialog */}
       {editMessageDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg w-full max-w-md">
-            <p className="text-sm text-foreground mb-1">Edit commit message</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Rewrites HEAD ({editMessageDialog.commitId.slice(0, 7)}). If already pushed, you'll need to force push.
-            </p>
-            <input
-              autoFocus
-              value={editMsgSubject}
-              onChange={(e) => setEditMsgSubject(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setEditMessageDialog(null);
-              }}
-              placeholder="Subject"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-2"
-            />
-            <textarea
-              value={editMsgBody}
-              onChange={(e) => setEditMsgBody(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setEditMessageDialog(null);
-              }}
-              placeholder="Optional extended description…"
-              rows={5}
-              className="w-full resize-y rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3 font-mono"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setEditMessageDialog(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const subject = editMsgSubject.trim();
-                  if (!subject) return;
-                  const body = editMsgBody.trim();
-                  const full = body ? `${subject}\n\n${body}` : subject;
-                  rewordHeadCommit(full);
-                  setEditMessageDialog(null);
-                }}
-                disabled={!editMsgSubject.trim()}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setEditMessageDialog(null)}
+          className="w-full max-w-md"
+          title="Edit commit message"
+          description={`Rewrites HEAD (${editMessageDialog.commitId.slice(0, 7)}). If already pushed, you'll need to force push.`}
+          confirmLabel="Save"
+          confirmDisabled={!editMsgSubject.trim()}
+          onConfirm={() => {
+            const subject = editMsgSubject.trim();
+            if (!subject) return;
+            const body = editMsgBody.trim();
+            const full = body ? `${subject}\n\n${body}` : subject;
+            rewordHeadCommit(full);
+            setEditMessageDialog(null);
+          }}
+        >
+          <input
+            autoFocus
+            value={editMsgSubject}
+            onChange={(e) => setEditMsgSubject(e.target.value)}
+            placeholder="Subject"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-2"
+          />
+          <textarea
+            value={editMsgBody}
+            onChange={(e) => setEditMsgBody(e.target.value)}
+            placeholder="Optional extended description…"
+            rows={5}
+            className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3 font-mono"
+          />
+        </ConfirmDialog>
       )}
 
       {/* Rename branch dialog (from graph badge) */}
       {renameDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Rename branch</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Renaming &apos;{renameDialog.branch}&apos;
-            </p>
-            <input
-              autoFocus
-              value={dialogInput}
-              onChange={(e) => setDialogInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && dialogInput.trim() && dialogInput.trim() !== renameDialog.branch) {
-                  renameBranch(renameDialog.branch, dialogInput.trim());
-                  setRenameDialog(null);
-                } else if (e.key === "Escape") {
-                  setRenameDialog(null);
-                }
-              }}
-              placeholder="New name"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setRenameDialog(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (dialogInput.trim() && dialogInput.trim() !== renameDialog.branch) {
-                    renameBranch(renameDialog.branch, dialogInput.trim());
-                    setRenameDialog(null);
-                  }
-                }}
-                disabled={!dialogInput.trim() || dialogInput.trim() === renameDialog.branch}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                Rename
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setRenameDialog(null)}
+          title="Rename branch"
+          description={`Renaming '${renameDialog.branch}'`}
+          confirmLabel="Rename"
+          confirmDisabled={!dialogInput.trim() || dialogInput.trim() === renameDialog.branch}
+          onConfirm={() => {
+            if (dialogInput.trim() && dialogInput.trim() !== renameDialog.branch) {
+              renameBranch(renameDialog.branch, dialogInput.trim());
+              setRenameDialog(null);
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={dialogInput}
+            onChange={(e) => setDialogInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && dialogInput.trim() && dialogInput.trim() !== renameDialog.branch) {
+                renameBranch(renameDialog.branch, dialogInput.trim());
+                setRenameDialog(null);
+              }
+            }}
+            placeholder="New name"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+          />
+        </ConfirmDialog>
       )}
 
       {/* Set upstream dialog (from graph badge) */}
       {upstreamDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Set upstream</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Set tracking branch for &apos;{upstreamDialog.branch}&apos;
-            </p>
-            <input
-              autoFocus
-              value={dialogInput}
-              onChange={(e) => setDialogInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && dialogInput.trim()) {
-                  setUpstream(dialogInput.trim());
-                  setUpstreamDialog(null);
-                } else if (e.key === "Escape") {
-                  setUpstreamDialog(null);
-                }
-              }}
-              placeholder="e.g. origin/main"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setUpstreamDialog(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (dialogInput.trim()) {
-                    setUpstream(dialogInput.trim());
-                    setUpstreamDialog(null);
-                  }
-                }}
-                disabled={!dialogInput.trim()}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                Set
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setUpstreamDialog(null)}
+          title="Set upstream"
+          description={`Set tracking branch for '${upstreamDialog.branch}'`}
+          confirmLabel="Set"
+          confirmDisabled={!dialogInput.trim()}
+          onConfirm={() => {
+            if (dialogInput.trim()) {
+              setUpstream(dialogInput.trim());
+              setUpstreamDialog(null);
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={dialogInput}
+            onChange={(e) => setDialogInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && dialogInput.trim()) {
+                setUpstream(dialogInput.trim());
+                setUpstreamDialog(null);
+              }
+            }}
+            placeholder="e.g. origin/main"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+          />
+        </ConfirmDialog>
       )}
 
       {/* Create tag at commit dialog */}
       {createTagDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-            <p className="text-sm text-foreground mb-1">Create tag</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              New tag at {createTagDialog.commitId.slice(0, 7)}
-            </p>
-            <input
-              autoFocus
-              value={dialogInput}
-              onChange={(e) => setDialogInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && dialogInput.trim()) {
-                  createNewTag(dialogInput.trim(), createTagDialog.commitId);
-                  setCreateTagDialog(null);
-                } else if (e.key === "Escape") {
-                  setCreateTagDialog(null);
-                }
-              }}
-              placeholder="Tag name"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setCreateTagDialog(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (dialogInput.trim()) {
-                    createNewTag(dialogInput.trim(), createTagDialog.commitId);
-                    setCreateTagDialog(null);
-                  }
-                }}
-                disabled={!dialogInput.trim()}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          open
+          onClose={() => setCreateTagDialog(null)}
+          title="Create tag"
+          description={`New tag at ${createTagDialog.commitId.slice(0, 7)}`}
+          confirmLabel="Create"
+          confirmDisabled={!dialogInput.trim()}
+          onConfirm={() => {
+            if (dialogInput.trim()) {
+              createNewTag(dialogInput.trim(), createTagDialog.commitId);
+              setCreateTagDialog(null);
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={dialogInput}
+            onChange={(e) => setDialogInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && dialogInput.trim()) {
+                createNewTag(dialogInput.trim(), createTagDialog.commitId);
+                setCreateTagDialog(null);
+              }
+            }}
+            placeholder="Tag name"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring mb-3"
+          />
+        </ConfirmDialog>
       )}
     </div>
   );

@@ -18,7 +18,8 @@ import {
   Undo2,
   Save,
 } from "lucide-react";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import { IconButton } from "@/components/ui/icon-button";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -38,7 +39,9 @@ import {
 import type { FileTreeNode } from "@/lib/file-tree";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { SectionHeader } from "@/components/ui/section-header";
 import { cn } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/ui/modal";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
 function matchesLfsPattern(filePath: string, pattern: string): boolean {
@@ -121,6 +124,49 @@ export function FileList() {
     y: number;
   } | null>(null);
   const viewMode = fileViewMode;
+
+  // ── Unstaged / staged split ratio (drag handle between the two cards) ──────
+  // `ratio` is the unstaged card's share (0..1) of the resizable area; the
+  // staged card gets the rest. Drag the handle to rebalance. Kept in component
+  // state (resets to an even split when the view remounts).
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [splitDragging, setSplitDragging] = useState(false);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const splitDragRef = useRef<{ startY: number; startRatio: number; avail: number } | null>(null);
+
+  const onSplitDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const el = splitRef.current;
+      if (!el) return;
+      splitDragRef.current = { startY: e.clientY, startRatio: splitRatio, avail: el.clientHeight };
+      setSplitDragging(true);
+    },
+    [splitRatio],
+  );
+
+  useEffect(() => {
+    if (!splitDragging) return;
+    const onMove = (e: MouseEvent) => {
+      const d = splitDragRef.current;
+      if (!d || d.avail <= 0) return;
+      const next = Math.max(0.15, Math.min(0.85, d.startRatio + (e.clientY - d.startY) / d.avail));
+      setSplitRatio(next);
+    };
+    const onUp = () => setSplitDragging(false);
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+    };
+  }, [splitDragging]);
 
   // ── Multi-select state ────────────────────────────────────────────────────
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
@@ -218,6 +264,17 @@ export function FileList() {
     [staged],
   );
 
+  // A section only claims resizable space when it's open AND has files; an empty
+  // or collapsed section shrinks to just its header. The drag handle (and ratio
+  // split) only apply when both sections are competing for space.
+  const unstagedExpands = unstagedOpen && unstaged.length > 0;
+  const stagedExpands = stagedOpen && staged.length > 0;
+  const bothExpand = unstagedExpands && stagedExpands;
+  const growStyle = (expands: boolean, grow: number): React.CSSProperties =>
+    expands
+      ? { flexGrow: grow, flexShrink: 1, flexBasis: 0, minHeight: 0 }
+      : { flexShrink: 0 };
+
   if (fileStatuses.length === 0) {
     return (
       <div className="flex items-center justify-center p-4 text-xs text-muted-foreground">
@@ -227,7 +284,7 @@ export function FileList() {
   }
 
   return (
-    <div className="flex flex-col overflow-y-auto">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       {/* Conflicts section */}
       {conflicted.length > 0 && (
         <FileSection
@@ -238,6 +295,8 @@ export function FileList() {
           actionLabel=""
           actionDisabled={true}
           labelClassName="text-red-400 hover:text-red-300"
+          className="shrink-0"
+          bodyClassName="max-h-48"
         >
           {viewMode === "tree" ? (
             <ConflictTreeView
@@ -284,6 +343,8 @@ export function FileList() {
         </FileSection>
       )}
 
+      {/* Resizable unstaged / staged split — each card scrolls independently */}
+      <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
       {/* Unstaged section */}
       <FileSection
         label="Unstaged"
@@ -298,6 +359,7 @@ export function FileList() {
         }
         actionDisabled={isLoading || busyOp !== null}
         isBusy={busyOp === "stage"}
+        style={growStyle(unstagedExpands, bothExpand ? splitRatio : 1)}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -338,8 +400,19 @@ export function FileList() {
         )}
       </FileSection>
 
-      {/* Divider between unstaged and staged */}
-      <div className="mx-3 my-[4px] border-t border-border" />
+      {bothExpand ? (
+        <div
+          onMouseDown={onSplitDragStart}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize unstaged and staged"
+          className="group relative h-2 shrink-0 cursor-row-resize"
+        >
+          <div className="absolute left-1/2 top-1/2 h-1 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-muted-foreground/30 transition-colors group-hover:bg-muted-foreground/60" />
+        </div>
+      ) : (
+        <div className="h-2 shrink-0" aria-hidden="true" />
+      )}
 
       {/* Staged section */}
       <FileSection
@@ -355,6 +428,7 @@ export function FileList() {
         }
         actionDisabled={isLoading || busyOp !== null}
         isBusy={busyOp === "unstage"}
+        style={growStyle(stagedExpands, bothExpand ? 1 - splitRatio : 1)}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -394,6 +468,7 @@ export function FileList() {
           ))
         )}
       </FileSection>
+      </div>
 
       {/* Discard confirmation dialog */}
       {confirmDiscard && (
@@ -509,6 +584,9 @@ function FileSection({
   actionDisabled,
   isBusy,
   labelClassName,
+  className,
+  style,
+  bodyClassName,
   children,
 }: {
   label: string;
@@ -520,27 +598,31 @@ function FileSection({
   actionDisabled: boolean;
   isBusy?: boolean;
   labelClassName?: string;
+  /** Extra classes on the outer card (e.g. shrink-0). */
+  className?: string;
+  /** Inline styles on the outer card — used to drive the resizable flex split. */
+  style?: React.CSSProperties;
+  /** Extra classes on the scrollable body (e.g. a max-height cap). */
+  bodyClassName?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="pb-[10px]">
-      <div className="flex items-center px-3 py-1.5">
-        <button
-          onClick={onToggle}
-          className={`flex items-center gap-1 text-label font-semibold uppercase tracking-[0.06em] transition-colors ${labelClassName ?? "text-muted-foreground hover:text-foreground"}`}
-        >
-          {isOpen ? (
-            <ChevronDown className="h-3 w-3" />
-          ) : (
-            <ChevronRight className="h-3 w-3" />
-          )}
-          {label}
-          <span className="ml-1 normal-case tracking-normal text-faint">
-            {count}
-          </span>
-        </button>
-        <div className="ml-auto flex items-center gap-1.5">
-          {onAction && count > 0 && (
+    <div
+      className={cn(
+        "flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-card",
+        className,
+      )}
+      style={style}
+    >
+      <SectionHeader
+        label={label}
+        count={count}
+        isOpen={isOpen}
+        onToggle={onToggle}
+        className="shrink-0 px-3"
+        labelClassName={labelClassName}
+        action={
+          onAction && count > 0 ? (
             <button
               onClick={onAction}
               disabled={actionDisabled}
@@ -549,10 +631,14 @@ function FileSection({
               {isBusy && <Loader2 className="h-3 w-3 animate-spin" />}
               {actionLabel}
             </button>
-          )}
+          ) : undefined
+        }
+      />
+      {isOpen && (
+        <div className={cn("min-h-0 overflow-y-auto px-2 pb-2", bodyClassName)}>
+          {children}
         </div>
-      </div>
-      {isOpen && <div>{children}</div>}
+      )}
     </div>
   );
 }
@@ -705,7 +791,7 @@ function ConflictTreeNodeView({
       <div>
         <div
           className={cn(
-            "group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer",
+            "group relative flex w-full items-center gap-1.5 rounded-md px-2 py-1 my-1 text-xs text-muted-foreground hover:bg-card-hover hover:text-foreground transition-colors cursor-default",
             dimmed && FILTER_DIM_CLASS,
           )}
           style={{ paddingLeft: `${12 + indent}px` }}
@@ -714,7 +800,7 @@ function ConflictTreeNodeView({
           {Array.from({ length: depth }, (_, i) => (
             <div
               key={i}
-              className="absolute top-0 bottom-0 w-px bg-border"
+              className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
               style={{ left: `${18 + i * 16}px` }}
             />
           ))}
@@ -758,8 +844,8 @@ function ConflictTreeNodeView({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
-        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        "group relative flex items-center gap-1.5 rounded-md px-2 py-1.5 my-1 cursor-default transition-colors",
+        isSelected ? "bg-card-hover text-accent-foreground" : "hover:bg-card-hover",
         dimmed && FILTER_DIM_CLASS,
       )}
       style={{ paddingLeft: `${12 + indent + 16}px` }}
@@ -769,7 +855,7 @@ function ConflictTreeNodeView({
       {Array.from({ length: depth }, (_, i) => (
         <div
           key={i}
-          className="absolute top-0 bottom-0 w-px bg-border"
+          className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
           style={{ left: `${18 + i * 16}px` }}
         />
       ))}
@@ -794,7 +880,7 @@ function ConflictTreeNodeView({
             <button
               onClick={(e) => { e.stopPropagation(); onSave(file.path); }}
               disabled={disabled}
-              className="shrink-0 rounded border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
+              className="shrink-0 rounded-md border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
             >
               Save
             </button>
@@ -808,7 +894,7 @@ function ConflictTreeNodeView({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveOurs(file.path); }}
                 disabled={disabled}
-                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
               >
                 Ours
               </button>
@@ -820,7 +906,7 @@ function ConflictTreeNodeView({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveTheirs(file.path); }}
                 disabled={disabled}
-                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
               >
                 Theirs
               </button>
@@ -879,7 +965,7 @@ function TreeNodeView({
       <div>
         <div
           className={cn(
-            "group relative flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer",
+            "group relative flex w-full items-center gap-1.5 rounded-md px-2 py-1 my-1 text-xs text-muted-foreground hover:bg-card-hover hover:text-foreground transition-colors cursor-default",
             dimmed && FILTER_DIM_CLASS,
           )}
           style={{ paddingLeft: `${12 + indent}px` }}
@@ -893,7 +979,7 @@ function TreeNodeView({
           {Array.from({ length: depth }, (_, i) => (
             <div
               key={i}
-              className="absolute top-0 bottom-0 w-px bg-border"
+              className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
               style={{ left: `${18 + i * 16}px` }}
             />
           ))}
@@ -912,31 +998,36 @@ function TreeNodeView({
           <span className="ml-auto shrink-0 flex items-center gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <IconButton
+                  size="sm"
+                  variant="subtle"
+                  reveal="slide"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDiscardBatch(collectFilePaths(node));
                   }}
                   disabled={disabled}
-                  className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-red-400 transition-all disabled:opacity-40"
+                  className="shrink-0 hover:bg-destructive/20 hover:text-red-400"
                 >
                   <Trash2 className="h-3 w-3" />
-                </button>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>Discard folder changes</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <IconButton
+                  size="sm"
+                  reveal="slide"
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleBatch(collectFilePaths(node));
                   }}
                   disabled={disabled}
-                  className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
+                  className="shrink-0 hover:bg-card-hover"
                 >
                   {toggleIcon}
-                </button>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>{toggleTitle} folder</TooltipContent>
             </Tooltip>
@@ -978,12 +1069,12 @@ function TreeNodeView({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
+        "group relative flex items-center gap-1.5 rounded-md px-2 py-1.5 my-1 cursor-default transition-colors",
         isMulti
           ? "bg-primary/15 text-accent-foreground"
           : isSelected
-            ? "bg-accent text-accent-foreground"
-            : "hover:bg-secondary",
+            ? "bg-card-hover text-accent-foreground"
+            : "hover:bg-card-hover",
         dimmed && FILTER_DIM_CLASS,
       )}
       style={{ paddingLeft: `${12 + indent + 16}px` }}
@@ -997,7 +1088,7 @@ function TreeNodeView({
       {Array.from({ length: depth }, (_, i) => (
         <div
           key={i}
-          className="absolute top-0 bottom-0 w-px bg-border"
+          className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
           style={{ left: `${18 + i * 16}px` }}
         />
       ))}
@@ -1007,7 +1098,7 @@ function TreeNodeView({
       <FileIcon filename={node.name} className="h-4 w-4 shrink-0 text-muted-foreground" />
       <span className="truncate text-xs text-foreground"><HighlightedText text={node.name} /></span>
       {isLfs && (
-        <span className="shrink-0 rounded px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
+        <span className="shrink-0 rounded-md px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
           LFS
         </span>
       )}
@@ -1021,31 +1112,36 @@ function TreeNodeView({
       </span>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
+          <IconButton
+            size="sm"
+            variant="subtle"
+            reveal="slide"
             onClick={(e) => {
               e.stopPropagation();
               onDiscard(file.path);
             }}
             disabled={disabled}
-            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-red-400 transition-all disabled:opacity-40"
+            className="shrink-0 hover:bg-destructive/20 hover:text-red-400"
           >
             <Trash2 className="h-3 w-3" />
-          </button>
+          </IconButton>
         </TooltipTrigger>
         <TooltipContent>Discard changes</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
+          <IconButton
+            size="sm"
+            reveal="slide"
             onClick={(e) => {
               e.stopPropagation();
               onToggle(file.path);
             }}
             disabled={disabled}
-            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
+            className="shrink-0 hover:bg-card-hover"
           >
             {toggleIcon}
-          </button>
+          </IconButton>
         </TooltipTrigger>
         <TooltipContent>{toggleTitle}</TooltipContent>
       </Tooltip>
@@ -1090,12 +1186,12 @@ function FileRow({
   return (
     <div
       className={cn(
-        "group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
+        "group flex items-center gap-1.5 rounded-md px-2 py-1.5 my-1 cursor-default transition-colors",
         isMultiSelected
           ? "bg-primary/15 text-accent-foreground"
           : isSelected
-            ? "bg-accent text-accent-foreground"
-            : "hover:bg-secondary",
+            ? "bg-card-hover text-accent-foreground"
+            : "hover:bg-card-hover",
         dimmed && FILTER_DIM_CLASS,
       )}
       onClick={onSelect}
@@ -1108,7 +1204,7 @@ function FileRow({
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate text-xs text-foreground"><HighlightedText text={fileName} /></span>
         {isLfs && (
-          <span className="shrink-0 rounded px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
+          <span className="shrink-0 rounded-md px-1.5 py-0.5 text-label font-medium leading-none bg-blue-500/20 text-blue-400">
             LFS
           </span>
         )}
@@ -1128,31 +1224,36 @@ function FileRow({
       </span>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
+          <IconButton
+            size="sm"
+            variant="subtle"
+            reveal="slide"
             onClick={(e) => {
               e.stopPropagation();
               onDiscard();
             }}
             disabled={disabled}
-            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-red-400 transition-all disabled:opacity-40"
+            className="shrink-0 hover:bg-destructive/20 hover:text-red-400"
           >
             <Trash2 className="h-3 w-3" />
-          </button>
+          </IconButton>
         </TooltipTrigger>
         <TooltipContent>Discard changes</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
+          <IconButton
+            size="sm"
+            reveal="slide"
             onClick={(e) => {
               e.stopPropagation();
               onToggle();
             }}
             disabled={disabled}
-            className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
+            className="shrink-0 hover:bg-card-hover"
           >
             {toggleIcon}
-          </button>
+          </IconButton>
         </TooltipTrigger>
         <TooltipContent>{toggleTitle}</TooltipContent>
       </Tooltip>
@@ -1191,8 +1292,8 @@ function ConflictRow({
   return (
     <div
       className={cn(
-        "group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
-        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        "group flex items-center gap-1.5 rounded-md px-2 py-1.5 my-1 cursor-default transition-colors",
+        isSelected ? "bg-card-hover text-accent-foreground" : "hover:bg-card-hover",
         dimmed && FILTER_DIM_CLASS,
       )}
       onClick={onSelect}
@@ -1226,7 +1327,7 @@ function ConflictRow({
             <button
               onClick={(e) => { e.stopPropagation(); onSave(); }}
               disabled={disabled}
-              className="shrink-0 rounded border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
+              className="shrink-0 rounded-md border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
             >
               Save
             </button>
@@ -1240,7 +1341,7 @@ function ConflictRow({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveOurs(); }}
                 disabled={disabled}
-                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
               >
                 Ours
               </button>
@@ -1252,7 +1353,7 @@ function ConflictRow({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveTheirs(); }}
                 disabled={disabled}
-                className="shrink-0 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
               >
                 Theirs
               </button>
@@ -1490,30 +1591,19 @@ function DiscardDialog({
   const fileName = paths.length === 1 ? paths[0].split("/").pop() : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
-        <p className="text-sm text-foreground mb-1">Discard changes?</p>
-        <p className="text-xs text-muted-foreground mb-4">
-          {fileName
-            ? `Revert "${fileName}" to its last committed state. This cannot be undone.`
-            : `Revert ${paths.length} files to their last committed state. This cannot be undone.`}
-        </p>
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 whitespace-nowrap"
-          >
-            Discard
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      open
+      onClose={onCancel}
+      title="Discard changes?"
+      description={
+        fileName
+          ? `Revert "${fileName}" to its last committed state. This cannot be undone.`
+          : `Revert ${paths.length} files to their last committed state. This cannot be undone.`
+      }
+      confirmLabel="Discard"
+      destructive
+      onConfirm={onConfirm}
+    />
   );
 }
 
@@ -1529,27 +1619,14 @@ function DeleteDialog({
   const fileName = path.split("/").pop() ?? path;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="rounded-lg border border-border bg-popover p-4 shadow-lg max-w-xs">
-        <p className="text-sm text-foreground mb-1">Delete file?</p>
-        <p className="text-xs text-muted-foreground mb-4">
-          Permanently delete &quot;{fileName}&quot; from disk. This cannot be undone.
-        </p>
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 whitespace-nowrap"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      open
+      onClose={onCancel}
+      title="Delete file?"
+      description={`Permanently delete "${fileName}" from disk. This cannot be undone.`}
+      confirmLabel="Delete"
+      destructive
+      onConfirm={onConfirm}
+    />
   );
 }

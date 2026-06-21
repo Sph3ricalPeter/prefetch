@@ -26,7 +26,7 @@ export function HighlightedText({ text }: HighlightedTextProps) {
   for (let idx = lower.indexOf(q); idx !== -1; idx = lower.indexOf(q, from)) {
     if (idx > from) parts.push(<Fragment key={key++}>{text.slice(from, idx)}</Fragment>);
     parts.push(
-      <span key={key++} className="rounded-[2px] bg-yellow-400/30">
+      <span key={key++} className="rounded-xs bg-yellow-400/30">
         {text.slice(idx, idx + q.length)}
       </span>,
     );

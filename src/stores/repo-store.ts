@@ -23,6 +23,7 @@ import type {
   UndoAction,
 } from "@/types/git";
 import type { GraphColumnVisibility } from "@/components/graph/commit-graph-canvas";
+import type { GraphDensity } from "@/lib/graph-density";
 import type { DateFormatId } from "@/lib/date-format";
 
 export interface SidebarSections {
@@ -385,6 +386,10 @@ interface RepoState {
   graphColumnVisibility: GraphColumnVisibility;
   /** Date format used in the graph date column (global) */
   graphDateFormat: DateFormatId;
+  /** Graph spacing tier — row pitch / node size / badge height (global) */
+  graphDensity: GraphDensity;
+  /** Render graph commit nodes as dots (no avatars) + hide body preview (global) */
+  graphDotNodes: boolean;
 
   /** Sidebar section expand/collapse state (persisted) */
   sidebarSections: SidebarSections;
@@ -495,6 +500,8 @@ interface RepoState {
   loadDiffPreferences: () => Promise<void>;
   setGraphColumnVisibility: (v: GraphColumnVisibility) => void;
   setGraphDateFormat: (f: DateFormatId) => void;
+  setGraphDensity: (d: GraphDensity) => void;
+  setGraphDotNodes: (on: boolean) => void;
   loadGraphPreferences: () => Promise<void>;
   setSidebarSection: (section: keyof SidebarSections, open: boolean) => void;
   loadSidebarPreferences: () => Promise<void>;
@@ -618,6 +625,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   diffWrapLines: true,
   graphColumnVisibility: { sha: false, author: false, date: false },
   graphDateFormat: "short",
+  graphDensity: "comfortable",
+  graphDotNodes: false,
   sidebarSections: { ...DEFAULT_SIDEBAR_SECTIONS },
 
   openRepository: async (path: string) => {
@@ -2242,11 +2251,23 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     setUiState("graph_date_format", f).catch(() => {});
   },
 
+  setGraphDensity: (d) => {
+    set({ graphDensity: d });
+    setUiState("graph_density", d).catch(() => {});
+  },
+
+  setGraphDotNodes: (on) => {
+    set({ graphDotNodes: on });
+    setUiState("graph_dot_nodes", on ? "true" : "false").catch(() => {});
+  },
+
   loadGraphPreferences: async () => {
     try {
-      const [visRaw, fmtRaw] = await Promise.all([
+      const [visRaw, fmtRaw, densityRaw, dotsRaw] = await Promise.all([
         getUiState("graph_column_visibility"),
         getUiState("graph_date_format"),
+        getUiState("graph_density"),
+        getUiState("graph_dot_nodes"),
       ]);
       const update: Partial<RepoState> = {};
       if (visRaw) {
@@ -2261,6 +2282,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       if (fmtRaw === "relative" || fmtRaw === "short" || fmtRaw === "long" || fmtRaw === "iso") {
         update.graphDateFormat = fmtRaw;
+      }
+      if (densityRaw === "comfortable" || densityRaw === "compact") {
+        update.graphDensity = densityRaw;
+      }
+      if (dotsRaw === "true" || dotsRaw === "false") {
+        update.graphDotNodes = dotsRaw === "true";
       }
       if (Object.keys(update).length > 0) set(update);
     } catch {

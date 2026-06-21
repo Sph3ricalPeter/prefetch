@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Monitor, Cloud, Tag, Archive } from "lucide-react";
+import { Check, Monitor, Cloud, Tag, Archive, Calendar, Hash } from "lucide-react";
 import type {
   BranchInfo,
   CommitInfo,
@@ -9,29 +9,45 @@ import type {
 } from "@/types/git";
 import { loadAvatarForEmail } from "@/lib/avatar-load";
 import { parseCommitType, COMMIT_TYPE_META, COMMIT_TYPE_ICON_NODES } from "@/lib/commit-type";
+import { COMMIT_TYPE_ICONS } from "@/lib/commit-type-icons";
+import { GRAPH_DENSITY, resolveGraphMetrics, type GraphDensity } from "@/lib/graph-density";
 import { getInitials as authorInitials, getAvatarColor as authorColor, getContrastColor as contrastText, detectBot, type BotInfo, drawProfileIconOnCanvas, getProfileIcon, darkenHex } from "@/lib/avatar";
-import { useThemeStore, FONT_FAMILIES } from "@/stores/theme-store";
+import { AuthorAvatar } from "@/components/ui/avatar";
+import { useThemeStore, FONT_FAMILIES, BASE_TEXT_SIZES } from "@/stores/theme-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
 
-export const ROW_HEIGHT = 32;
-export const LANE_WIDTH = 20;
-const NODE_RADIUS = 12;          // avatar diameter 24px
+// ROW_HEIGHT / NODE_RADIUS / LABEL_HEIGHT are reassigned per draw() from the
+// active density tier (see GRAPH_DENSITY) — mirrors the mutable `fontCfg`
+// pattern. The defaults below match the "comfortable" tier.
+let ROW_HEIGHT = 32;
+let NODE_RADIUS = 12;            // avatar radius (24px diameter at comfortable)
 const CURVE_RADIUS = 6;          // Constant corner radius for cross-lane edges (GitKraken-style)
-const SCROLLBAR_PAD = 6;         // visual breathing room for left edge
+const SCROLLBAR_PAD = 4;         // visual breathing room for left edge
+// Gap between the rightmost (sha) column and the scrollbar. The canvas width is
+// scroll.clientWidth, which already excludes the scrollbar, so without this the
+// right-anchored columns butt right against it.
+export const SCROLLBAR_PAD_RIGHT = 20;
+// Right margin for the row highlight rect so it doesn't run flush into the scrollbar.
+const ROW_PAD_RIGHT = 10;
 // Inset between the right edge of the badge column and the first graph lane.
 // Small so node centers sit ~one node-radius into the graph column.
 const GRAPH_INSET_LEFT = SCROLLBAR_PAD;
 // Inset between the right edge of the graph column and the start of label / message text.
-const MESSAGE_INSET_LEFT = 12;
+export const MESSAGE_INSET_LEFT = 12;
 const TYPE_ICON_SIZE = 13;
 const TYPE_ICON_GAP = 5;
-const LABEL_HEIGHT = 24;         // badge pill height
+let LABEL_HEIGHT = 24;           // badge pill height (comfortable; per density)
 const LABEL_PAD_X = 8;
-const LABEL_RADIUS = 5;
-const ROW_RADIUS = 6;            // Change 1: matches CSS rounded-md
+// Canvas radii mirror the CSS radius scale (DESIGN.md "Radius Scale (App)").
+// Keep in sync with --radius-md (6px) — these can't read CSS vars at draw time.
+const LABEL_RADIUS = 6;          // branch/tag/stash pills — matches rounded-md (6px)
+const ROW_RADIUS = 6;            // row highlight — matches rounded-md (6px)
 const GRAPH_PADDING_TOP = 6;     // top padding matching left padding
 const ROW_INSET = 2;             // vertical inset so row highlights don't touch
+const ROW_CONTENT_HEIGHT = 28;   // row highlight box height — constant across density
+                                 // tiers (= compact's 32px pitch − insets), centered in
+                                 // the pitch so Comfortable adds gap, not a taller box
 const GRAPH_DIM_ALPHA = 0.25;    // opacity for commit rows that don't match the filter
 const SEARCH_HIGHLIGHT_COLOR = "rgba(250, 204, 21, 0.28)"; // amber, matches the diff/log search highlight
 
@@ -549,7 +565,7 @@ function drawTagIcon(
   return size + 4;
 }
 
-/** Draw a rounded rect pill and return its width. Pass `maxContentWidth` to
+/** Draw a rounded-md rect pill and return its width. Pass `maxContentWidth` to
  *  truncate the text label so the pill fits a bounded area. Returns 0 if even
  *  the icon + ellipsis don't fit. */
 function drawPill(
@@ -793,41 +809,46 @@ interface BadgeHitArea {
   commitId?: string;
 }
 
-/** Stored body-text position for hover tooltip (Change 6) */
-interface BodyHitArea {
+/** Author identity for the unified row tooltip's avatar + name + email row.
+ *  Rendered via the shared <AuthorAvatar> (gravatar / forge / bot / initials). */
+interface AuthorMeta {
+  name: string;
+  email: string;
+}
+
+/** Per-row hover target for the unified commit tooltip. Spans the row from the
+ *  graph column to the right edge (the badge column keeps its own ref dropdown).
+ *  Only built for rows with something worth surfacing: a truncated subject, a
+ *  body, or any column not fully visible (toggled off, collapsed, or clipped). */
+interface RowTooltipArea {
   x: number;
   y: number;
   width: number;
   height: number;
   row: number;
-  body: string;
+  /** Full subject — set only when the row truncated it. */
+  subject?: string;
+  /** Extended commit message — set whenever the commit has one. */
+  body?: string;
+  /** Author identity — set when the author column isn't fully visible. */
+  author?: AuthorMeta;
+  /** Full date string — set when the date column isn't shown. */
+  date?: string;
+  /** Short SHA — set when the sha column isn't shown. */
+  sha?: string;
 }
 
-/** Stored avatar position for hover tooltip */
-interface AvatarHitArea {
-  cx: number;
-  cy: number;
-  row: number;
-  commitIdx: number;
-}
-
-/** Stored author-column position for hover tooltip when email is truncated */
-interface AuthorHitArea {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  row: number;
-  tooltip: string;
-}
-
-/** Canvas hover info for tooltip overlay */
+/** Canvas hover info driving the unified row tooltip overlay. Carries the same
+ *  optional content as RowTooltipArea plus the on-screen anchor. */
 interface CanvasHoverInfo {
-  type: "body" | "avatar" | "author";
-  text: string;
   x: number;
   y: number;
   row: number;
+  subject?: string;
+  body?: string;
+  author?: AuthorMeta;
+  date?: string;
+  sha?: string;
 }
 
 /** Column widths driving the badge | graph | sha | message | author | date layout. */
@@ -872,8 +893,15 @@ interface CommitGraphCanvasProps {
   ) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
   columnWidths: GraphColumnWidths;
+  /** Effective visibility actually rendered — optional columns the panel
+   *  auto-collapsed when too narrow are already false here. Any column that's
+   *  false (toggled off or collapsed) is surfaced in the row hover tooltip. */
   columnVisibility: GraphColumnVisibility;
   dateFormat: DateFormatId;
+  /** Spacing tier — sets the row pitch (vertical breathing room) only. */
+  density: GraphDensity;
+  /** Render commit nodes as small colored dots instead of author avatars. */
+  dotNodes: boolean;
   /** Ref name → unix timestamp of its tip commit. Drives MRU edge-draw order. */
   refMru: Map<string, number>;
 }
@@ -899,6 +927,8 @@ export function CommitGraphCanvas({
   columnWidths,
   columnVisibility,
   dateFormat,
+  density,
+  dotNodes,
   refMru,
 }: CommitGraphCanvasProps) {
   const graphColors = useThemeStore((s) => s.appTheme.graph);
@@ -913,11 +943,11 @@ export function CommitGraphCanvas({
   const hoveredBadgeRowRef = useRef<number | null>(null);
   const rafRef = useRef<number>(0);
   const badgeHitAreasRef = useRef<BadgeHitArea[]>([]);
-  const bodyHitAreasRef = useRef<BodyHitArea[]>([]);       // Change 6
-  const avatarHitAreasRef = useRef<AvatarHitArea[]>([]);
-  const authorHitAreasRef = useRef<AuthorHitArea[]>([]);
-  const [canvasHover, setCanvasHover] = useState<CanvasHoverInfo | null>(null); // Change 6
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);     // Change 6
+  // Unified per-row hover target — drives the single commit tooltip that
+  // surfaces the truncated subject, body, and any non-visible columns.
+  const rowTooltipAreasRef = useRef<RowTooltipArea[]>([]);
+  const [canvasHover, setCanvasHover] = useState<CanvasHoverInfo | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Hover dropdown state (#39) — opens when pointer rests over a badge whose
   // commit has multiple refs. Anchored to the badge's left edge.
   const [hoverDropdown, setHoverDropdown] = useState<{
@@ -938,20 +968,27 @@ export function CommitGraphCanvas({
 
   const hasWip = hasUncommittedChanges;
   const rowOffset = hasWip ? 1 : 0;
-  // Column-driven layout: badge | graph | [sha] | message | [author] | [date]
+  // Effective metrics from the spacing tier + the dot-nodes toggle. draw()
+  // reassigns the module-level ROW_HEIGHT / NODE_RADIUS / LABEL_HEIGHT from this;
+  // component-scope reads (scroll height, pointer hit-testing, the hover
+  // dropdown) use it directly so they never lag a frame behind a change.
+  // Memoized so its identity is stable per (density, dotNodes) — it feeds the
+  // dependency arrays below.
+  const dm = useMemo(() => resolveGraphMetrics(density, dotNodes), [density, dotNodes]);
+  // Column-driven layout: badge | graph | message | [author] | [date] | [sha]
+  // The optional sha/author/date columns are right-anchored; their lefts are
+  // computed inside draw() where the canvas width is known.
   const graphLeft = columnWidths.badge + GRAPH_INSET_LEFT;
-  const shaColLeft = columnWidths.badge + columnWidths.graph;
-  const shaEffW = columnVisibility.sha ? columnWidths.sha : 0;
-  const msgLeft = shaColLeft + shaEffW + MESSAGE_INSET_LEFT;
+  const msgLeft = columnWidths.badge + columnWidths.graph + MESSAGE_INSET_LEFT;
   // totalLanes is unused inside the canvas now (column widths drive layout) but the
   // parent panel uses it to size the default graph column width and clamp the resize.
   void totalLanes;
   const laneX = useCallback(
-    (lane: number) => graphLeft + lane * LANE_WIDTH + LANE_WIDTH / 2,
-    [graphLeft],
+    (lane: number) => graphLeft + lane * dm.laneWidth + dm.laneWidth / 2,
+    [graphLeft, dm],
   );
   const totalRows = commits.length + rowOffset;
-  const totalHeight = totalRows * ROW_HEIGHT + GRAPH_PADDING_TOP;
+  const totalHeight = totalRows * dm.rowHeight + GRAPH_PADDING_TOP;
 
   // Build lookup maps: commitId prefix -> labels
   const branchMap = useMemo(() => {
@@ -1141,8 +1178,16 @@ export function CommitGraphCanvas({
     // Sync module-level font config so all drawing helpers use current settings
     const family = FONT_FAMILIES.find((f) => f.id === fontFamilyId) ?? FONT_FAMILIES[0];
     fontCfg.sans = family.value;
-    fontCfg.sizeBody = Math.round(12 * fontScale);
-    fontCfg.sizeLabel = Math.round(11 * fontScale);
+    // Graph body text → app "body" level (text-xs), ref-label badges → "label"
+    // level. Sourced from BASE_TEXT_SIZES so the graph tracks the DOM type scale.
+    fontCfg.sizeBody = Math.round(BASE_TEXT_SIZES.xs * fontScale);
+    fontCfg.sizeLabel = Math.round(BASE_TEXT_SIZES.label * fontScale);
+
+    // Sync module-level density metrics so the standalone pill helpers and all
+    // size-dependent geometry below use the active tier.
+    ROW_HEIGHT = dm.rowHeight;
+    NODE_RADIUS = dm.nodeRadius;
+    LABEL_HEIGHT = dm.labelHeight;
 
     const dpr = window.devicePixelRatio || 1;
     const width = scroll.clientWidth;
@@ -1171,9 +1216,7 @@ export function CommitGraphCanvas({
     ctx.clearRect(0, 0, width, height);
     ctx.textBaseline = "middle";
     const hitAreas: BadgeHitArea[] = [];
-    const bodyHitAreas: BodyHitArea[] = [];
-    const avatarHitAreas: AvatarHitArea[] = [];
-    const authorHitAreas: AuthorHitArea[] = [];
+    const rowTooltipAreas: RowTooltipArea[] = [];
 
     // --- HEAD row highlight (permanent "you are here") ---
     const headRow = headInfo.row;
@@ -1225,12 +1268,15 @@ export function CommitGraphCanvas({
     };
     const fillRowHighlight = (visRow: number) => {
       const left = rowHighlightLeft(visRow);
+      // Constant-height box centered in the row pitch, so the Comfortable tier
+      // adds gap between rows rather than a taller highlight.
+      const boxH = Math.min(ROW_CONTENT_HEIGHT, ROW_HEIGHT - ROW_INSET * 2);
       ctx.beginPath();
       ctx.roundRect(
         left,
-        visRow * ROW_HEIGHT - scrollTop + ROW_INSET,
-        width - left,
-        ROW_HEIGHT - ROW_INSET * 2,
+        visRow * ROW_HEIGHT - scrollTop + (ROW_HEIGHT - boxH) / 2,
+        width - ROW_PAD_RIGHT - left,
+        boxH,
         ROW_RADIUS,
       );
       ctx.fill();
@@ -1442,7 +1488,8 @@ export function CommitGraphCanvas({
       ctx.globalAlpha = dimmed ? GRAPH_DIM_ALPHA : 1;
 
       // Node -- bot icon, avatar image, profile icon, or fallback initial circle
-      {
+      // (avatars tier); a plain colored lane dot in the "dots" tier.
+      if (dm.avatars) {
         const email = commit.author_email;
         const bot = detectBot(commit.author_name, email);
         const isProfileMatch = activeProfile && activeProfile.user_email.toLowerCase() === email.toLowerCase();
@@ -1542,9 +1589,18 @@ export function CommitGraphCanvas({
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
         ctx.stroke();
-
-        // Store avatar hit area for tooltip
-        avatarHitAreas.push({ cx: x, cy: y, row: visRow, commitIdx: commitIdx });
+      } else {
+        // Dots tier: a filled lane-colored dot with a thin dark separator ring
+        // so it stays legible where it sits over the edge lines.
+        ctx.beginPath();
+        ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, NODE_RADIUS, 0, Math.PI * 2);
+        ctx.strokeStyle = "#09090b";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
       }
 
       // --- Badge column (left of graph): primary ref + optional +N indicator ---
@@ -1621,7 +1677,7 @@ export function CommitGraphCanvas({
               badgeColLeft,
               y,
               primary.tag.name,
-              "rgba(255,255,255,0.08)",
+              "#19191C",
               graphColors.dim,
               drawTagIcon,
               maxPrimaryW,
@@ -1634,7 +1690,7 @@ export function CommitGraphCanvas({
               badgeColLeft,
               y,
               primary.stash.message,
-              "rgba(255,255,255,0.08)",
+              "#19191C",
               graphColors.dim,
               drawStashIcon,
               maxPrimaryW,
@@ -1715,7 +1771,7 @@ export function CommitGraphCanvas({
             badgeColLeft + primaryW + 1,
             y,
             `+${extra}`,
-            isDropdownRow ? cardColor : "rgba(255,255,255,0.1)",
+            isDropdownRow ? cardColor : "#19191C",
             graphColors.dim,
             undefined,
             undefined,
@@ -1760,20 +1816,15 @@ export function CommitGraphCanvas({
         }
       }
 
-      // --- Column drawing: [SHA] | Message | [Author] | [Date] ---
+      // --- Column drawing: Message | [Author] | [Date] | [SHA] ---
+      // Right-anchored group order: author, date, sha (sha is rightmost).
       const dateEffW = columnVisibility.date ? columnWidths.date : 0;
       const authorEffW = columnVisibility.author ? columnWidths.author : 0;
-      const rightColsW = dateEffW + authorEffW;
-      const authorColLeft = width - rightColsW;
-      const dateColLeft = width - dateEffW;
-
-      // SHA column
-      if (columnVisibility.sha) {
-        ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
-        ctx.fillStyle = graphColors.dim;
-        drawSearchHighlight(ctx, commit.short_id, shaColLeft + 8, y, hq, fontCfg.sizeLabel);
-        ctx.fillText(commit.short_id, shaColLeft + 8, y);
-      }
+      const shaEffW = columnVisibility.sha ? columnWidths.sha : 0;
+      const rightColsW = authorEffW + dateEffW + shaEffW;
+      const authorColLeft = width - SCROLLBAR_PAD_RIGHT - rightColsW;
+      const dateColLeft = authorColLeft + authorEffW;
+      const shaColLeft = dateColLeft + dateEffW;
 
       // Message + Body
       const msgRight = rightColsW > 0 ? authorColLeft - 8 : width - 16;
@@ -1812,21 +1863,13 @@ export function CommitGraphCanvas({
           const bodyX = textLeft + fullMsgWidth + bodyGap;
           const bodyAvailW = textAvail - fullMsgWidth - bodyGap;
           if (bodyAvailW > 30) {
-            ctx.fillStyle = graphColors.dim;
+            // Body preview is secondary *body* text → use `muted`, not the
+            // darker `dim` tier (which is reserved for sha/date/email captions).
+            ctx.fillStyle = graphColors.muted;
             const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
             const bodyText = truncateText(ctx, bodyOneLine, bodyAvailW);
             drawSearchHighlight(ctx, bodyText, bodyX, y, hq, fontCfg.sizeBody);
             ctx.fillText(bodyText, bodyX, y);
-
-            const drawnBodyWidth = cachedMeasureText(ctx, bodyText);
-            bodyHitAreas.push({
-              x: bodyX,
-              y: visRow * ROW_HEIGHT - scrollTop,
-              width: drawnBodyWidth,
-              height: ROW_HEIGHT,
-              row: visRow,
-              body: commit.body,
-            });
           }
         }
       } else if (parsedType) {
@@ -1852,7 +1895,6 @@ export function CommitGraphCanvas({
         const authorPad = 8;
         const authorAvail = authorEffW - authorPad * 2;
         const authorX = authorColLeft + authorPad;
-        let emailShown = false;
         if (authorAvail > 10) {
           const nameW = cachedMeasureText(ctx, commit.author_name);
           const emailGap = 6;
@@ -1866,23 +1908,11 @@ export function CommitGraphCanvas({
             const emailText = truncateText(ctx, commit.author_email, remaining);
             drawSearchHighlight(ctx, emailText, authorX + nameW + emailGap, y, hq, fontCfg.sizeBody);
             ctx.fillText(emailText, authorX + nameW + emailGap, y);
-            emailShown = cachedMeasureText(ctx, commit.author_email) <= remaining;
           } else {
             ctx.fillStyle = graphColors.fg;
             const nameTrunc = truncateText(ctx, commit.author_name, authorAvail);
             drawSearchHighlight(ctx, nameTrunc, authorX, y, hq, fontCfg.sizeBody);
             ctx.fillText(nameTrunc, authorX, y);
-          }
-
-          if (!emailShown) {
-            authorHitAreas.push({
-              x: authorX,
-              y: visRow * ROW_HEIGHT - scrollTop,
-              width: authorAvail,
-              height: ROW_HEIGHT,
-              row: visRow,
-              tooltip: `${commit.author_name} <${commit.author_email}>`,
-            });
           }
         }
       }
@@ -1899,6 +1929,32 @@ export function CommitGraphCanvas({
         }
       }
 
+      // SHA column (rightmost)
+      if (columnVisibility.sha) {
+        ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
+        ctx.fillStyle = graphColors.dim;
+        drawSearchHighlight(ctx, commit.short_id, shaColLeft + 8, y, hq, fontCfg.sizeLabel);
+        ctx.fillText(commit.short_id, shaColLeft + 8, y);
+      }
+
+      // --- Unified row tooltip target ---
+      // Always carries the full commit context — subject, body (when present),
+      // author, date, sha — regardless of which columns are shown in the row.
+      // Spans the row from the graph column to the right edge; the badge column
+      // keeps its own ref dropdown so it's intentionally excluded.
+      rowTooltipAreas.push({
+        x: columnWidths.badge,
+        y: visRow * ROW_HEIGHT - scrollTop,
+        width: Math.max(0, width - columnWidths.badge),
+        height: ROW_HEIGHT,
+        row: visRow,
+        subject: commit.message,
+        body: commit.body || undefined,
+        author: { name: commit.author_name, email: commit.author_email },
+        date: intlDateFull.format(new Date(commit.timestamp * 1000)),
+        sha: commit.short_id,
+      });
+
       // Reset row dim before the next row / subsequent passes.
       ctx.globalAlpha = 1;
     }
@@ -1907,8 +1963,9 @@ export function CommitGraphCanvas({
     ctx.font = `${fontCfg.sizeLabel}px ${fontCfg.sans}`;
     const tgDateEffW = columnVisibility.date ? columnWidths.date : 0;
     const tgAuthorEffW = columnVisibility.author ? columnWidths.author : 0;
-    const tgRightColsW = tgDateEffW + tgAuthorEffW;
-    const tgMsgRight = tgRightColsW > 0 ? width - tgRightColsW - 8 : width - 16;
+    const tgShaEffW = columnVisibility.sha ? columnWidths.sha : 0;
+    const tgRightColsW = tgDateEffW + tgAuthorEffW + tgShaEffW;
+    const tgMsgRight = tgRightColsW > 0 ? width - SCROLLBAR_PAD_RIGHT - tgRightColsW - 8 : width - 16;
     for (const [row, group] of timeGroupBoundaries) {
       if (row < firstVisibleRow || row > lastVisibleRow) continue;
       const separatorY = row * ROW_HEIGHT - scrollTop;
@@ -1937,10 +1994,8 @@ export function CommitGraphCanvas({
     }
 
     badgeHitAreasRef.current = hitAreas;
-    bodyHitAreasRef.current = bodyHitAreas;
-    avatarHitAreasRef.current = avatarHitAreas;
-    authorHitAreasRef.current = authorHitAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, shaColLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, filterQuery, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
+    rowTooltipAreasRef.current = rowTooltipAreas;
+  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, filterQuery, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, dm, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -1968,9 +2023,9 @@ export function CommitGraphCanvas({
       if (c.author_email) emails.add(c.author_email);
     }
     for (const email of emails) {
-      loadAvatarForEmail(email, NODE_RADIUS * 4, () => requestDrawRef.current());
+      loadAvatarForEmail(email, GRAPH_DENSITY[density].nodeRadius * 4, () => requestDrawRef.current());
     }
-  }, [commits]);
+  }, [commits, density]);
 
   const handleScroll = useCallback(() => {
     requestDraw();
@@ -2010,7 +2065,7 @@ export function CommitGraphCanvas({
       }
 
       const y = clickY + scroll.scrollTop;
-      const visRow = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
+      const visRow = Math.floor((y - GRAPH_PADDING_TOP) / dm.rowHeight);
 
       // WIP row
       if (hasWip && visRow === 0) {
@@ -2024,7 +2079,7 @@ export function CommitGraphCanvas({
         onSelectCommit(id === selectedCommitId ? null : id);
       }
     },
-    [commits, selectedCommitId, onSelectCommit, onSelectStash, hasWip, rowOffset, onClickWip],
+    [commits, selectedCommitId, onSelectCommit, onSelectStash, hasWip, rowOffset, onClickWip, dm],
   );
 
   const handleDoubleClick = useCallback(
@@ -2062,7 +2117,7 @@ export function CommitGraphCanvas({
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const y = my + scroll.scrollTop;
-      const row = Math.floor((y - GRAPH_PADDING_TOP) / ROW_HEIGHT);
+      const row = Math.floor((y - GRAPH_PADDING_TOP) / dm.rowHeight);
 
       const newHovered = row >= 0 && row < totalRows ? row : null;
       if (newHovered !== hoveredRowRef.current) {
@@ -2116,61 +2171,22 @@ export function CommitGraphCanvas({
         }
       }
 
-      // Hover tooltips: body text and avatar
-      const overBody = bodyHitAreasRef.current.find(
-        (b) => mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height,
-      );
-      const overAvatar = !overBody
-        ? avatarHitAreasRef.current.find(
-            (a) => Math.hypot(mx - a.cx, my - a.cy) <= NODE_RADIUS,
-          )
-        : undefined;
-      const overAuthor = !overBody && !overAvatar
-        ? authorHitAreasRef.current.find(
-            (a) => mx >= a.x && mx <= a.x + a.width && my >= a.y && my <= a.y + a.height,
+      // Unified row tooltip — one hover target per commit row, surfacing the
+      // truncated subject, body, and any column not fully visible. Suppressed
+      // while a badge is hovered so it doesn't fight the ref dropdown.
+      const overRow = !overBadgeArea
+        ? rowTooltipAreasRef.current.find(
+            (r) => mx >= r.x && mx <= r.x + r.width && my >= r.y && my <= r.y + r.height,
           )
         : undefined;
 
-      if (overBody) {
-        if (!canvasHover || canvasHover.row !== overBody.row || canvasHover.type !== "body") {
+      if (overRow) {
+        if (!canvasHover || canvasHover.row !== overRow.row) {
           if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          const { subject, body, author, date, sha } = overRow;
+          const hoverRow = overRow.row;
           hoverTimerRef.current = setTimeout(() => {
-            setCanvasHover({
-              type: "body",
-              text: overBody.body,
-              x: e.clientX,
-              y: e.clientY,
-              row: overBody.row,
-            });
-          }, 300);
-        }
-      } else if (overAvatar) {
-        const commit = commits[overAvatar.commitIdx];
-        if (commit && (!canvasHover || canvasHover.row !== overAvatar.row || canvasHover.type !== "avatar")) {
-          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-          const date = new Date(commit.timestamp * 1000);
-          const dateStr = intlDateFull.format(date);
-          hoverTimerRef.current = setTimeout(() => {
-            setCanvasHover({
-              type: "avatar",
-              text: `${commit.author_name}\n${commit.author_email}\n${dateStr}`,
-              x: e.clientX,
-              y: e.clientY,
-              row: overAvatar.row,
-            });
-          }, 300);
-        }
-      } else if (overAuthor) {
-        if (!canvasHover || canvasHover.row !== overAuthor.row || canvasHover.type !== "author") {
-          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-          hoverTimerRef.current = setTimeout(() => {
-            setCanvasHover({
-              type: "author",
-              text: overAuthor.tooltip,
-              x: e.clientX,
-              y: e.clientY,
-              row: overAuthor.row,
-            });
+            setCanvasHover({ x: e.clientX, y: e.clientY, row: hoverRow, subject, body, author, date, sha });
           }, 300);
         }
       } else {
@@ -2178,7 +2194,7 @@ export function CommitGraphCanvas({
         if (canvasHover) setCanvasHover(null);
       }
     },
-    [totalRows, canvasHover, commits, hoverDropdown],
+    [canvasHover, hoverDropdown, totalRows, dm],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -2232,7 +2248,7 @@ export function CommitGraphCanvas({
 
       // Fall back to commit context menu
       if (!onCommitContextMenu) return;
-      const visRow = Math.floor((clickY - GRAPH_PADDING_TOP) / ROW_HEIGHT);
+      const visRow = Math.floor((clickY - GRAPH_PADDING_TOP) / dm.rowHeight);
       const commitIdx = visRow - rowOffset;
 
       if (commitIdx >= 0 && commitIdx < commits.length) {
@@ -2240,7 +2256,7 @@ export function CommitGraphCanvas({
         onCommitContextMenu(commits[commitIdx].id, e.clientX, e.clientY);
       }
     },
-    [commits, rowOffset, onCommitContextMenu, onStashContextMenu],
+    [commits, rowOffset, onCommitContextMenu, onStashContextMenu, dm],
   );
 
   useEffect(() => {
@@ -2291,18 +2307,78 @@ export function CommitGraphCanvas({
         className="pointer-events-none absolute inset-0"
       />
 
-      {/* Change 6: Canvas tooltip overlay for commit body */}
-      {canvasHover && (
-        <div
-          className="pointer-events-none fixed z-50 max-w-sm rounded-md border border-border bg-card px-3 py-1.5 text-xs text-foreground shadow-lg"
-          style={{
-            left: canvasHover.x + 12,
-            top: canvasHover.y + 12,
-          }}
-        >
-          <p className="whitespace-pre-wrap">{canvasHover.text}</p>
-        </div>
-      )}
+      {/* Unified commit-row tooltip — truncated subject, body, and any column
+          not visible in the row (toggled off, collapsed, or clipped). */}
+      {canvasHover && (() => {
+        const { subject, body, author, date, sha } = canvasHover;
+        const hasMeta = !!(author || date || sha);
+        const hasText = !!(subject || body);
+        return (
+          <div
+            // Key by row so moving to another commit remounts the tooltip
+            // (replaying animate-enter-up) instead of morphing in place.
+            key={canvasHover.row}
+            className="pointer-events-none fixed z-50 w-max max-w-xs rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground shadow-lg animate-enter-up"
+            style={{ left: canvasHover.x + 12, top: canvasHover.y + 12 }}
+          >
+            {hasText && (
+              <div className="flex flex-col gap-1">
+                {subject && (() => {
+                  const parsed = parseCommitType(subject);
+                  if (!parsed) {
+                    return <p className="font-medium leading-snug">{subject}</p>;
+                  }
+                  const meta = COMMIT_TYPE_META[parsed.type];
+                  const TypeIcon = COMMIT_TYPE_ICONS[parsed.type];
+                  return (
+                    <p className="flex items-baseline gap-1.5 font-medium leading-snug">
+                      <TypeIcon
+                        className="h-3 w-3 shrink-0 translate-y-0.5"
+                        style={{ color: meta.color }}
+                        aria-hidden
+                      />
+                      <span>
+                        <span style={{ color: meta.color }}>{parsed.prefix}</span>
+                        {subject.slice(parsed.prefix.length)}
+                      </span>
+                    </p>
+                  );
+                })()}
+                {body && (
+                  <p className="whitespace-pre-wrap leading-snug text-muted-foreground">{body}</p>
+                )}
+              </div>
+            )}
+            {hasMeta && (
+              <div
+                className={`flex flex-col gap-1.5 ${hasText ? "mt-2 border-t border-border pt-2" : ""}`}
+              >
+                {author && (
+                  <div className="flex items-center gap-2">
+                    <AuthorAvatar name={author.name} email={author.email} size={18} />
+                    <span className="shrink-0 text-foreground">{author.name}</span>
+                    {author.email && (
+                      <span className="min-w-0 truncate text-muted-foreground">{author.email}</span>
+                    )}
+                  </div>
+                )}
+                {date && (
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span>{date}</span>
+                  </div>
+                )}
+                {sha && (
+                  <div className="flex items-center gap-2">
+                    <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span>{sha}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Hover dropdown listing every ref on a multi-ref commit (#39). */}
       {hoverDropdown && (
@@ -2327,6 +2403,7 @@ export function CommitGraphCanvas({
             <DropdownItemRow
               key={`${it.kind}:${it.refName}:${idx}`}
               item={it}
+              labelHeight={dm.labelHeight}
               onSingleClick={(e) => {
                 // Don't close on single click — the browser may still be in the
                 // middle of dispatching a double-click. Action fires either way.
@@ -2379,11 +2456,13 @@ export function CommitGraphCanvas({
  *  left, name, then local/remote indicator icons on the right. */
 function DropdownItemRow({
   item,
+  labelHeight,
   onSingleClick,
   onDoubleClick,
   onContextMenu,
 }: {
   item: DropdownRef;
+  labelHeight: number;
   onSingleClick: (e: React.MouseEvent) => void;
   onDoubleClick: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -2399,7 +2478,7 @@ function DropdownItemRow({
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       className="flex cursor-pointer select-none items-center gap-1.5 px-2 text-xs transition-colors hover:bg-secondary"
-      style={{ height: LABEL_HEIGHT }}
+      style={{ height: labelHeight }}
     >
       {item.isHead && (
         <Check className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />

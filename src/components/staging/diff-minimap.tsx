@@ -80,7 +80,7 @@ export function DiffMinimap({ diff, scrollRef, expandCtx }: DiffMinimapProps) {
         return (
           <div
             key={i}
-            className={`absolute rounded-sm ${
+            className={`absolute rounded-xs ${
               region.type === "add" ? "bg-[var(--diff-added-line-bg)]" : "bg-[var(--diff-removed-line-bg)]"
             }`}
             style={{

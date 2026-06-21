@@ -6,6 +6,7 @@ import {
   FolderTree,
   List,
   Tag,
+  GitCommitHorizontal,
   Trash2,
   Folder,
   FolderOpen,
@@ -14,20 +15,9 @@ import {
   Pencil,
   ArrowRightLeft,
   HelpCircle,
-  Sparkles,
-  Bug,
-  BookText,
-  Palette,
-  Hammer,
-  Zap,
-  FlaskConical,
-  Package,
-  Workflow,
-  Wrench,
-  Undo2,
-  type LucideIcon,
 } from "lucide-react";
-import { parseCommitType, COMMIT_TYPE_META, type CommitType } from "@/lib/commit-type";
+import { parseCommitType, COMMIT_TYPE_META } from "@/lib/commit-type";
+import { COMMIT_TYPE_ICONS } from "@/lib/commit-type-icons";
 import { FileIcon } from "@/components/ui/file-icon";
 import {
   Tooltip,
@@ -35,8 +25,9 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
-import { useEscapeKey } from "@/hooks/use-escape-key";
+import { ConfirmDialog } from "@/components/ui/modal";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { SectionHeader } from "@/components/ui/section-header";
 import { FileList } from "@/components/staging/file-list";
 import {
   buildFileTree,
@@ -46,23 +37,10 @@ import {
 import type { FileTreeNode } from "@/lib/file-tree";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { IconButton } from "@/components/ui/icon-button";
 import { CommitBox } from "@/components/staging/commit-box";
 import { AuthorAvatar } from "@/components/ui/avatar";
 import type { FileStatus } from "@/types/git";
-
-const COMMIT_TYPE_ICONS: Record<CommitType, LucideIcon> = {
-  feat: Sparkles,
-  fix: Bug,
-  docs: BookText,
-  style: Palette,
-  refactor: Hammer,
-  perf: Zap,
-  test: FlaskConical,
-  build: Package,
-  ci: Workflow,
-  chore: Wrench,
-  revert: Undo2,
-};
 
 export function DetailPanel() {
   const commits = useRepoStore((s) => s.commits);
@@ -82,7 +60,6 @@ export function DetailPanel() {
   const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
 
   const [showDiscardAll, setShowDiscardAll] = useState(false);
-  useEscapeKey(showDiscardAll, () => setShowDiscardAll(false));
 
   const operationInProgress = conflictState?.in_progress ?? false;
 
@@ -121,102 +98,90 @@ export function DetailPanel() {
 
   if (fileStatuses.length > 0 || operationInProgress) {
     return (
-      <div className="relative flex h-full flex-col bg-sidebar-background">
-        <div className="shrink-0">
-          <div className="flex h-10 items-center px-4">
-            <h2 className="text-label font-semibold text-muted-foreground uppercase tracking-[0.06em]">
-              Changes
-            </h2>
-            <span className="ml-2 text-xs text-faint overflow-hidden min-w-0 shrink-[999]">
-              {fileStatuses.length}
-            </span>
-            {(() => {
-              const totals = fileStatuses.reduce(
-                (acc, f) => ({
-                  add: acc.add + (f.additions ?? 0),
-                  del: acc.del + (f.deletions ?? 0),
-                }),
-                { add: 0, del: 0 },
-              );
-              return (totals.add > 0 || totals.del > 0) ? (
-                <span className="ml-2 flex items-center gap-1.5 text-xs overflow-hidden min-w-0 shrink-[999]">
-                  {totals.add > 0 && <span className="text-green-400">+{totals.add}</span>}
-                  {totals.del > 0 && <span className="text-red-400">-{totals.del}</span>}
-                </span>
-              ) : null;
-            })()}
-            <div className="ml-auto flex items-center gap-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setFileViewMode(fileViewMode === "flat" ? "tree" : "flat")}
-                    className="rounded p-1 text-faint hover:text-muted-foreground transition-colors"
-                  >
-                    {fileViewMode === "flat" ? (
-                      <FolderTree className="h-3.5 w-3.5" />
-                    ) : (
-                      <List className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {fileViewMode === "flat" ? "Tree view" : "Flat view"}
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setShowDiscardAll(true)}
-                    className="rounded p-1 text-faint hover:bg-destructive/20 hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>Discard all changes</TooltipContent>
-              </Tooltip>
-            </div>
+      <div className="relative flex h-full flex-col bg-background">
+        {/* Extended topbar — continues the commit-graph header across the detail column */}
+        <div className="flex h-6 shrink-0 items-center gap-2 border-border bg-background pl-3 pr-2">
+          <span className="text-caption font-semibold tracking-widest text-faint">
+            Changes
+          </span>
+          <span className="text-xs text-faint">{fileStatuses.length}</span>
+          {(() => {
+            const totals = fileStatuses.reduce(
+              (acc, f) => ({
+                add: acc.add + (f.additions ?? 0),
+                del: acc.del + (f.deletions ?? 0),
+              }),
+              { add: 0, del: 0 },
+            );
+            return (totals.add > 0 || totals.del > 0) ? (
+              <span className="flex items-center gap-1.5 text-xs">
+                {totals.add > 0 && <span className="text-green-400">+{totals.add}</span>}
+                {totals.del > 0 && <span className="text-red-400">-{totals.del}</span>}
+              </span>
+            ) : null;
+          })()}
+          <div className="ml-auto flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton
+                  variant="faint"
+                  onClick={() => setFileViewMode(fileViewMode === "flat" ? "tree" : "flat")}
+                >
+                  {fileViewMode === "flat" ? (
+                    <FolderTree className="h-3.5 w-3.5" />
+                  ) : (
+                    <List className="h-3.5 w-3.5" />
+                  )}
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>
+                {fileViewMode === "flat" ? "Tree view" : "Flat view"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton
+                  variant="faint"
+                  onClick={() => setShowDiscardAll(true)}
+                  className="hover:bg-destructive/20 hover:text-red-400"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>Discard all changes</TooltipContent>
+            </Tooltip>
           </div>
-          <div className="mx-3 my-1 border-t border-border" />
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto">
+
+        {/* Section cards (Unstaged / Staged) + commit box */}
+        <div className="flex min-h-0 flex-1 flex-col gap-2 pt-1 pr-1 pb-1 pl-1">
           <FileList />
+          <div className="shrink-0 rounded-md border border-border bg-card">
+            <CommitBox />
+          </div>
         </div>
-        <CommitBox />
 
         {/* Discard all confirmation */}
         {showDiscardAll && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="rounded-lg border border-border bg-card p-4 shadow-lg max-w-xs">
-              <p className="text-sm text-foreground mb-1">Discard all changes?</p>
-              <p className="text-xs text-muted-foreground mb-4">
-                This will revert all {fileStatuses.length} file{fileStatuses.length !== 1 ? "s" : ""} to their last committed state. This cannot be undone.
-              </p>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setShowDiscardAll(false)}
-                  className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    discardAll();
-                    setShowDiscardAll(false);
-                  }}
-                  className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
-                >
-                  Discard All
-                </button>
-              </div>
-            </div>
-          </div>
+          <ConfirmDialog
+            open
+            onClose={() => setShowDiscardAll(false)}
+            title="Discard all changes?"
+            description={`This will revert all ${fileStatuses.length} file${fileStatuses.length !== 1 ? "s" : ""} to their last committed state. This cannot be undone.`}
+            confirmLabel="Discard All"
+            destructive
+            onConfirm={() => {
+              discardAll();
+              setShowDiscardAll(false);
+            }}
+          />
         )}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center bg-sidebar-background p-4">
+    <div className="flex h-full flex-col items-center justify-center bg-background p-4">
       <p className="text-sm text-muted-foreground">
         Select a commit to view details
       </p>
@@ -227,14 +192,14 @@ export function DetailPanel() {
 function FileListSkeleton() {
   return (
     <div
-      className="pb-3 space-y-1 px-4"
+      className="pb-3 space-y-1 px-2"
       style={{ animation: "skeleton-fade-in 0.3s ease both" }}
     >
       {[0.92, 0.68, 0.80, 0.55, 0.74].map((w, i) => (
         <div key={i} className="flex items-center gap-1.5 py-1.5 animate-pulse">
-          <div className="h-3 w-3 rounded bg-secondary shrink-0" />
-          <div className="h-3 w-4 rounded bg-secondary shrink-0" />
-          <div className="h-3 rounded bg-secondary" style={{ width: `${w * 100}%` }} />
+          <div className="h-3 w-3 rounded-md bg-secondary shrink-0" />
+          <div className="h-3 w-4 rounded-md bg-secondary shrink-0" />
+          <div className="h-3 rounded-md bg-secondary" style={{ width: `${w * 100}%` }} />
         </div>
       ))}
     </div>
@@ -285,7 +250,7 @@ function CommitDetailView({
   });
 
   return (
-    <div className="flex h-full flex-col bg-sidebar-background overflow-y-auto">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto bg-background py-2 pr-2 pl-2">
       {/* Commit section */}
       <CollapsibleSection
         label="Commit"
@@ -293,32 +258,16 @@ function CommitDetailView({
         onToggle={() => setCommitOpen(!commitOpen)}
       >
         <div className="px-4 pb-4">
-          {/* SHA + tag badges */}
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <span className="text-xs text-muted-foreground">
-              {commit.short_id}
-            </span>
-            {commitTags.map((t) => (
-              <span
-                key={t.name}
-                className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground"
-              >
-                <Tag className="h-2.5 w-2.5" />
-                {t.name}
-              </span>
-            ))}
-          </div>
-
-          {/* Message — tint the conventional-commit type prefix + leading icon */}
+          {/* Message — hero. Tint the conventional-commit type prefix + leading icon */}
           {(() => {
             const parsed = parseCommitType(commit.message);
             if (!parsed) {
-              return <p className="text-sm text-foreground mb-1">{commit.message}</p>;
+              return <p className="text-sm text-foreground">{commit.message}</p>;
             }
             const meta = COMMIT_TYPE_META[parsed.type];
             const TypeIcon = COMMIT_TYPE_ICONS[parsed.type];
             return (
-              <p className="text-sm text-foreground mb-1 flex items-baseline gap-1.5">
+              <p className="text-sm text-foreground flex items-baseline gap-1.5">
                 <TypeIcon
                   className="h-3 w-3 shrink-0 translate-y-0.5"
                   style={{ color: meta.color }}
@@ -339,7 +288,7 @@ function CommitDetailView({
             const bodyLines = commit.body.split("\n").length;
             const needsClamp = bodyLines > 10;
             return (
-              <div className="mb-2">
+              <div className="mt-1.5">
                 <p className={`text-xs text-dim whitespace-pre-wrap leading-relaxed ${!bodyExpanded && needsClamp ? "line-clamp-[10]" : ""}`}>
                   {commit.body}
                 </p>
@@ -355,31 +304,39 @@ function CommitDetailView({
             );
           })()}
 
-          {/* Authors — inline row */}
-          <p className="text-label font-medium text-faint uppercase tracking-[0.08em] mt-3 mb-1">
-            {commit.co_authors.length > 0 ? "Authors" : "Author"}
-          </p>
-          <div className="flex flex-wrap gap-3">
+          {/* Divider — separates "what changed" from provenance */}
+          <div className="-mx-4 my-3 h-px bg-border" />
+
+          {/* Identity — author + co-authors, each as avatar + name + subline */}
+          <div className="flex flex-col gap-2.5">
             {/* Primary author */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center gap-1.5 cursor-default">
-                  <AuthorAvatar name={commit.author_name} email={commit.author_email} size={20} />
-                  <p className="text-xs text-foreground">
-                    {commit.author_name}
-                  </p>
+                <div className="flex items-center gap-2 cursor-default">
+                  <AuthorAvatar name={commit.author_name} email={commit.author_email} size={26} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-foreground leading-tight truncate">
+                      {commit.author_name}
+                    </p>
+                    <p className="text-label text-dim leading-tight truncate">
+                      authored {dateStr}
+                    </p>
+                  </div>
                 </div>
               </TooltipTrigger>
               <TooltipContent>{commit.author_email}</TooltipContent>
             </Tooltip>
 
-            {/* Co-authors inline */}
+            {/* Co-authors */}
             {commit.co_authors.map((ca, i) => (
               <Tooltip key={i}>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 cursor-default">
-                    <AuthorAvatar name={ca.name} email={ca.email} size={20} />
-                    <p className="text-xs text-foreground">{ca.name}</p>
+                  <div className="flex items-center gap-2 cursor-default">
+                    <AuthorAvatar name={ca.name} email={ca.email} size={26} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-foreground leading-tight truncate">{ca.name}</p>
+                      <p className="text-label text-dim leading-tight">co-authored</p>
+                    </div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>{ca.email || ca.name}</TooltipContent>
@@ -387,10 +344,22 @@ function CommitDetailView({
             ))}
           </div>
 
-          {/* Date */}
-          <p className="text-xs text-dim mt-3">
-            Authored {dateStr}
-          </p>
+          {/* Refs — SHA + tag chips, unified treatment */}
+          <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+            <span className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary px-2 py-0.5 text-xs text-muted-foreground">
+              <GitCommitHorizontal className="h-3 w-3 shrink-0 text-faint" />
+              {commit.short_id}
+            </span>
+            {commitTags.map((t) => (
+              <span
+                key={t.name}
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary px-2 py-0.5 text-xs text-muted-foreground"
+              >
+                <Tag className="h-2.5 w-2.5 shrink-0 text-faint" />
+                {t.name}
+              </span>
+            ))}
+          </div>
         </div>
       </CollapsibleSection>
 
@@ -403,16 +372,18 @@ function CommitDetailView({
           action={
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <IconButton
+                  size="sm"
+                  variant="faint"
                   onClick={() => setFileViewMode(viewMode === "flat" ? "tree" : "flat")}
-                  className={`rounded p-0.5 text-faint hover:text-muted-foreground transition-colors ${commitFilesLoading ? "invisible" : ""}`}
+                  className={commitFilesLoading ? "invisible" : undefined}
                 >
                   {viewMode === "flat" ? (
                     <FolderTree className="h-3 w-3" />
                   ) : (
                     <List className="h-3 w-3" />
                   )}
-                </button>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>
                 {viewMode === "flat" ? "Tree view" : "Flat view"}
@@ -430,7 +401,7 @@ function CommitDetailView({
               onFileClick={onFileClick}
             />
           ) : (
-            <div className="pb-3">
+            <div className="px-2 pb-3">
               {commitFiles.map((file) => (
                 <CommitFileRow
                   key={file.path}
@@ -468,7 +439,7 @@ function StashDetailView({
   const fileQuery = useRepoStore((s) => s.filterQuery).trim().toLowerCase();
 
   return (
-    <div className="flex h-full flex-col bg-sidebar-background overflow-y-auto">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto bg-background py-2 pr-2 pl-2">
       {/* Stash info */}
       <CollapsibleSection
         label="Stash"
@@ -497,16 +468,18 @@ function StashDetailView({
           action={
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <IconButton
+                  size="sm"
+                  variant="faint"
                   onClick={() => setFileViewMode(viewMode === "flat" ? "tree" : "flat")}
-                  className={`rounded p-0.5 text-faint hover:text-muted-foreground transition-colors ${stashFilesLoading ? "invisible" : ""}`}
+                  className={stashFilesLoading ? "invisible" : undefined}
                 >
                   {viewMode === "flat" ? (
                     <FolderTree className="h-3 w-3" />
                   ) : (
                     <List className="h-3 w-3" />
                   )}
-                </button>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>
                 {viewMode === "flat" ? "Tree view" : "Flat view"}
@@ -524,7 +497,7 @@ function StashDetailView({
               onFileClick={onFileClick}
             />
           ) : (
-            <div className="pb-3">
+            <div className="px-2 pb-3">
               {stashFiles.map((file) => (
                 <CommitFileRow
                   key={file.path}
@@ -573,23 +546,15 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   return (
-    <div>
-      <div className="flex items-center px-4 py-2">
-        <button
-          onClick={onToggle}
-          className="flex items-center gap-1.5 text-label font-semibold text-muted-foreground uppercase tracking-[0.06em] hover:text-foreground transition-colors"
-        >
-          {isOpen ? (
-            <ChevronDown className="h-3 w-3" />
-          ) : (
-            <ChevronRight className="h-3 w-3" />
-          )}
-          {label}
-        </button>
-        {action && <div className="ml-auto">{action}</div>}
-      </div>
+    <div className="overflow-hidden rounded-md border border-border bg-card">
+      <SectionHeader
+        label={label}
+        isOpen={isOpen}
+        onToggle={onToggle}
+        className="px-4 py-2"
+        action={action}
+      />
       {isOpen && children}
-      <div className="mx-3 my-1 border-t border-border" />
     </div>
   );
 }
@@ -645,8 +610,8 @@ function CommitFileRow({
     <button
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors",
-        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        "flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 my-1 text-left transition-colors",
+        isSelected ? "bg-card-hover text-accent-foreground" : "hover:bg-card-hover",
         dimmed && FILTER_DIM_CLASS,
       )}
     >
@@ -690,7 +655,7 @@ function CommitFileTreeView({
   const tree = useMemo(() => buildFileTree(files), [files]);
 
   return (
-    <div className="pb-3">
+    <div className="px-2 pb-3">
       {tree.map((node) => (
         <CommitTreeNode
           key={node.path}
@@ -730,7 +695,7 @@ function CommitTreeNode({
         <button
           onClick={() => setExpanded(!expanded)}
           className={cn(
-            "relative flex w-full items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors",
+            "relative flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 my-1 text-xs text-muted-foreground hover:bg-card-hover hover:text-foreground transition-colors",
             dimmed && FILTER_DIM_CLASS,
           )}
           style={{ paddingLeft: `${16 + indent}px` }}
@@ -738,7 +703,7 @@ function CommitTreeNode({
           {Array.from({ length: depth }, (_, i) => (
             <div
               key={i}
-              className="absolute top-0 bottom-0 w-px bg-border"
+              className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
               style={{ left: `${22 + i * 16}px` }}
             />
           ))}
@@ -779,8 +744,8 @@ function CommitTreeNode({
     <button
       onClick={() => onFileClick(file.path)}
       className={cn(
-        "relative flex w-full items-center gap-1.5 px-4 py-1.5 text-left transition-colors",
-        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
+        "relative flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 my-1 text-left transition-colors",
+        isSelected ? "bg-card-hover text-accent-foreground" : "hover:bg-card-hover",
         dimmed && FILTER_DIM_CLASS,
       )}
       style={{ paddingLeft: `${16 + indent + 16}px` }}
@@ -788,7 +753,7 @@ function CommitTreeNode({
       {Array.from({ length: depth }, (_, i) => (
         <div
           key={i}
-          className="absolute top-0 bottom-0 w-px bg-border"
+          className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
           style={{ left: `${22 + i * 16}px` }}
         />
       ))}

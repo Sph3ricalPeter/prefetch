@@ -14,7 +14,8 @@ Dark-mode only. Monochrome-first with a single accent.
 |---|---|---|---|
 | `--bg` | `#09090b` | `240 6% 3.9%` | Page / app background |
 | `--bg-subtle` | `#0c0c0e` | `240 8% 4.3%` | Subtle depth layer |
-| `--surface` | `#111113` | `240 7% 7%` | Cards, panels, inputs |
+| `--field` | `#0d0d0f` | `240 7% 5%` | Text-input fill on cards — gently inset below `--surface` |
+| `--surface` | `#111113` | `240 7% 7%` | Cards, panels |
 | `--surface-hover` | `#18181b` | `240 6% 10%` | Hover state for surfaces |
 
 ### Borders
@@ -88,8 +89,8 @@ Four levels. Custom tokens defined in `src/index.css` via `@theme inline` using 
 
 | Token | Size | Tailwind class | Line-height | Role |
 |-------|------|---------------|-------------|------|
-| caption | 9px | `text-caption` | 14px | **UPPERCASE-only**: tracked column headers, short badge labels, counters |
-| label | 11px | `text-label` | 16px | Smallest readable size — form labels, descriptions, hint text, emails |
+| caption | 9px | `text-caption` | 14px | **Dense UPPERCASE-only**: collapsible `SectionHeader` rows, short keyword badges/counters, dense dropdown sub-headers |
+| label | 11px | `text-label` | 16px | Smallest readable size — lowercase form labels, hints, emails, **and standalone UPPERCASE field/group labels** (e.g. "Authors", "Profile", "Changes") |
 | body | 12px | `text-xs` (built-in) | 16px | Default everything — lists, buttons, inputs |
 | title | 14px | `text-sm` (built-in) | 20px | Commit messages, dialog headings |
 
@@ -99,7 +100,9 @@ Use `font-mono` (JetBrains Mono) **only** for: diff viewer, code/config displays
 
 **Rules:**
 - Never use arbitrary font sizes (`text-[Npx]`). Pick from the four levels above.
-- **`text-caption` (9px) is reserved for uppercase tracked text and short badge keywords only** (e.g. "SHA", "DATE", "LFS", "default", character counters). Never use it for readable lowercase text — use `text-label` (11px) as the minimum readable size.
+- **UPPERCASE tracked labels split by density, not just by case:**
+  - `text-caption` (9px) — the collapsible `SectionHeader` component, short keyword badges (e.g. "LFS", "default"), counters, and dense dropdown sub-headers. Never use it for readable lowercase text.
+  - `text-label` (11px) — standalone uppercase field/group labels living in body content (e.g. "Authors" in the commit detail card, "Profile"/"Providers", "Changes", settings `h2`/`h3` group titles). This is also the minimum readable size for lowercase labels, hints, and emails.
 - Canvas font sizes must stay in sync with the CSS tokens.
 - `text-xs` and `text-sm` are Tailwind built-ins — do not redefine them.
 
@@ -126,6 +129,25 @@ Not a strict 4/8px grid, but consistent patterns:
 | Gap between cards | `1px` (border trick) | Bento grid |
 | Button padding | `10px 20px` (primary), `9px 18px` (secondary) | CTAs |
 | Element spacing within cards | `10px` gap | Icon → title → description |
+
+---
+
+## Radius Scale (App)
+
+All in-app border radii derive from one token — `--radius: 0.5rem` (8px) in `src/index.css`. The `@theme inline` block derives the scale from it. **Never** use bare `rounded` (a Tailwind v4 alias hardcoded to 4px that ignores `--radius`) or arbitrary values like `rounded-[3px]`. An ESLint rule (`no-restricted-syntax`) enforces this. Use only these steps:
+
+| Token | Value | Use for |
+|---|---|---|
+| `rounded-xs` | 3px | Micro / decorative only: inline diff word-highlights, search-match highlight, checkboxes, theme-preview skeleton bars, tiny (≤14px) icon overlays, scrollbar thumb |
+| `rounded-md` | 6px | **Default** — buttons, inputs, menu items, list rows, badges/chips, cards |
+| `rounded-lg` | 8px | Containers — dialogs, popovers, toasts, panels |
+| `rounded-xl` | 12px | The floating app-shell card only |
+| `rounded-full` | — | Circles & capsule pills — avatars, status dots |
+
+**Rules:**
+- `rounded-md` is the default for anything that reads as a control, row, chip, badge, or card. When unsure, use `rounded-md`.
+- The 4px tier is retired: `rounded-sm` is kept as a token for shadcn primitives only — don't use it directly, pick `rounded-xs` or `rounded-md`.
+- Canvas equivalents (commit graph): `LABEL_RADIUS` and `ROW_RADIUS` mirror `rounded-md` (6px). Keep them in sync with the token by hand — canvas can't read CSS vars at draw time.
 
 ---
 

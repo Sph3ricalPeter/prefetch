@@ -411,7 +411,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
                       <button
                         onClick={() => handleApplyHunk(hi)}
                         title={staged ? "Unstage this hunk" : "Stage this hunk"}
-                        className={`flex items-center justify-center w-5 h-5 rounded transition-colors mr-1 shrink-0 ${
+                        className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors mr-1 shrink-0 ${
                           staged
                             ? "text-orange-400 hover:bg-orange-500/20"
                             : "text-green-400 hover:bg-green-500/20"
@@ -426,7 +426,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
                       className="flex items-center justify-center w-5 h-5 mr-2 shrink-0"
                     >
                       <span
-                        className={`flex items-center justify-center w-3.5 h-3.5 rounded-[3px] border transition-colors ${
+                        className={`flex items-center justify-center w-3.5 h-3.5 rounded-xs border transition-colors ${
                           allHunkSelected
                             ? "bg-blue-500 border-blue-400"
                             : someHunkSelected
@@ -574,7 +574,7 @@ function DiffLineImpl({
       <span className="w-5 shrink-0 flex items-center justify-center select-none">
         {isChangeLine && (
           <span
-            className={`flex items-center justify-center w-3.5 h-3.5 rounded-[3px] border transition-colors ${
+            className={`flex items-center justify-center w-3.5 h-3.5 rounded-xs border transition-colors ${
               isSelected
                 ? "bg-blue-500 border-blue-400"
                 : "border-muted-foreground/20 group-hover/line:border-muted-foreground/50"
@@ -809,7 +809,7 @@ function SideBySideCellImpl({
           {isChangeLine && (
             <span className="w-5 shrink-0 flex items-center justify-center select-none">
               <span
-                className={`flex items-center justify-center w-3 h-3 rounded-[3px] border transition-colors ${
+                className={`flex items-center justify-center w-3 h-3 rounded-xs border transition-colors ${
                   isSelected
                     ? "bg-blue-500 border-blue-400"
                     : "border-muted-foreground/20 group-hover/line:border-muted-foreground/50"
@@ -936,7 +936,7 @@ function ExpandSeparator({ remainingCount, onExpandAll }: ExpandSeparatorProps) 
       <button
         onClick={onExpandAll}
         title="Expand all hidden lines"
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption hover:bg-accent hover:text-foreground transition-colors"
+        className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-caption hover:bg-accent hover:text-foreground transition-colors"
       >
         <UnfoldVertical className="w-3 h-3" />
         <span>{remainingCount} hidden lines</span>

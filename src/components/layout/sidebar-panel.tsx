@@ -25,21 +25,27 @@ export function SidebarPanel() {
 
   if (!repoPath) {
     return (
-      <div className="flex h-full flex-col items-center justify-center bg-sidebar-background">
+      <div className="flex h-full flex-col items-center justify-center bg-shell">
         <p className="text-xs text-muted-foreground">No repo open</p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col bg-sidebar-background">
+    <div className="flex h-full flex-col bg-shell">
       {/* Filter input */}
-      <div className="px-3 pt-2 pb-1.5">
+      <div className="pr-2 pt-0 pb-2">
         <div className="relative">
           <input
             id="global-filter-input"
             type="text"
             placeholder="Filter..."
+            // Suppress the WebView's autocomplete/autofill history dropdown and
+            // spellcheck squiggle — this is an in-app filter, not a form field.
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -68,24 +74,24 @@ export function SidebarPanel() {
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto pr-2">
         {/* Branches */}
         <BranchList />
 
         {/* Divider */}
-        <div className="mx-3 my-1 border-t border-border" />
+        <div className="my-1 border-t border-border" />
 
         {/* CI Pipelines */}
         <CiList />
 
         {/* Divider */}
-        <div className="mx-3 my-1 border-t border-border" />
+        <div className="my-1 border-t border-border" />
 
         {/* Stash */}
         <StashList />
 
         {/* Divider */}
-        <div className="mx-3 my-1 border-t border-border" />
+        <div className="my-1 border-t border-border" />
 
         {/* Tags */}
         <TagList />

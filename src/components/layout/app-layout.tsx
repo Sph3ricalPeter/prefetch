@@ -8,10 +8,11 @@ import { StatusBar } from "./status-bar";
 import { SettingsPage, type SettingsTarget } from "@/components/ui/settings-page";
 import { CloneDialog } from "@/components/ui/clone-dialog";
 import { getUiState, setUiState } from "@/lib/database";
+import { useRepoStore } from "@/stores/repo-store";
 const SIDEBAR_DEFAULT = 300;
 const DETAIL_DEFAULT = 400;
 const SIDEBAR_MIN = 140;
-const SIDEBAR_MAX = 370;
+const SIDEBAR_MAX = 400;
 const DETAIL_MIN = 200;
 const DETAIL_MAX = 580;
 const CENTER_MIN = 120;
@@ -57,6 +58,14 @@ export function AppLayout() {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const [detailWidth, setDetailWidth] = useState(DETAIL_DEFAULT);
+
+  // The right detail column only makes sense for the commit graph, diffs, and
+  // conflict resolution. When the CI job log takes over the center pane it
+  // spans the whole card, so the detail column (and its handle) are dropped.
+  // Mirrors the `showCiLog` condition in graph-panel.tsx.
+  const showCiLog = useRepoStore(
+    (s) => s.ciSelectedJobId != null && s.activeDiff === null && s.largeDiffPending === null,
+  );
 
   // ── Apply widths to both React state and the DOM refs ──────────────
   const applyWidths = useCallback((sb: number, dt: number) => {
@@ -144,7 +153,7 @@ export function AppLayout() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground select-none">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-shell text-foreground select-none">
       {/* Custom titlebar — replaces native window chrome */}
       <Titlebar settingsOpen={!!settingsTarget} onOpenClone={() => setCloneOpen(true)} onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />
 
@@ -155,36 +164,52 @@ export function AppLayout() {
         </div>
       ) : (
         <>
-          <div ref={containerRef} className="flex flex-1 min-h-0 overflow-hidden">
-            {/* Left sidebar — branches (flex-shrink default: shrinks when window narrows) */}
-            <div ref={sidebarRef} style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN }}>
+          <div ref={containerRef} className="flex flex-1 min-h-0 overflow-hidden pt-1 pr-2 pl-2 pb-1 bg-shell">
+            {/* Left sidebar — blended into the shell, no divider (flex-shrink default: shrinks when window narrows) */}
+            <div ref={sidebarRef} className="mr-1" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN }}>
               <SidebarPanel />
             </div>
 
             <ResizeHandle
               side="left"
+              ghost
               panelRef={sidebarRef}
               minWidth={SIDEBAR_MIN}
               maxWidth={SIDEBAR_MAX}
               onResizeEnd={saveSidebarWidth}
             />
 
-            {/* Center — commit graph, diff viewer, or CI log viewer */}
-            <div className="grow shrink-0 basis-0 min-w-[120px]">
-              <GraphPanel />
-            </div>
+            {/* Floating card — commit graph (center) + detail (right) as two full-height columns.
+                `basis-0` is load-bearing: without it the card's preferred width is its
+                max-content, which balloons in the side-by-side diff (two columns of
+                unwrapped code) and overflows the outer flex, squeezing the sidebar. With
+                basis-0 the card grows purely from free space, so center content can't
+                push the side panels around. */}
+            <div className="ml-px flex grow basis-0 min-w-0 overflow-hidden rounded-xl border border-border bg-background">
+              {/* Center — commit graph, diff viewer, or CI log viewer */}
+              <div className="grow shrink-0 basis-0 min-w-[120px]">
+                <GraphPanel />
+              </div>
 
-            <ResizeHandle
-              side="right"
-              panelRef={detailRef}
-              minWidth={DETAIL_MIN}
-              maxWidth={DETAIL_MAX}
-              onResizeEnd={saveDetailWidth}
-            />
+              {/* Right detail column — hidden while the CI log owns the center
+                  pane (it spans the full card). Kept for graph / diff / conflicts. */}
+              {!showCiLog && (
+                <>
+                  <ResizeHandle
+                    side="right"
+                    ghost
+                    panelRef={detailRef}
+                    minWidth={DETAIL_MIN}
+                    maxWidth={DETAIL_MAX}
+                    onResizeEnd={saveDetailWidth}
+                  />
 
-            {/* Right detail — commit info / diff (flex-shrink default: shrinks when window narrows) */}
-            <div ref={detailRef} style={{ width: detailWidth, minWidth: DETAIL_MIN }}>
-              <DetailPanel />
+                  {/* Right detail — commit info / diff (flex-shrink default: shrinks when window narrows) */}
+                  <div ref={detailRef} style={{ width: detailWidth, minWidth: DETAIL_MIN }}>
+                    <DetailPanel />
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <StatusBar onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />

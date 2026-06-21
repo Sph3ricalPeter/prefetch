@@ -15,6 +15,8 @@ import {
   User,
   Check,
 } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
+import { Modal } from "@/components/ui/modal";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
@@ -74,22 +76,17 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
   }, [tab]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <Modal
+      open
+      onClose={onClose}
+      className="relative w-full max-w-lg max-h-[80vh] flex flex-col shadow-xl"
     >
-      <div className="relative w-full max-w-lg max-h-[80vh] flex flex-col rounded-lg border border-border bg-popover shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-4 pb-3">
           <h2 className="text-sm font-semibold text-foreground">Clone Repository</h2>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
-          >
+          <IconButton variant="subtle" onClick={onClose}>
             <X className="h-4 w-4" />
-          </button>
+          </IconButton>
         </div>
 
         {/* Profile selector — shared across tabs */}
@@ -197,8 +194,7 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
         ) : (
           <UrlTab cloneDir={cloneDir} onClose={onClose} />
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -386,12 +382,9 @@ function ForgeTab({ selectedProfile, cloneDir, onClose, onOpenSettings }: { sele
     <div className="flex flex-col min-h-0">
       {/* Sub-header with back button */}
       <div className="flex items-center gap-2 px-5 py-3">
-        <button
-          onClick={goBack}
-          className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
-        >
+        <IconButton variant="subtle" onClick={goBack}>
           <ChevronLeft className="h-3.5 w-3.5" />
-        </button>
+        </IconButton>
         <ForgeIcon kind={selectedHost?.kind ?? null} className="h-3.5 w-3.5" />
         <span className="text-xs font-medium text-foreground">{selectedHost?.label}</span>
         <span className="text-xs text-muted-foreground">

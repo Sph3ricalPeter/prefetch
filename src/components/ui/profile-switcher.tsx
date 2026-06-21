@@ -76,7 +76,7 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
+        <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-md border border-border bg-popover shadow-lg py-1 animate-enter-down">
           {/* No profile option */}
           <button
             onClick={() => handleSwitch(null)}
@@ -104,7 +104,7 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-foreground">{profile.name}</span>
                   {profile.is_default && (
-                    <span className="flex items-center gap-0.5 rounded-sm bg-secondary px-1.5 py-0.5 text-label font-medium text-muted-foreground shrink-0">
+                    <span className="flex items-center gap-0.5 rounded-md bg-secondary px-1.5 py-0.5 text-label font-medium text-muted-foreground shrink-0">
                       default
                       <Star className="h-2.5 w-2.5 fill-muted-foreground" />
                     </span>

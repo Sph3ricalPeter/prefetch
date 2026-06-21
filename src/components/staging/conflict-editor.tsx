@@ -963,7 +963,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
             <button
               onClick={() => setShowAutoResolved((v) => !v)}
               title={showAutoResolved ? "Hide auto-resolved" : "Show auto-resolved"}
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+              className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
                 showAutoResolved
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -979,7 +979,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
             <button
               onClick={toggleExpandAll}
               title={allExpanded ? "Collapse all context" : "Expand all context"}
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors ${
+              className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
                 allExpanded
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -1020,7 +1020,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
               {/* Master checkbox */}
               <button
                 onClick={handleMasterOurs}
-                className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
+                className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-colors ${
                   masterSide === "ours"
                     ? "bg-[rgb(var(--conflict-ours))] text-white"
                     : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-ours),0.5)]"
@@ -1137,7 +1137,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
             <div className="shrink-0 px-3 py-1.5 border-b border-border bg-[rgba(var(--conflict-theirs),0.05)] flex items-center gap-1.5">
               <button
                 onClick={handleMasterTheirs}
-                className={`w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
+                className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-colors ${
                   masterSide === "theirs"
                     ? "bg-[rgb(var(--conflict-theirs))] text-white"
                     : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-theirs),0.5)]"
@@ -1647,7 +1647,7 @@ function ChangedBlock({
             title={`${isChunkSelected ? "Deselect" : "Select"} all ${side} lines`}
           >
             <span
-              className="w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors"
+              className="w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-colors"
               style={isChunkSelected
                 ? { backgroundColor: `rgb(var(${cv}))`, color: "white" }
                 : { border: `1.5px solid rgba(var(${cv}), 0.4)` }}
@@ -1676,7 +1676,7 @@ function ChangedBlock({
                 >
                   <span className="w-5 shrink-0 flex items-center justify-center select-none">
                     <span
-                      className="w-3.5 h-3.5 rounded-sm flex items-center justify-center opacity-0 group-hover/cline:opacity-100 transition-opacity"
+                      className="w-3.5 h-3.5 rounded-xs flex items-center justify-center opacity-0 group-hover/cline:opacity-100 transition-opacity"
                       style={{ color: side === "ours" ? "var(--conflict-ours-text)" : "var(--conflict-theirs-text)" }}
                     >
                       {isSelected ? (

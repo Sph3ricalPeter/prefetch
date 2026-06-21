@@ -173,16 +173,16 @@ function ThemePreview({ theme }: { theme: typeof APP_THEMES[number] }) {
         style={{ backgroundColor: `hsl(${theme.cssVars["--sidebar-background"]})`, borderRight: `1px solid ${border}` }}
       >
         <div className="mt-2 mx-1.5 space-y-1">
-          <div className="h-1.5 rounded-sm" style={{ backgroundColor: muted, width: "70%", opacity: 0.4 }} />
-          <div className="h-1.5 rounded-sm" style={{ backgroundColor: theme.extended.brand, width: "85%", opacity: 0.5 }} />
-          <div className="h-1.5 rounded-sm" style={{ backgroundColor: muted, width: "55%", opacity: 0.4 }} />
+          <div className="h-1.5 rounded-xs" style={{ backgroundColor: muted, width: "70%", opacity: 0.4 }} />
+          <div className="h-1.5 rounded-xs" style={{ backgroundColor: theme.extended.brand, width: "85%", opacity: 0.5 }} />
+          <div className="h-1.5 rounded-xs" style={{ backgroundColor: muted, width: "55%", opacity: 0.4 }} />
         </div>
       </div>
       {/* Main area preview */}
       <div className="flex-1 p-1.5 space-y-1">
-        <div className="h-1.5 rounded-sm" style={{ backgroundColor: fg, width: "60%", opacity: 0.3 }} />
-        <div className="h-1.5 rounded-sm" style={{ backgroundColor: muted, width: "80%", opacity: 0.25 }} />
-        <div className="h-5 rounded" style={{ backgroundColor: card }} />
+        <div className="h-1.5 rounded-xs" style={{ backgroundColor: fg, width: "60%", opacity: 0.3 }} />
+        <div className="h-1.5 rounded-xs" style={{ backgroundColor: muted, width: "80%", opacity: 0.25 }} />
+        <div className="h-5 rounded-md" style={{ backgroundColor: card }} />
       </div>
     </div>
   );
@@ -215,16 +215,16 @@ function CodeThemePreview({ theme }: { theme: typeof CODE_THEMES[number] }) {
       style={{ backgroundColor: bg, border: `1px solid ${bg}` }}
     >
       <div className="flex gap-1 items-center">
-        <span className="h-1.5 rounded-sm" style={{ backgroundColor: keywordColor, width: 16, opacity: 0.8, display: "inline-block" }} />
-        <span className="h-1.5 rounded-sm" style={{ backgroundColor: funcColor, width: 24, opacity: 0.8, display: "inline-block" }} />
-        <span className="h-1.5 rounded-sm" style={{ backgroundColor: fg, width: 8, opacity: 0.4, display: "inline-block" }} />
+        <span className="h-1.5 rounded-xs" style={{ backgroundColor: keywordColor, width: 16, opacity: 0.8, display: "inline-block" }} />
+        <span className="h-1.5 rounded-xs" style={{ backgroundColor: funcColor, width: 24, opacity: 0.8, display: "inline-block" }} />
+        <span className="h-1.5 rounded-xs" style={{ backgroundColor: fg, width: 8, opacity: 0.4, display: "inline-block" }} />
       </div>
       <div className="flex gap-1 items-center">
-        <span className="h-1.5 rounded-sm" style={{ backgroundColor: fg, width: 12, opacity: 0.3, display: "inline-block" }} />
-        <span className="h-1.5 rounded-sm" style={{ backgroundColor: stringColor, width: 32, opacity: 0.8, display: "inline-block" }} />
+        <span className="h-1.5 rounded-xs" style={{ backgroundColor: fg, width: 12, opacity: 0.3, display: "inline-block" }} />
+        <span className="h-1.5 rounded-xs" style={{ backgroundColor: stringColor, width: 32, opacity: 0.8, display: "inline-block" }} />
       </div>
       <div className="flex gap-1 items-center">
-        <span className="h-3 rounded-sm" style={{ backgroundColor: theme.diff.addedBg, width: "100%", display: "inline-block" }} />
+        <span className="h-3 rounded-xs" style={{ backgroundColor: theme.diff.addedBg, width: "100%", display: "inline-block" }} />
       </div>
     </div>
   );
