@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { FileDiff } from "@/types/git";
 import { getDataAttrFromEvent } from "@/lib/utils";
-import { buildChangeableKeys } from "@/lib/diff-selection";
+import { buildChangeableKeys, changeableKeysInHunk } from "@/lib/diff-selection";
 
 /**
  * Line-selection state machine shared by the interactive and read-only diff
@@ -112,16 +112,13 @@ export function useDiffLineSelection(diff: FileDiff, scrollRef: RefObject<HTMLDi
       const hunk = diff.hunks[hunkIdx];
       if (!hunk) return prev;
 
-      const hunkKeys = hunk.lines
-        .map((line, li) => ({ key: `${hunkIdx}:${li}`, line }))
-        .filter(({ line }) => line.origin === "+" || line.origin === "-");
-
-      const allSelected = hunkKeys.every(({ key }) => next.has(key));
+      const hunkKeys = changeableKeysInHunk(hunk, hunkIdx);
+      const allSelected = hunkKeys.every((key) => next.has(key));
 
       if (allSelected) {
-        for (const { key } of hunkKeys) next.delete(key);
+        for (const key of hunkKeys) next.delete(key);
       } else {
-        for (const { key } of hunkKeys) next.add(key);
+        for (const key of hunkKeys) next.add(key);
       }
 
       return next;

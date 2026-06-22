@@ -1,88 +1,17 @@
 use crate::error::AppError;
+use crate::git::conflict;
+use crate::git::exec::{capture, capture_bytes, git_cmd, run_git, run_git_with_progress};
 use crate::git::forge;
 use crate::git::graph::assign_lanes;
-use crate::git::profile::ActiveProfile;
+use crate::git::parse;
 use crate::git::types::{
-    self as types, BranchInfo, CoAuthor, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff,
-    FileStatus, GraphData, RebaseProgress, StashInfo, TagInfo, UndoAction,
+    self as types, BranchInfo, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff, FileStatus,
+    GraphData, RebaseProgress, StashInfo, TagInfo, UndoAction,
 };
 use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use tracing::warn;
-
-/// Unquote a git-quoted path.
-///
-/// Git wraps filenames in double quotes and uses C-style escaping when they
-/// contain special characters (spaces, `&`, non-ASCII, etc.).
-/// For example: `"Assets/Fonts & Materials/file.asset"`
-///
-/// This function strips the surrounding quotes and resolves escape sequences
-/// (`\\`, `\"`, `\n`, `\t`, `\NNN` octal bytes, etc.).  If the path is not
-/// quoted it is returned unchanged.
-fn unquote_git_path(raw: &str) -> String {
-    // Git-quoted paths always start AND end with "
-    if !(raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2) {
-        return raw.to_string();
-    }
-    let inner = &raw[1..raw.len() - 1];
-    let mut result = Vec::with_capacity(inner.len());
-    let bytes = inner.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            i += 1;
-            match bytes[i] {
-                b'\\' => result.push(b'\\'),
-                b'"' => result.push(b'"'),
-                b'n' => result.push(b'\n'),
-                b't' => result.push(b'\t'),
-                b'r' => result.push(b'\r'),
-                b'a' => result.push(0x07),
-                b'b' => result.push(0x08),
-                b'f' => result.push(0x0C),
-                b'v' => result.push(0x0B),
-                // Octal: \NNN (1-3 digits)
-                b'0'..=b'7' => {
-                    let mut val: u8 = bytes[i] - b'0';
-                    for _ in 0..2 {
-                        if i + 1 < bytes.len() && bytes[i + 1] >= b'0' && bytes[i + 1] <= b'7' {
-                            i += 1;
-                            val = val * 8 + (bytes[i] - b'0');
-                        } else {
-                            break;
-                        }
-                    }
-                    result.push(val);
-                }
-                other => {
-                    // Unknown escape – keep as-is
-                    result.push(b'\\');
-                    result.push(other);
-                }
-            }
-        } else {
-            result.push(bytes[i]);
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&result).to_string()
-}
-
-/// Configure a Command to hide the console window on Windows.
-/// Without this, every `git` subprocess opens a visible terminal flash.
-#[cfg(target_os = "windows")]
-fn hide_console_window(cmd: &mut Command) -> &mut Command {
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x08000000) // CREATE_NO_WINDOW
-}
-
-#[cfg(not(target_os = "windows"))]
-fn hide_console_window(cmd: &mut Command) -> &mut Command {
-    cmd
-}
 
 const MAX_DIFF_LINES: usize = 50_000;
 
@@ -106,36 +35,6 @@ fn truncate_diff(mut diff: FileDiff) -> FileDiff {
     }
     diff.hunks.retain(|h| !h.lines.is_empty());
     diff
-}
-
-/// Create a `git` command with console window hidden on Windows.
-pub(crate) fn git_cmd() -> Command {
-    let mut cmd = Command::new("git");
-    hide_console_window(&mut cmd);
-    cmd
-}
-
-/// Build environment variable overrides for git commands from the active profile.
-///
-/// When a profile is active, these env vars override whatever the user's git
-/// config says for identity and SSH key. Returns an empty Vec when no profile.
-pub fn profile_env(profile: &Option<ActiveProfile>) -> Vec<(String, String)> {
-    let Some(p) = profile else {
-        return vec![];
-    };
-    let mut env = vec![
-        ("GIT_AUTHOR_NAME".into(), p.user_name.clone()),
-        ("GIT_AUTHOR_EMAIL".into(), p.user_email.clone()),
-        ("GIT_COMMITTER_NAME".into(), p.user_name.clone()),
-        ("GIT_COMMITTER_EMAIL".into(), p.user_email.clone()),
-    ];
-    if let Some(ref ssh_path) = p.ssh_key_path {
-        env.push((
-            "GIT_SSH_COMMAND".into(),
-            format!("ssh -i \"{ssh_path}\" -o IdentitiesOnly=yes"),
-        ));
-    }
-    env
 }
 
 /// Get the repository display name from its path.
@@ -264,7 +163,7 @@ pub fn walk_commits(path: &str, limit: usize) -> Result<GraphData, AppError> {
             .unwrap_or("")
             .trim()
             .to_string();
-        let co_authors = parse_co_authors(&full_message);
+        let co_authors = parse::co_authors(&full_message);
 
         let parent_ids: Vec<String> = commit.parent_ids().map(|p| p.to_string()).collect();
 
@@ -314,22 +213,19 @@ struct BranchTracking {
 }
 
 fn get_all_tracking(path: &str) -> HashMap<String, BranchTracking> {
-    let output = git_cmd()
-        .args([
+    let mut map = HashMap::new();
+    let text = match capture(
+        path,
+        &[
             "for-each-ref",
             "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)",
             "refs/heads/",
-        ])
-        .current_dir(path)
-        .output();
-
-    let mut map = HashMap::new();
-    let out = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return map,
+        ],
+        &[],
+    ) {
+        Ok(text) => text,
+        Err(_) => return map,
     };
-
-    let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(3, '\t').collect();
         if parts.len() < 2 {
@@ -1003,264 +899,9 @@ fn ensure_tracking_ref(path: &str, branch_name: &str) -> Result<(), AppError> {
 
 // ── Hook failure detection ────────────────────────────────────────────────────
 
-/// Known git-internal error strings that should NOT be classified as hook failures,
-/// even when the candidate hook file exists.
-const GIT_INTERNAL_ERRORS: &[&str] = &[
-    "nothing to commit",
-    "nothing added to commit",
-    "empty commit message",
-    "no changes added to commit",
-    "pathspec",
-    "did not match any file",
-    "unable to access",
-    "could not resolve host",
-    "Authentication failed",
-    "Permission denied",
-    "rejected",
-    "non-fast-forward",
-    "failed to push",
-];
-
-/// Map a git subcommand to the hook names that can fire during that command.
-fn candidate_hooks(subcommand: &str) -> &'static [&'static str] {
-    match subcommand {
-        "commit" => &["pre-commit", "prepare-commit-msg", "commit-msg"],
-        "push" => &["pre-push"],
-        "merge" => &["pre-merge-commit"],
-        "rebase" => &["pre-rebase"],
-        "checkout" | "switch" => &["post-checkout"],
-        _ => &[],
-    }
-}
-
-/// Resolve the hooks directory for the given repository.
-///
-/// Checks `core.hooksPath` first (used by husky, lefthook, pre-commit framework).
-/// Falls back to `.git/hooks/`.
-fn hooks_dir(path: &str) -> std::path::PathBuf {
-    // Try to read core.hooksPath
-    if let Ok(output) = git_cmd()
-        .args(["config", "core.hooksPath"])
-        .current_dir(path)
-        .output()
-    {
-        if output.status.success() {
-            let custom = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !custom.is_empty() {
-                let p = std::path::Path::new(&custom);
-                if p.is_absolute() {
-                    return p.to_path_buf();
-                } else {
-                    return std::path::Path::new(path).join(&custom);
-                }
-            }
-        }
-    }
-    std::path::Path::new(path).join(".git").join("hooks")
-}
-
-/// Detect whether a git command failure was caused by a hook.
-///
-/// Returns `Some(hook_name)` if a candidate hook file exists for the given
-/// subcommand AND the stderr doesn't contain known git-internal error strings.
-/// Returns `None` otherwise (the error should be treated as a generic git error).
-fn detect_hook_failure(path: &str, args: &[&str], stderr: &str) -> Option<String> {
-    let subcommand = args.first().copied().unwrap_or("");
-    let candidates = candidate_hooks(subcommand);
-    if candidates.is_empty() {
-        return None;
-    }
-
-    // If stderr matches a known git-internal error, it's not a hook failure
-    let lower = stderr.to_lowercase();
-    for pattern in GIT_INTERNAL_ERRORS {
-        if lower.contains(&pattern.to_lowercase()) {
-            return None;
-        }
-    }
-
-    // Check if any candidate hook file exists
-    let hooks = hooks_dir(path);
-    for hook_name in candidates {
-        let hook_path = hooks.join(hook_name);
-        if hook_path.exists() {
-            return Some(hook_name.to_string());
-        }
-    }
-
-    None
-}
-
-/// Run a git CLI command in the given repo directory.
-/// Returns combined stdout+stderr on success, or AppError on failure.
-///
-/// `extra_env` allows injecting environment variables (e.g. profile identity
-/// overrides). Pass `&[]` for read-only operations that don't need them.
-pub(crate) fn run_git(
-    path: &str,
-    args: &[&str],
-    extra_env: &[(String, String)],
-) -> Result<String, AppError> {
-    const MAX_RETRIES: u32 = 3;
-    const RETRY_DELAY_MS: u64 = 200;
-
-    for attempt in 0..MAX_RETRIES {
-        let mut cmd = git_cmd();
-        for (k, v) in extra_env {
-            cmd.env(k, v);
-        }
-        let output = cmd
-            .args(args)
-            .current_dir(path)
-            .output()
-            .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
-
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = format!("{}{}", stdout.trim(), stderr.trim());
-            return Ok(if combined.is_empty() {
-                "Done".to_string()
-            } else {
-                combined
-            });
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-
-        // Retry on index.lock contention (another git process is running)
-        if attempt + 1 < MAX_RETRIES && stderr.contains("index.lock") {
-            std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
-            continue;
-        }
-
-        if let Some(hook_name) = detect_hook_failure(path, args, &stderr) {
-            return Err(AppError::HookFailed {
-                hook_name,
-                output: stderr,
-            });
-        }
-        return Err(AppError::Git(stderr));
-    }
-
-    unreachable!()
-}
-
-/// Run a git CLI command with real-time progress streaming.
-///
-/// Git writes progress to stderr using `\r` for in-place updates.
-/// This function reads stderr in chunks, splits on `\r`/`\n`, and calls
-/// `on_progress` with each line. The `--progress` flag must be included
-/// in `args` to force progress output on piped stderr.
-///
-/// `extra_env` allows injecting environment variables (e.g. profile identity
-/// overrides). Pass `&[]` for operations that don't need them.
-pub(crate) fn run_git_with_progress<F: Fn(&str)>(
-    path: &str,
-    args: &[&str],
-    on_progress: &F,
-    extra_env: &[(String, String)],
-) -> Result<String, AppError> {
-    let mut cmd = git_cmd();
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-    let mut child = cmd
-        .args(args)
-        .current_dir(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
-
-    // Read stderr in chunks, splitting on \r or \n for progress lines.
-    // Git uses \r for in-place progress updates (e.g. "Receiving objects: 45%")
-    let mut stderr = child.stderr.take().expect("stderr was piped");
-    let mut buf = [0u8; 4096];
-    let mut all_stderr = String::new();
-    let mut partial_line = String::new();
-
-    loop {
-        match stderr.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let chunk = String::from_utf8_lossy(&buf[..n]);
-                for ch in chunk.chars() {
-                    if ch == '\r' || ch == '\n' {
-                        if !partial_line.is_empty() {
-                            let trimmed = partial_line.trim().to_string();
-                            if !trimmed.is_empty() {
-                                on_progress(&trimmed);
-                            }
-                            all_stderr.push_str(&partial_line);
-                            all_stderr.push('\n');
-                            partial_line.clear();
-                        }
-                    } else {
-                        partial_line.push(ch);
-                    }
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    // Flush remaining partial line
-    if !partial_line.is_empty() {
-        let trimmed = partial_line.trim().to_string();
-        if !trimmed.is_empty() {
-            on_progress(&trimmed);
-        }
-        all_stderr.push_str(&partial_line);
-    }
-
-    // Read stdout
-    let mut stdout_text = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        stdout.read_to_string(&mut stdout_text).ok();
-    }
-
-    let status = child
-        .wait()
-        .map_err(|e| AppError::Other(format!("Failed to wait for git: {e}")))?;
-
-    if !status.success() {
-        let stderr_str = all_stderr.trim().to_string();
-        if let Some(hook_name) = detect_hook_failure(path, args, &stderr_str) {
-            return Err(AppError::HookFailed {
-                hook_name,
-                output: stderr_str,
-            });
-        }
-        return Err(AppError::Git(stderr_str));
-    }
-
-    let result = stdout_text.trim().to_string();
-    Ok(if result.is_empty() {
-        "Done".to_string()
-    } else {
-        result
-    })
-}
-
-/// Parse `git diff --numstat` output into a map of path -> (additions, deletions).
+/// Capture `git diff --numstat` output and parse it into a path -> (adds, dels) map.
 fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
-    let output = git_cmd().args(args).current_dir(path).output().ok();
-
-    let mut stats: HashMap<String, (u32, u32)> = HashMap::new();
-    if let Some(out) = output {
-        let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 3 {
-                let add = parts[0].parse::<u32>().ok();
-                let del = parts[1].parse::<u32>().ok();
-                if let (Some(a), Some(d)) = (add, del) {
-                    stats.insert(unquote_git_path(parts[2]), (a, d));
-                }
-            }
-        }
-    }
-    stats
+    parse::numstat(&capture(path, args, &[]).unwrap_or_default())
 }
 
 /// Get the working tree status (staged + unstaged + untracked files).
@@ -1268,26 +909,8 @@ fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
 /// Uses `git status --porcelain=v1` CLI instead of git2-rs to avoid
 /// false positives from CRLF/autocrlf handling on Windows.
 pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
-    let output = git_cmd()
-        .args(["status", "--porcelain=v1", "-uall"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git status: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!(
-            "git status exited with {}: {}",
-            output.status.code().unwrap_or(-1),
-            stderr.trim()
-        );
-        return Err(AppError::Other(format!(
-            "git status failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    let stdout_raw = &output.stdout;
+    let stdout_raw = capture_bytes(path, &["status", "--porcelain=v1", "-uall"], &[])
+        .map_err(|e| AppError::Other(format!("git status failed: {e}")))?;
     if stdout_raw.len() > 512_000 {
         tracing::warn!(
             "git status -uall output is {}KB, falling back to -unormal",
@@ -1296,7 +919,7 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
         return get_status_fallback(path);
     }
 
-    let text = String::from_utf8_lossy(stdout_raw);
+    let text = String::from_utf8_lossy(&stdout_raw);
     tracing::debug!(
         "git status: {} bytes, {} lines",
         stdout_raw.len(),
@@ -1314,191 +937,25 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
     let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
     let unstaged_stats = parse_numstat(path, &["diff", "--numstat"]);
 
-    let mut result: Vec<FileStatus> = Vec::new();
-
-    // Porcelain v1 format: "XY filename" where X=index status, Y=worktree status
-    for line in text.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        let index_status = line.as_bytes()[0] as char;
-        let wt_status = line.as_bytes()[1] as char;
-        let file_path = unquote_git_path(&line[3..]);
-
-        // Check for merge conflicts (both columns have U, or specific conflict combos)
-        let is_conflict = matches!(
-            (index_status, wt_status),
-            ('U', 'U')
-                | ('A', 'A')
-                | ('D', 'D')
-                | ('A', 'U')
-                | ('U', 'A')
-                | ('D', 'U')
-                | ('U', 'D')
-        );
-
-        if is_conflict {
-            let conflict_type = match (index_status, wt_status) {
-                ('U', 'U') => "both_modified",
-                ('A', 'A') => "both_added",
-                ('D', 'D') => "both_deleted",
-                ('A', 'U') => "added_by_us",
-                ('U', 'A') => "added_by_them",
-                ('D', 'U') => "deleted_by_us",
-                ('U', 'D') => "deleted_by_them",
-                _ => "conflicted",
-            };
-            result.push(FileStatus {
-                path: file_path,
-                status_type: "conflicted".to_string(),
-                is_staged: false,
-                additions: None,
-                deletions: None,
-                is_conflicted: true,
-                conflict_type: Some(conflict_type.to_string()),
-            });
-            continue;
-        }
-
-        // Staged changes (index column)
-        if index_status != ' ' && index_status != '?' {
-            let (additions, deletions) = staged_stats
-                .get(&file_path)
-                .map(|&(a, d)| (Some(a), Some(d)))
-                .unwrap_or((None, None));
-            result.push(FileStatus {
-                path: file_path.clone(),
-                status_type: porcelain_to_status_type(index_status),
-                is_staged: true,
-                additions,
-                deletions,
-                is_conflicted: false,
-                conflict_type: None,
-            });
-        }
-
-        // Unstaged / untracked changes (worktree column)
-        if wt_status != ' ' {
-            let (additions, deletions) = unstaged_stats
-                .get(&file_path)
-                .map(|&(a, d)| (Some(a), Some(d)))
-                .unwrap_or((None, None));
-            result.push(FileStatus {
-                path: file_path,
-                status_type: if index_status == '?' {
-                    "untracked".to_string()
-                } else {
-                    porcelain_to_status_type(wt_status)
-                },
-                is_staged: false,
-                additions,
-                deletions,
-                is_conflicted: false,
-                conflict_type: None,
-            });
-        }
-    }
-
-    result.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(result)
+    Ok(parse::porcelain_status(
+        &text,
+        &staged_stats,
+        &unstaged_stats,
+    ))
 }
 
 /// Fallback when `-uall` output exceeds the size threshold.
 /// Uses `-unormal` which collapses untracked directories into a single entry.
 fn get_status_fallback(path: &str) -> Result<Vec<FileStatus>, AppError> {
-    let output = git_cmd()
-        .args(["status", "--porcelain=v1", "-unormal"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git status -unormal: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Other(format!(
-            "git status -unormal failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = capture(path, &["status", "--porcelain=v1", "-unormal"], &[])
+        .map_err(|e| AppError::Other(format!("git status -unormal failed: {e}")))?;
     let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
     let unstaged_stats = parse_numstat(path, &["diff", "--numstat"]);
-
-    let mut result: Vec<FileStatus> = Vec::new();
-    for line in text.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        let index_status = line.as_bytes()[0] as char;
-        let wt_status = line.as_bytes()[1] as char;
-        let file_path = unquote_git_path(&line[3..]);
-
-        // -unormal shows untracked directories with trailing /
-        if file_path.ends_with('/') {
-            result.push(FileStatus {
-                path: file_path.trim_end_matches('/').to_string(),
-                status_type: "untracked".to_string(),
-                is_staged: false,
-                additions: None,
-                deletions: None,
-                is_conflicted: false,
-                conflict_type: None,
-            });
-            continue;
-        }
-
-        if index_status != ' ' && index_status != '?' {
-            let (additions, deletions) = staged_stats
-                .get(&file_path)
-                .map(|&(a, d)| (Some(a), Some(d)))
-                .unwrap_or((None, None));
-            result.push(FileStatus {
-                path: file_path.clone(),
-                status_type: porcelain_to_status_type(index_status),
-                is_staged: true,
-                additions,
-                deletions,
-                is_conflicted: false,
-                conflict_type: None,
-            });
-        }
-
-        if wt_status != ' ' {
-            let (additions, deletions) = unstaged_stats
-                .get(&file_path)
-                .map(|&(a, d)| (Some(a), Some(d)))
-                .unwrap_or((None, None));
-            result.push(FileStatus {
-                path: file_path,
-                status_type: if index_status == '?' {
-                    "untracked".to_string()
-                } else {
-                    porcelain_to_status_type(wt_status)
-                },
-                is_staged: false,
-                additions,
-                deletions,
-                is_conflicted: false,
-                conflict_type: None,
-            });
-        }
-    }
-
-    result.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(result)
-}
-
-fn porcelain_to_status_type(ch: char) -> String {
-    match ch {
-        'A' => "added",
-        'M' => "modified",
-        'D' => "deleted",
-        'R' => "renamed",
-        'C' => "modified", // copied
-        '?' => "untracked",
-        _ => "modified",
-    }
-    .to_string()
+    Ok(parse::porcelain_status(
+        &text,
+        &staged_stats,
+        &unstaged_stats,
+    ))
 }
 
 /// Get the diff for a specific file using git CLI (avoids git2-rs borrow issues).
@@ -1509,13 +966,8 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
         vec!["diff", "--", file_path]
     };
 
-    let output = git_cmd()
-        .args(&args)
-        .current_dir(repo_path)
-        .output()
+    let diff_text = capture(repo_path, &args, &[])
         .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
-
-    let diff_text = String::from_utf8_lossy(&output.stdout);
 
     // Untracked files won't show in git diff — read file content as all-added.
     // But only apply this fallback for genuinely untracked files; tracked files
@@ -1599,7 +1051,7 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
         }
     }
 
-    if has_binary_marker(&diff_text) {
+    if parse::has_binary_marker(&diff_text) {
         return Ok(FileDiff {
             path: file_path.to_string(),
             hunks: vec![],
@@ -1611,109 +1063,11 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
 
     Ok(truncate_diff(FileDiff {
         path: file_path.to_string(),
-        hunks: parse_unified_diff(&diff_text),
+        hunks: parse::unified_diff(&diff_text),
         is_binary: false,
         is_truncated: false,
         total_lines: 0,
     }))
-}
-
-/// Detect git's "binary file differs" marker.
-///
-/// Git emits a line like `Binary files a/foo and b/foo differ` at column 0,
-/// outside any hunk. Hunk content lines always start with ` `, `+`, `-`, or
-/// `\`, so anchoring to line-start avoids false positives when a text file's
-/// own content happens to contain the phrase "Binary files".
-fn has_binary_marker(diff_text: &str) -> bool {
-    diff_text
-        .lines()
-        .any(|l| l.starts_with("Binary files ") && l.ends_with(" differ"))
-}
-
-fn parse_unified_diff(diff_text: &str) -> Vec<DiffHunk> {
-    let mut hunks: Vec<DiffHunk> = Vec::new();
-    let mut old_counter: u32 = 0;
-    let mut new_counter: u32 = 0;
-
-    for line in diff_text.lines() {
-        if line.starts_with("@@") {
-            let (old_start, old_lines, new_start, new_lines) = parse_hunk_header(line);
-            old_counter = old_start;
-            new_counter = new_start;
-            hunks.push(DiffHunk {
-                header: line.to_string(),
-                old_start,
-                old_lines,
-                new_start,
-                new_lines,
-                lines: Vec::new(),
-            });
-        } else if let Some(hunk) = hunks.last_mut() {
-            let origin = if line.starts_with('+') {
-                '+'
-            } else if line.starts_with('-') {
-                '-'
-            } else {
-                ' '
-            };
-
-            let content =
-                if !line.is_empty() && (origin == '+' || origin == '-' || line.starts_with(' ')) {
-                    line[1..].to_string()
-                } else {
-                    line.to_string()
-                };
-
-            let (old_lineno, new_lineno) = match origin {
-                '+' => {
-                    let n = new_counter;
-                    new_counter += 1;
-                    (None, Some(n))
-                }
-                '-' => {
-                    let o = old_counter;
-                    old_counter += 1;
-                    (Some(o), None)
-                }
-                _ => {
-                    let o = old_counter;
-                    let n = new_counter;
-                    old_counter += 1;
-                    new_counter += 1;
-                    (Some(o), Some(n))
-                }
-            };
-
-            hunk.lines.push(DiffLine {
-                origin,
-                content,
-                old_lineno,
-                new_lineno,
-            });
-        }
-    }
-
-    hunks
-}
-
-fn parse_hunk_header(line: &str) -> (u32, u32, u32, u32) {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    let (mut old_start, mut old_lines, mut new_start, mut new_lines) = (0u32, 1u32, 0u32, 1u32);
-
-    if parts.len() >= 3 {
-        if let Some(old) = parts[1].strip_prefix('-') {
-            let nums: Vec<&str> = old.split(',').collect();
-            old_start = nums[0].parse().unwrap_or(0);
-            old_lines = nums.get(1).and_then(|n| n.parse().ok()).unwrap_or(1);
-        }
-        if let Some(new) = parts[2].strip_prefix('+') {
-            let nums: Vec<&str> = new.split(',').collect();
-            new_start = nums[0].parse().unwrap_or(0);
-            new_lines = nums.get(1).and_then(|n| n.parse().ok()).unwrap_or(1);
-        }
-    }
-
-    (old_start, old_lines, new_start, new_lines)
 }
 
 /// Discard changes in specific files (revert to HEAD state).
@@ -1724,7 +1078,7 @@ fn parse_hunk_header(line: &str) -> (u32, u32, u32, u32) {
 /// During rebase, git's ours/theirs are inverted from the user's perspective,
 /// so we swap the checkout flag to match the UI's "ours" = user's branch.
 pub fn resolve_ours(path: &str, file_path: &str) -> Result<(), AppError> {
-    let flag = if is_rebase_in_progress(path) {
+    let flag = if conflict::is_rebase_in_progress(path) {
         "--theirs" // git's theirs = user's ours during rebase
     } else {
         "--ours"
@@ -1739,7 +1093,7 @@ pub fn resolve_ours(path: &str, file_path: &str) -> Result<(), AppError> {
 /// During rebase, git's ours/theirs are inverted from the user's perspective,
 /// so we swap the checkout flag to match the UI's "theirs" = target branch.
 pub fn resolve_theirs(path: &str, file_path: &str) -> Result<(), AppError> {
-    let flag = if is_rebase_in_progress(path) {
+    let flag = if conflict::is_rebase_in_progress(path) {
         "--ours" // git's ours = user's theirs during rebase
     } else {
         "--theirs"
@@ -1849,302 +1203,14 @@ fn apply_patch_impl(repo_path: &str, patch_text: &str, reverse: bool) -> Result<
     Ok(())
 }
 
-/// Get the base, ours, and theirs versions of a conflicted file,
-/// along with commit hashes and branch names for display.
-///
-/// During **rebase**, git's ours/theirs semantics are inverted from the user's
-/// perspective (git's "ours" = target branch, git's "theirs" = rebased branch).
-/// We swap them here so the frontend always sees:
-///   - "ours"   = the user's working branch
-///   - "theirs" = the incoming / target branch
+/// Get the base, ours, and theirs versions of a conflicted file, with commit
+/// hashes and branch names for display. Reconstruction (including the rebase
+/// ours/theirs swap) lives in [`crate::git::conflict`].
 pub fn get_conflict_contents(
     repo_path: &str,
     file_path: &str,
 ) -> Result<types::ConflictContents, AppError> {
-    // :1: = base (common ancestor), :2: = git's ours, :3: = git's theirs
-    let base_bytes = git_show_stage_bytes(repo_path, 1, file_path);
-    let ours_bytes = git_show_stage_bytes(repo_path, 2, file_path);
-    let theirs_bytes = git_show_stage_bytes(repo_path, 3, file_path);
-
-    // Binary files (images, archives, fonts, …) must never be diffed as text:
-    // the line-by-line conflict editor would choke on the lossy-decoded bytes
-    // and hang the UI. Detect with git's own NUL-byte heuristic.
-    let is_binary = [&base_bytes, &ours_bytes, &theirs_bytes]
-        .into_iter()
-        .filter_map(|b| b.as_deref())
-        .any(looks_binary);
-
-    let (base, git_ours, git_theirs, git_ours_image, git_theirs_image) = if is_binary {
-        // Skip text content entirely; ship base64 previews for image files only.
-        let encode = |b: &Option<Vec<u8>>| -> Option<String> {
-            if !is_image_path(file_path) {
-                return None;
-            }
-            use base64::Engine;
-            b.as_deref()
-                .map(|d| base64::engine::general_purpose::STANDARD.encode(d))
-        };
-        (
-            None,
-            String::new(),
-            String::new(),
-            encode(&ours_bytes),
-            encode(&theirs_bytes),
-        )
-    } else {
-        let to_text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-        (
-            base_bytes.as_deref().map(to_text),
-            ours_bytes.as_deref().map(to_text).unwrap_or_default(),
-            theirs_bytes.as_deref().map(to_text).unwrap_or_default(),
-            None,
-            None,
-        )
-    };
-
-    if is_rebase_in_progress(repo_path) {
-        // During rebase of A onto B:
-        //   git stage 2 ("ours")   = HEAD   = target branch B
-        //   git stage 3 ("theirs") = REBASE_HEAD = user's branch A
-        // Swap so the UI shows A as "ours" and B as "theirs".
-
-        // Ours = user's branch (the branch being rebased)
-        let ours_commit_id = run_git(repo_path, &["rev-parse", "--short", "REBASE_HEAD"], &[])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        let ours_branch = read_rebase_head_name(repo_path).unwrap_or_else(|| {
-            // Fallback: try name-rev on REBASE_HEAD
-            run_git(
-                repo_path,
-                &["name-rev", "--name-only", "--no-undefined", "REBASE_HEAD"],
-                &[],
-            )
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && !s.contains(' ') && !s.contains("Could not"))
-            .map(|s| s.strip_prefix("remotes/origin/").unwrap_or(&s).to_string())
-            .unwrap_or_else(|| ours_commit_id.clone())
-        });
-
-        // Theirs = target branch (the branch we're rebasing onto)
-        let theirs_commit_id = run_git(repo_path, &["rev-parse", "--short", "HEAD"], &[])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        let theirs_branch =
-            read_rebase_onto_name(repo_path).unwrap_or_else(|| theirs_commit_id.clone());
-
-        let rebase_commit_message =
-            run_git(repo_path, &["log", "-1", "--format=%s", "REBASE_HEAD"], &[])
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-
-        Ok(types::ConflictContents {
-            base,
-            ours: git_theirs, // swap: user's branch content (git stage 3)
-            theirs: git_ours, // swap: target branch content (git stage 2)
-            ours_commit_id,
-            theirs_commit_id,
-            ours_branch,
-            theirs_branch,
-            rebase_commit_message,
-            is_binary,
-            ours_image: git_theirs_image, // swap to match content
-            theirs_image: git_ours_image,
-        })
-    } else {
-        // Merge and cherry-pick: git's ours/theirs matches user expectations.
-
-        // Ours = HEAD (current branch)
-        let ours_commit_id = run_git(repo_path, &["rev-parse", "--short", "HEAD"], &[])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        let ours_branch = run_git(repo_path, &["symbolic-ref", "--short", "HEAD"], &[])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| ours_commit_id.clone());
-
-        // Theirs = MERGE_HEAD or CHERRY_PICK_HEAD
-        let theirs_ref = if Path::new(repo_path).join(".git/MERGE_HEAD").exists() {
-            "MERGE_HEAD"
-        } else if Path::new(repo_path).join(".git/CHERRY_PICK_HEAD").exists() {
-            "CHERRY_PICK_HEAD"
-        } else {
-            "HEAD" // shouldn't reach here given rebase check above
-        };
-        let theirs_commit_id = run_git(repo_path, &["rev-parse", "--short", theirs_ref], &[])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-
-        // Try to extract theirs branch name from MERGE_MSG (most reliable),
-        // then fallback to name-rev (validating output), then commit hash.
-        let theirs_branch = extract_branch_from_merge_msg(repo_path)
-            .or_else(|| {
-                run_git(
-                    repo_path,
-                    &["name-rev", "--name-only", "--no-undefined", theirs_ref],
-                    &[],
-                )
-                .ok()
-                .map(|s| s.trim().to_string())
-                // name-rev can leak stderr warnings into stdout via run_git —
-                // filter out anything that doesn't look like a branch name.
-                .filter(|s| !s.is_empty() && !s.contains(' ') && !s.contains("Could not"))
-                .map(|s| s.strip_prefix("remotes/origin/").unwrap_or(&s).to_string())
-            })
-            .unwrap_or_else(|| theirs_commit_id.clone());
-
-        Ok(types::ConflictContents {
-            base,
-            ours: git_ours,
-            theirs: git_theirs,
-            ours_commit_id,
-            theirs_commit_id,
-            ours_branch,
-            theirs_branch,
-            rebase_commit_message: None,
-            is_binary,
-            ours_image: git_ours_image,
-            theirs_image: git_theirs_image,
-        })
-    }
-}
-
-/// Extract the theirs branch name from `.git/MERGE_MSG`.
-///
-/// Git writes this file during merge and it typically contains lines like:
-/// - `Merge branch 'feature-x'`
-/// - `Merge branch 'feature-x' into main`
-/// - `Merge remote-tracking branch 'origin/feature-x'`
-fn extract_branch_from_merge_msg(repo_path: &str) -> Option<String> {
-    let msg_path = std::path::Path::new(repo_path).join(".git/MERGE_MSG");
-    let content = std::fs::read_to_string(msg_path).ok()?;
-    let first_line = content.lines().next()?;
-
-    // "Merge branch 'branch-name'" or "Merge branch 'branch-name' into ..."
-    if let Some(rest) = first_line.strip_prefix("Merge branch '") {
-        return rest.split('\'').next().map(|s| s.to_string());
-    }
-    // "Merge remote-tracking branch 'origin/branch-name'"
-    if let Some(rest) = first_line.strip_prefix("Merge remote-tracking branch '") {
-        let full = rest.split('\'').next()?;
-        return Some(full.strip_prefix("origin/").unwrap_or(full).to_string());
-    }
-    // "Merge pull request #N from owner/branch-name"
-    if let Some(rest) = first_line.strip_prefix("Merge pull request ") {
-        // Skip "#N from " to get "owner/branch-name"
-        if let Some(pos) = rest.find(" from ") {
-            let full = &rest[pos + 6..];
-            // Strip owner prefix: "owner/branch" → "branch"
-            return Some(full.split('/').skip(1).collect::<Vec<_>>().join("/"))
-                .filter(|s| !s.is_empty())
-                .or_else(|| Some(full.to_string()));
-        }
-    }
-    None
-}
-
-/// Returns `true` if a rebase (interactive or apply-based) is currently in progress.
-fn is_rebase_in_progress(repo_path: &str) -> bool {
-    let git_dir = Path::new(repo_path).join(".git");
-    git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists()
-}
-
-/// Read the name of the branch being rebased from the rebase state directory.
-///
-/// During `git rebase B` (while on branch A), the file `head-name` contains
-/// `refs/heads/A` — the branch whose commits are being replayed.
-/// Returns `None` if no rebase is in progress or the file is missing.
-fn read_rebase_head_name(repo_path: &str) -> Option<String> {
-    let git_dir = Path::new(repo_path).join(".git");
-    let rebase_dir = if git_dir.join("rebase-merge").exists() {
-        git_dir.join("rebase-merge")
-    } else if git_dir.join("rebase-apply").exists() {
-        git_dir.join("rebase-apply")
-    } else {
-        return None;
-    };
-    std::fs::read_to_string(rebase_dir.join("head-name"))
-        .ok()
-        .map(|s| {
-            s.trim()
-                .strip_prefix("refs/heads/")
-                .unwrap_or(s.trim())
-                .to_string()
-        })
-}
-
-/// Read the "onto" target for the current rebase and resolve it to a branch name.
-///
-/// The `onto` file contains a full commit hash. We use `git name-rev` to
-/// resolve it to a branch name, stripping `~N`/`^N` decorations, or fall back
-/// to a short hash.
-fn read_rebase_onto_name(repo_path: &str) -> Option<String> {
-    let git_dir = Path::new(repo_path).join(".git");
-    let rebase_dir = if git_dir.join("rebase-merge").exists() {
-        git_dir.join("rebase-merge")
-    } else if git_dir.join("rebase-apply").exists() {
-        git_dir.join("rebase-apply")
-    } else {
-        return None;
-    };
-    let onto_hash = std::fs::read_to_string(rebase_dir.join("onto"))
-        .ok()?
-        .trim()
-        .to_string();
-    if onto_hash.is_empty() {
-        return None;
-    }
-    // Try to resolve the onto commit to a branch name
-    run_git(
-        repo_path,
-        &["name-rev", "--name-only", "--no-undefined", &onto_hash],
-        &[],
-    )
-    .ok()
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty() && !s.contains(' ') && !s.contains("Could not"))
-    .map(|s| {
-        // Strip decorations like "branch-name~2" that name-rev adds
-        let s = s.split('~').next().unwrap_or(&s);
-        let s = s.split('^').next().unwrap_or(s);
-        s.strip_prefix("remotes/origin/").unwrap_or(s).to_string()
-    })
-    .or_else(|| {
-        // Fall back to short hash
-        run_git(repo_path, &["rev-parse", "--short", &onto_hash], &[])
-            .ok()
-            .map(|s| s.trim().to_string())
-    })
-}
-
-/// Read a conflict stage as raw bytes (`:1:`=base, `:2:`=ours, `:3:`=theirs).
-/// Returns `None` if the stage doesn't exist (e.g. base for an add/add conflict).
-fn git_show_stage_bytes(repo_path: &str, stage: u8, file_path: &str) -> Option<Vec<u8>> {
-    let spec = format!(":{stage}:{file_path}");
-    let output = git_cmd()
-        .args(["show", &spec])
-        .current_dir(repo_path)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(output.stdout)
-}
-
-/// Git's binary heuristic: a NUL byte within the first 8000 bytes.
-fn looks_binary(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(8000)].contains(&0)
-}
-
-/// Whether a path has an image extension we can preview in the binary resolver.
-fn is_image_path(file_path: &str) -> bool {
-    let lower = file_path.to_ascii_lowercase();
-    [
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".avif",
-    ]
-    .iter()
-    .any(|ext| lower.ends_with(ext))
+    Ok(conflict::assemble(conflict::gather(repo_path, file_path)))
 }
 
 /// Resolve a conflict by writing custom content and staging the file.
@@ -2203,20 +1269,9 @@ pub fn reword_head_commit(
     args.push(message.into());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let mut cmd = git_cmd();
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-    let output = cmd
-        .args(&arg_refs)
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git commit-tree: {e}")))?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(AppError::Git(format!("commit-tree failed: {err}")));
-    }
-    let new_sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let new_sha = capture(path, &arg_refs, extra_env)
+        .map_err(|e| AppError::Git(format!("commit-tree failed: {e}")))?;
+    let new_sha = new_sha.trim().to_string();
     if new_sha.is_empty() {
         return Err(AppError::Git("commit-tree returned empty SHA".into()));
     }
@@ -2239,27 +1294,27 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
         )
     });
 
-    let output = git_cmd()
-        .args([
+    let text = capture(
+        repo_path,
+        &[
             "diff-tree",
             "--no-commit-id",
             "-r",
             "--name-status",
             commit_id,
-        ])
-        .current_dir(repo_path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+        ],
+        &[],
+    )
+    .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
 
     let numstat = numstat_handle.join().unwrap_or_default();
 
-    let text = String::from_utf8_lossy(&output.stdout);
     let mut files = Vec::new();
 
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(2, '\t').collect();
         if parts.len() == 2 {
-            let file_path = unquote_git_path(parts[1]);
+            let file_path = parse::unquote_git_path(parts[1]);
             let status_type = match parts[0] {
                 "A" => "added",
                 "M" => "modified",
@@ -2287,48 +1342,22 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
     Ok(files)
 }
 
-/// Parse "Co-Authored-By: Name <email>" trailers from a commit message.
-fn parse_co_authors(message: &str) -> Vec<CoAuthor> {
-    message
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            let rest = trimmed
-                .strip_prefix("Co-Authored-By:")
-                .or_else(|| trimmed.strip_prefix("Co-authored-by:"))?;
-            let rest = rest.trim();
-            if let Some(email_start) = rest.find('<') {
-                let name = rest[..email_start].trim().to_string();
-                let email = rest[email_start + 1..]
-                    .trim_end_matches('>')
-                    .trim()
-                    .to_string();
-                Some(CoAuthor { name, email })
-            } else {
-                Some(CoAuthor {
-                    name: rest.to_string(),
-                    email: String::new(),
-                })
-            }
-        })
-        .collect()
-}
-
 /// Get the diff for a specific file in a historical commit.
 pub fn get_commit_file_diff(
     repo_path: &str,
     commit_id: &str,
     file_path: &str,
 ) -> Result<FileDiff, AppError> {
-    let output = git_cmd()
-        .args(["diff", &format!("{commit_id}^"), commit_id, "--", file_path])
-        .current_dir(repo_path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
+    // Root commits have no `commit^`, so git exits non-zero here — fall back to
+    // an empty diff rather than erroring (matches the previous behaviour).
+    let diff_text = capture(
+        repo_path,
+        &["diff", &format!("{commit_id}^"), commit_id, "--", file_path],
+        &[],
+    )
+    .unwrap_or_default();
 
-    let diff_text = String::from_utf8_lossy(&output.stdout);
-
-    if has_binary_marker(&diff_text) {
+    if parse::has_binary_marker(&diff_text) {
         return Ok(FileDiff {
             path: file_path.to_string(),
             hunks: vec![],
@@ -2340,7 +1369,7 @@ pub fn get_commit_file_diff(
 
     Ok(truncate_diff(FileDiff {
         path: file_path.to_string(),
-        hunks: parse_unified_diff(&diff_text),
+        hunks: parse::unified_diff(&diff_text),
         is_binary: false,
         is_truncated: false,
         total_lines: 0,
@@ -2350,13 +1379,12 @@ pub fn get_commit_file_diff(
 /// List all stashes with commit and parent IDs.
 pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
     // Use --format to get: <stash_hash>\t<parent_hash>\t<refname>\t<message>
-    let output = git_cmd()
-        .args(["stash", "list", "--format=%H%x09%P%x09%gd%x09%gs"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
-
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = capture(
+        path,
+        &["stash", "list", "--format=%H%x09%P%x09%gd%x09%gs"],
+        &[],
+    )
+    .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
     let mut stashes = Vec::new();
 
     for (idx, line) in text.lines().enumerate() {
@@ -2381,17 +1409,11 @@ pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
 /// Pre-flight check: verify every dirty file is readable/writable before stashing.
 /// Returns `Ok(())` if all files are accessible, or an error naming the locked files.
 fn preflight_check_files(path: &str) -> Result<(), AppError> {
-    let output = git_cmd()
-        .args(["status", "--porcelain=v1", "-uall"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git status: {e}")))?;
-
-    if !output.status.success() {
-        return Ok(()); // can't determine dirty files — skip the check, don't block
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
+    // If status can't be determined, skip the check rather than block the stash.
+    let text = match capture(path, &["status", "--porcelain=v1", "-uall"], &[]) {
+        Ok(text) => text,
+        Err(_) => return Ok(()),
+    };
     let mut locked = Vec::new();
     for line in text.lines() {
         if line.len() < 4 {
@@ -2554,21 +1576,21 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
     // changes are all-new files would otherwise report zero files here and the
     // detail panel would show only the description. The flag is harmless on
     // stashes with no untracked component.
-    let output = git_cmd()
-        .args(["stash", "show", "-u", "--name-status", &stash_ref])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+    let text = capture(
+        path,
+        &["stash", "show", "-u", "--name-status", &stash_ref],
+        &[],
+    )
+    .unwrap_or_default();
 
     let numstat = parse_numstat(path, &["stash", "show", "-u", "--numstat", &stash_ref]);
 
-    let text = String::from_utf8_lossy(&output.stdout);
     let mut files = Vec::new();
 
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(2, '\t').collect();
         if parts.len() == 2 {
-            let file_path = unquote_git_path(parts[1]);
+            let file_path = parse::unquote_git_path(parts[1]);
             let status_type = match parts[0] {
                 "A" => "added",
                 "M" => "modified",
@@ -2598,19 +1620,18 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
 
 /// List all tags with their commit SHAs and messages.
 pub fn list_tags(path: &str) -> Result<Vec<TagInfo>, AppError> {
-    let output = git_cmd()
-        .args([
+    let text = capture(
+        path,
+        &[
             "tag",
             "-l",
             "--sort=-creatordate",
             // *objectname = dereferenced commit (annotated tags), objectname = tag/commit SHA
             "--format=%(refname:short)\t%(*objectname:short)\t%(objectname:short)\t%(contents:subject)",
-        ])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
-
-    let text = String::from_utf8_lossy(&output.stdout);
+        ],
+        &[],
+    )
+    .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
     let mut tags = Vec::new();
 
     for line in text.lines() {
@@ -2695,19 +1716,18 @@ pub fn get_stash_file_diff(
     file_path: &str,
 ) -> Result<FileDiff, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
-    let output = git_cmd()
-        .args([
+    let mut diff_text = capture(
+        repo_path,
+        &[
             "diff",
             &format!("{stash_ref}^"),
             &stash_ref,
             "--",
             file_path,
-        ])
-        .current_dir(repo_path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
-
-    let mut diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+        ],
+        &[],
+    )
+    .unwrap_or_default();
 
     // Untracked files live in the stash's `^3` parent, not in the main stash
     // commit, so the diff above is empty for them. Fall back to diffing the base
@@ -2715,23 +1735,22 @@ pub fn get_stash_file_diff(
     // `^3` only exists for stashes created with `-u`; if it's absent the diff
     // errors out and we keep the (empty) original result.
     if diff_text.is_empty() {
-        let untracked = git_cmd()
-            .args([
+        if let Ok(untracked) = capture(
+            repo_path,
+            &[
                 "diff",
                 &format!("{stash_ref}^"),
                 &format!("{stash_ref}^3"),
                 "--",
                 file_path,
-            ])
-            .current_dir(repo_path)
-            .output()
-            .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
-        if untracked.status.success() {
-            diff_text = String::from_utf8_lossy(&untracked.stdout).to_string();
+            ],
+            &[],
+        ) {
+            diff_text = untracked;
         }
     }
 
-    if has_binary_marker(&diff_text) {
+    if parse::has_binary_marker(&diff_text) {
         return Ok(FileDiff {
             path: file_path.to_string(),
             hunks: vec![],
@@ -2743,7 +1762,7 @@ pub fn get_stash_file_diff(
 
     Ok(truncate_diff(FileDiff {
         path: file_path.to_string(),
-        hunks: parse_unified_diff(&diff_text),
+        hunks: parse::unified_diff(&diff_text),
         is_binary: false,
         is_truncated: false,
         total_lines: 0,
@@ -2773,18 +1792,8 @@ pub fn get_file_blob(
             } else {
                 format!("{r}:{file_path}")
             };
-            let output = git_cmd()
-                .args(["show", &spec])
-                .current_dir(repo_path)
-                .output()
-                .map_err(|e| AppError::Other(format!("Failed to run git show: {e}")))?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(AppError::Other(format!("git show failed: {stderr}")));
-            }
-
-            let content = String::from_utf8_lossy(&output.stdout);
+            let content = capture(repo_path, &["show", &spec], &[])
+                .map_err(|e| AppError::Other(format!("git show failed: {e}")))?;
             Ok(content.lines().map(String::from).collect())
         }
     }
@@ -2818,15 +1827,10 @@ pub fn get_binary_blob_base64(
             } else {
                 format!("{r}:{file_path}")
             };
-            let output = git_cmd()
-                .args(["show", &spec])
-                .current_dir(repo_path)
-                .output()
-                .map_err(|e| AppError::Other(format!("Failed to run git show: {e}")))?;
-            if !output.status.success() {
-                return Ok(None);
+            match capture_bytes(repo_path, &["show", &spec], &[]) {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(None),
             }
-            output.stdout
         }
     };
 
@@ -2835,13 +1839,7 @@ pub fn get_binary_blob_base64(
 
 /// Get the last undoable action from the reflog.
 pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
-    let output = git_cmd()
-        .args(["reflog", "--format=%H %gs", "-n", "1"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to read reflog: {e}")))?;
-
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = capture(path, &["reflog", "--format=%H %gs", "-n", "1"], &[]).unwrap_or_default();
     let line = text.trim();
 
     if line.is_empty() {
@@ -2897,13 +1895,7 @@ fn classify_reflog_action(action: &str) -> (bool, String) {
 
 /// Execute an undo by reading the reflog and performing the inverse operation.
 pub fn undo_last(path: &str, extra_env: &[(String, String)]) -> Result<String, AppError> {
-    let output = git_cmd()
-        .args(["reflog", "--format=%H %gs", "-n", "2"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to read reflog: {e}")))?;
-
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = capture(path, &["reflog", "--format=%H %gs", "-n", "2"], &[]).unwrap_or_default();
     let lines: Vec<&str> = text.trim().lines().collect();
 
     if lines.is_empty() {

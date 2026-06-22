@@ -1,4 +1,5 @@
 import type { FileDiff, DiffHunk } from "@/types/git";
+import { changeableKeysInHunk, lineKey } from "@/lib/diff-selection";
 
 /**
  * Generate a unified diff patch from selected lines for `git apply --cached`.
@@ -46,7 +47,7 @@ function buildPatchHunk(
   const hasSelection = hunk.lines.some(
     (line, li) =>
       (line.origin === "+" || line.origin === "-") &&
-      selectedLines.has(`${hunkIndex}:${li}`),
+      selectedLines.has(lineKey(hunkIndex, li)),
   );
 
   if (!hasSelection) return null;
@@ -57,8 +58,7 @@ function buildPatchHunk(
 
   for (let li = 0; li < hunk.lines.length; li++) {
     const line = hunk.lines[li];
-    const key = `${hunkIndex}:${li}`;
-    const isSelected = selectedLines.has(key);
+    const isSelected = selectedLines.has(lineKey(hunkIndex, li));
 
     if (line.origin === " ") {
       // Context line — always include
@@ -98,15 +98,8 @@ export function generateHunkPatch(diff: FileDiff, hunkIndex: number): string {
   const hunk = diff.hunks[hunkIndex];
   if (!hunk) return "";
 
-  // Select all changeable lines in this hunk
-  const allLines = new Set<string>();
-  hunk.lines.forEach((line, li) => {
-    if (line.origin === "+" || line.origin === "-") {
-      allLines.add(`${hunkIndex}:${li}`);
-    }
-  });
-
-  return generatePatch(diff, allLines);
+  // Select all changeable lines in this hunk.
+  return generatePatch(diff, new Set(changeableKeysInHunk(hunk, hunkIndex)));
 }
 
 /**

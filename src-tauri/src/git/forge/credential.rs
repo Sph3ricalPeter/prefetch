@@ -1,7 +1,7 @@
 //! Credential injection — authenticated HTTPS remote URLs for git CLI operations.
 
+use crate::git::exec::run_git;
 use crate::git::forge::{detect_forge, keychain, provider};
-use crate::git::repository::run_git;
 
 /// An authenticated remote URL paired with environment and CLI overrides
 /// that suppress Git Credential Manager for this command.

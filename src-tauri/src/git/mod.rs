@@ -1,6 +1,9 @@
+pub mod conflict;
+pub mod exec;
 pub mod forge;
 pub mod graph;
 pub mod lfs;
+pub mod parse;
 pub mod profile;
 pub mod repository;
 pub mod types;

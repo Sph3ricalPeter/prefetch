@@ -1,10 +1,10 @@
 //! Git LFS support — all operations call the `git lfs` CLI.
 //!
-//! Reuses `run_git` / `git_cmd` from `repository` so Windows
-//! console-window suppression and error handling are consistent.
+//! Reuses `run_git` / `git_cmd` from the git-invocation module (`exec`) so
+//! Windows console-window suppression and error handling are consistent.
 
 use crate::error::AppError;
-use crate::git::repository::{git_cmd, run_git};
+use crate::git::exec::{git_cmd, run_git};
 use crate::git::types::{LfsFileInfo, LfsInfo, LfsTrackPattern};
 use std::path::Path;
 use tracing::{debug, warn};

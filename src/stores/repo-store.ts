@@ -257,6 +257,37 @@ async function handleConflictError(
   }
 }
 
+/**
+ * Apply the result of a merge-like operation (merge / rebase / cherry-pick /
+ * revert / their continue) that succeeded without throwing.
+ *
+ * Reloads repo data, working-tree status, and conflict state together, writes
+ * them to the store, and — when the operation left conflicts — analyzes
+ * auto-resolved files and auto-selects the first conflicted file. Returns the
+ * fresh conflict state so the caller can pick its own success/conflict messaging
+ * and any operation-specific follow-up (rebase progress, MERGE_MSG prefill).
+ *
+ * This is the success-path twin of [handleConflictError]; both keep the
+ * conflict-entry choreography in one place.
+ */
+async function reloadAfterMergeLike(
+  set: (state: Partial<RepoState>) => void,
+  get: () => RepoState,
+  extra?: Partial<RepoState>,
+) {
+  const [repoData, statuses, conflict] = await Promise.all([
+    fetchRepoData(),
+    getFileStatus(),
+    getConflictState(),
+  ]);
+  set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict, ...extra });
+  if (conflict.in_progress) {
+    analyzeConflictFiles(statuses, set).catch(() => {});
+    autoSelectFirstConflict(statuses, get);
+  }
+  return conflict;
+}
+
 interface RepoState {
   repoPath: string | null;
   repoName: string | null;
@@ -1675,11 +1706,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await cherryPickCommit(commitId);
-      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      const conflict = await reloadAfterMergeLike(set, get);
       if (conflict.in_progress) {
-        analyzeConflictFiles(statuses, set).catch(() => {});
-        autoSelectFirstConflict(statuses, get);
         toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
       } else {
         toast.success("Cherry-pick successful");
@@ -1693,11 +1721,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await rebaseOntoCmd(targetBranch);
-      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      const conflict = await reloadAfterMergeLike(set, get);
       if (conflict.in_progress) {
-        analyzeConflictFiles(statuses, set).catch(() => {});
-        autoSelectFirstConflict(statuses, get);
         if (conflict.operation === "rebase") {
           const progress = await getRebaseProgressCmd().catch(() => null);
           set({ rebaseProgress: progress });
@@ -1726,11 +1751,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await mergeBranchCmd(target);
-      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      const conflict = await reloadAfterMergeLike(set, get);
       if (conflict.in_progress) {
-        analyzeConflictFiles(statuses, set).catch(() => {});
-        autoSelectFirstConflict(statuses, get);
         // Pre-fill commit message from MERGE_MSG
         const mergeMsg = await getMergeMessageCmd().catch(() => null);
         if (mergeMsg) set({ commitMessage: mergeMsg });
@@ -1781,11 +1803,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await revertCommitCmd(commitId);
-      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      const conflict = await reloadAfterMergeLike(set, get);
       if (conflict.in_progress) {
-        analyzeConflictFiles(statuses, set).catch(() => {});
-        autoSelectFirstConflict(statuses, get);
         toast.error("Revert has conflicts — resolve them, then continue or abort");
       } else {
         toast.success(`Reverted ${commitId.slice(0, 7)}`);
@@ -1943,11 +1962,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await continueOperationCmd(message);
-      const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
-      set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict });
+      const conflict = await reloadAfterMergeLike(set, get);
       if (conflict.in_progress) {
-        analyzeConflictFiles(statuses, set).catch(() => {});
-        autoSelectFirstConflict(statuses, get);
         // Rebase advanced to next commit — load new progress
         if (conflict.operation === "rebase") {
           const progress = await getRebaseProgressCmd().catch(() => null);

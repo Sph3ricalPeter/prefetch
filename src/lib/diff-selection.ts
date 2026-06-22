@@ -1,20 +1,39 @@
-import type { FileDiff } from "@/types/git";
+import type { DiffHunk, FileDiff } from "@/types/git";
 
 /**
- * Ordered list of selectable ("+"/"-") line keys (`"${hunkIndex}:${lineIndex}"`)
- * across a diff. Used to compute contiguous ranges for drag/shift selection.
+ * Canonical key for a single diff line: `"${hunkIndex}:${lineIndex}"`.
+ *
+ * This is the one place the line-key format is defined. The patch generator
+ * ([generatePatch](./patch.ts)) and the selection hook
+ * ([useDiffLineSelection](../hooks/use-diff-line-selection.ts)) build and parse
+ * keys through here so a change to the encoding stays local.
  */
-export function buildChangeableKeys(diff: FileDiff): string[] {
+export function lineKey(hunkIndex: number, lineIndex: number): string {
+  return `${hunkIndex}:${lineIndex}`;
+}
+
+/** Parse a line key back into its hunk and line indices. */
+export function parseLineKey(key: string): { hunk: number; line: number } {
+  const [hunk, line] = key.split(":").map(Number);
+  return { hunk, line };
+}
+
+/** Keys of the selectable ("+"/"-") lines within a single hunk, in order. */
+export function changeableKeysInHunk(hunk: DiffHunk, hunkIndex: number): string[] {
   const keys: string[] = [];
-  for (let hi = 0; hi < diff.hunks.length; hi++) {
-    const lines = diff.hunks[hi].lines;
-    for (let li = 0; li < lines.length; li++) {
-      if (lines[li].origin === "+" || lines[li].origin === "-") {
-        keys.push(`${hi}:${li}`);
-      }
-    }
+  for (let li = 0; li < hunk.lines.length; li++) {
+    const origin = hunk.lines[li].origin;
+    if (origin === "+" || origin === "-") keys.push(lineKey(hunkIndex, li));
   }
   return keys;
+}
+
+/**
+ * Ordered list of selectable ("+"/"-") line keys across a diff. Used to compute
+ * contiguous ranges for drag/shift selection.
+ */
+export function buildChangeableKeys(diff: FileDiff): string[] {
+  return diff.hunks.flatMap((hunk, hi) => changeableKeysInHunk(hunk, hi));
 }
 
 /**
@@ -36,7 +55,7 @@ export function buildSelectionRef(
   const newNos: number[] = [];
   const oldNos: number[] = [];
   for (const key of selectedLines) {
-    const [hi, li] = key.split(":").map(Number);
+    const { hunk: hi, line: li } = parseLineKey(key);
     const line = diff.hunks[hi]?.lines[li];
     if (!line) continue;
     if (line.new_lineno != null) newNos.push(line.new_lineno);
@@ -73,7 +92,7 @@ export function buildSelectionContent(diff: FileDiff, selectedLines: Set<string>
 
   changeableKeys.forEach((key, idx) => {
     if (!selectedLines.has(key)) return;
-    const [hi, li] = key.split(":").map(Number);
+    const { hunk: hi, line: li } = parseLineKey(key);
     const line = diff.hunks[hi]?.lines[li];
     if (!line) return;
     // New block when this line isn't the immediate next changeable line, or it

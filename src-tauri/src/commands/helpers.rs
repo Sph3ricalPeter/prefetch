@@ -1,7 +1,7 @@
 //! Shared helpers for Tauri command handlers.
 
 use crate::error::AppError;
-use crate::git::repository;
+use crate::git::exec;
 use crate::AppState;
 use tauri::State;
 
@@ -24,7 +24,7 @@ pub fn get_profile_env(state: &State<'_, AppState>) -> Vec<(String, String)> {
         .lock()
         .ok()
         .and_then(|guard| guard.clone());
-    repository::profile_env(&profile)
+    exec::profile_env(&profile)
 }
 
 /// Extract the active profile's ID (for profile-scoped token lookup).

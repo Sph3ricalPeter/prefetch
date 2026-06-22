@@ -73,7 +73,7 @@ pub fn open_repo(
     // Scrub any leaked credentials from the origin URL (e.g. from an earlier
     // clone that embedded x-token-auth:TOKEN@ in the remote).
     // Only strip user:pass@ (contains colon), not plain user@ (legitimate).
-    if let Ok(url) = repository::run_git(&path, &["remote", "get-url", "origin"], &[]) {
+    if let Ok(url) = crate::git::exec::run_git(&path, &["remote", "get-url", "origin"], &[]) {
         let url = url.trim();
         if url.starts_with("https://") {
             let without_scheme = url.strip_prefix("https://").unwrap_or(url);
@@ -81,8 +81,11 @@ pub fn open_repo(
                 let userinfo = &without_scheme[..at_pos];
                 if userinfo.contains(':') {
                     let clean = format!("https://{}", &without_scheme[at_pos + 1..]);
-                    let _ =
-                        repository::run_git(&path, &["remote", "set-url", "origin", &clean], &[]);
+                    let _ = crate::git::exec::run_git(
+                        &path,
+                        &["remote", "set-url", "origin", &clean],
+                        &[],
+                    );
                     debug!("scrubbed credentials from origin URL");
                 }
             }

@@ -1,20 +1,6 @@
+use crate::git::exec::{profile_env, run_git};
 use crate::git::forge;
 use crate::git::profile::ActiveProfile;
-use crate::git::repository::profile_env;
-use std::process::Command;
-use tracing::debug;
-
-/// Configure a Command to hide the console window on Windows.
-#[cfg(target_os = "windows")]
-fn hide_console_window(cmd: &mut Command) -> &mut Command {
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x08000000) // CREATE_NO_WINDOW
-}
-
-#[cfg(not(target_os = "windows"))]
-fn hide_console_window(cmd: &mut Command) -> &mut Command {
-    cmd
-}
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -77,44 +63,26 @@ impl BackgroundFetcher {
                     return;
                 }
 
-                // Run git fetch, injecting forge credentials for HTTPS remotes
-                // and profile env vars for SSH key injection
-                let mut cmd = Command::new("git");
-                for (k, v) in &env_vars {
-                    cmd.env(k, v);
-                }
-                if let Some(authed) = forge::authenticated_remote_url(&repo_path, pid.as_deref()) {
-                    // Suppress GCM to prevent caching of embedded credentials
-                    for (k, v) in &authed.extra_env {
-                        cmd.env(k, v);
-                    }
-                    // -c flags must come before the subcommand
-                    let mut args: Vec<String> = authed.extra_args.clone();
-                    args.extend([
-                        "fetch".to_string(),
-                        authed.url.clone(),
-                        "--prune".to_string(),
-                    ]);
-                    cmd.args(&args);
+                // Run git fetch through the invocation seam, injecting forge
+                // credentials for HTTPS remotes and profile env vars for SSH key
+                // injection. We don't inspect the result: the file watcher already
+                // detects the resulting .git/FETCH_HEAD and ref changes, so
+                // emitting REPO_CHANGED here would cause a redundant double reload.
+                let mut env = env_vars.clone();
+                let args: Vec<String> = if let Some(authed) =
+                    forge::authenticated_remote_url(&repo_path, pid.as_deref())
+                {
+                    // Suppress GCM to prevent caching of embedded credentials.
+                    env.extend(authed.extra_env.iter().cloned());
+                    // -c flags must come before the subcommand.
+                    let mut args = authed.extra_args.clone();
+                    args.extend(["fetch".into(), authed.url.clone(), "--prune".into()]);
+                    args
                 } else {
-                    cmd.args(["fetch", "--all", "--prune"]);
-                }
-                cmd.current_dir(&repo_path);
-                hide_console_window(&mut cmd);
-                let result = cmd.output();
-
-                if let Ok(output) = result {
-                    if output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        if !stderr.trim().is_empty() {
-                            debug!("background fetch got new data");
-                            // No need to emit REPO_CHANGED — the file watcher
-                            // already detects .git/FETCH_HEAD and ref changes
-                            // from the fetch. Emitting here would cause a
-                            // redundant double reload.
-                        }
-                    }
-                }
+                    vec!["fetch".into(), "--all".into(), "--prune".into()]
+                };
+                let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let _ = run_git(&repo_path, &arg_refs, &env);
             }
         });
 

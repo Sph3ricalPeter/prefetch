@@ -19,7 +19,10 @@ Two functions on the invocation module for two intents.
   toast (`"Done"` when empty).
 - `capture` — for **reads** (`rev-parse`, `name-rev`, `symbolic-ref`, `log`,
   `for-each-ref`…). Returns **clean stdout only**. Read callers must use this so
-  stderr warnings can't leak into parsed output.
+  stderr warnings can't leak into parsed output. `capture_bytes` is the raw-bytes
+  variant for binary blobs (`git show :2:file`) and size-guarded reads.
+- `run_git_with_progress` — for long ops (fetch/clone/pull) that stream stderr
+  progress to a callback.
 
 **Git output parsers** (`src-tauri/src/git/parse.rs`)
 Pure functions: text/bytes in, typed values out, no I/O. The parser interface is
@@ -32,19 +35,21 @@ Turning `git status --porcelain=v1` lines (the `XY path` columns) plus
 `--numstat` line counts into `FileStatus` values, including the 7 conflict
 combos (`UU` = both_modified, `AA` = both_added, …).
 
-**Conflict reconstruction** (`get_conflict_contents`)
+**Conflict reconstruction** (`src-tauri/src/git/conflict.rs`)
 Rebuilding the state of an in-progress merge/rebase/cherry-pick for the conflict
 editor: which content is base/ours/theirs, the commit ids, and the branch names.
-Split into a **gatherer** (the git calls and `.git/` reads) and a pure
-**conflict assembler** (below).
+Split into a **gatherer** (`gather` — the git calls and `.git/` reads, producing
+a `ConflictFacts` in git's orientation) and a pure **conflict assembler**
+(`assemble`, below).
 
 **Ours/theirs swap**
-The orientation rule the conflict assembler applies. During a rebase, git's
-stage 2 ("ours") is the branch being rebased *onto* and stage 3 ("theirs") is the
-user's branch — inverted from the user's mental model — so the assembler swaps
-them. During merge/cherry-pick, git's orientation already matches the user.
-This swap is the app's main source of inversion bugs; it lives in a pure
-function so it is testable with fabricated facts.
+The orientation rule the conflict assembler (`conflict::assemble`) applies.
+During a rebase, git's stage 2 ("ours") is the branch being rebased *onto* and
+stage 3 ("theirs") is the user's branch — inverted from the user's mental model —
+so the assembler swaps them. During merge/cherry-pick, git's orientation already
+matches the user. This swap is the app's main source of inversion bugs; it lives
+in a pure function (`assemble`, fed a `ConflictFacts`) so it is testable with
+fabricated facts — see the swap regression tests in `conflict.rs`.
 
 ## Forge
 

@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::error::AppError;
-use crate::git::repository::run_git;
+use crate::git::exec::run_git;
 use crate::git::types::{CiJob, ForgeConfig, ForgeKind, ForgeRepo, Pipeline, PrInfo};
 
 pub(crate) const USER_AGENT: &str = "prefetch-git-client/0.1";
