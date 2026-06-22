@@ -546,7 +546,10 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-card">
+    // shrink-0: as a flex child of the scrolling detail column, the section must
+    // keep its natural height instead of shrinking to fit — otherwise its
+    // overflow-hidden clips the content and the column never scrolls.
+    <div className="shrink-0 overflow-hidden rounded-md border border-border bg-card">
       <SectionHeader
         label={label}
         isOpen={isOpen}
