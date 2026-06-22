@@ -180,13 +180,9 @@ export function DetailPanel() {
     );
   }
 
-  return (
-    <div className="flex h-full flex-col items-center justify-center bg-background p-4">
-      <p className="text-sm text-muted-foreground">
-        Select a commit to view details
-      </p>
-    </div>
-  );
+  // Nothing to show. The detail column collapses to zero width (see app-layout),
+  // so the commit graph fills the whole card — no placeholder is rendered.
+  return null;
 }
 
 function FileListSkeleton() {
@@ -250,7 +246,7 @@ function CommitDetailView({
   });
 
   return (
-    <div className="flex h-full flex-col gap-2 overflow-y-auto bg-background py-2 pr-2 pl-2">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto [scrollbar-gutter:stable] bg-background py-2 pr-2 pl-2">
       {/* Commit section */}
       <CollapsibleSection
         label="Commit"
@@ -439,7 +435,7 @@ function StashDetailView({
   const fileQuery = useRepoStore((s) => s.filterQuery).trim().toLowerCase();
 
   return (
-    <div className="flex h-full flex-col gap-2 overflow-y-auto bg-background py-2 pr-2 pl-2">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto [scrollbar-gutter:stable] bg-background py-2 pr-2 pl-2">
       {/* Stash info */}
       <CollapsibleSection
         label="Stash"

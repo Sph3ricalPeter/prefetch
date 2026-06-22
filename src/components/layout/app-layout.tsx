@@ -67,12 +67,45 @@ export function AppLayout() {
     (s) => s.ciSelectedJobId != null && s.activeDiff === null && s.largeDiffPending === null,
   );
 
+  // Does the detail column have anything to show? Mirrors the render branches in
+  // detail-panel.tsx: a selected (and still-present) stash or commit, working-tree
+  // changes, or an in-progress conflict. When false the panel would render only its
+  // "Select a commit…" placeholder — so instead we collapse the column to zero width
+  // and let the commit graph fill the whole card.
+  const detailHasContent = useRepoStore((s) => {
+    if (
+      s.selectedStashIndex !== null &&
+      s.stashes.some((st) => st.index === s.selectedStashIndex)
+    )
+      return true;
+    if (s.selectedCommitId != null && s.commits.some((c) => c.id === s.selectedCommitId))
+      return true;
+    if (s.fileStatuses.length > 0) return true;
+    if (s.conflictState?.in_progress) return true;
+    return false;
+  });
+
+  // Collapse the detail column when it's empty (and not superseded by the CI log,
+  // which already owns the full card).
+  const detailCollapsed = !showCiLog && !detailHasContent;
+
+  // Mirror collapse state into a ref so the imperative width writers (applyWidths /
+  // the resize ResizeObserver, which run outside React render) don't pop a collapsed
+  // panel back open or clobber the remembered expanded width.
+  const detailCollapsedRef = useRef(detailCollapsed);
+  useEffect(() => {
+    detailCollapsedRef.current = detailCollapsed;
+  }, [detailCollapsed]);
+
   // ── Apply widths to both React state and the DOM refs ──────────────
   const applyWidths = useCallback((sb: number, dt: number) => {
     setSidebarWidth(sb);
     setDetailWidth(dt);
     if (sidebarRef.current) sidebarRef.current.style.width = `${sb}px`;
-    if (detailRef.current) detailRef.current.style.width = `${dt}px`;
+    // Skip the detail DOM write while collapsed — React's inline style holds it at 0,
+    // and a direct px write would briefly expand it.
+    if (detailRef.current && !detailCollapsedRef.current)
+      detailRef.current.style.width = `${dt}px`;
   }, []);
 
   // ── Restore saved widths on mount — retries if DB not initialized yet
@@ -123,13 +156,26 @@ export function AppLayout() {
 
     // Re-apply widths to the (possibly fresh) DOM refs
     if (sidebarRef.current) sidebarRef.current.style.width = `${sidebarWidth}px`;
-    if (detailRef.current) detailRef.current.style.width = `${detailWidth}px`;
+    if (detailRef.current && !detailCollapsedRef.current)
+      detailRef.current.style.width = `${detailWidth}px`;
 
     const observer = new ResizeObserver(() => {
       const available = container.clientWidth;
       const currentSb = sidebarRef.current?.getBoundingClientRect().width ?? sidebarWidth;
-      const currentDt = detailRef.current?.getBoundingClientRect().width ?? detailWidth;
 
+      // Detail collapsed → it takes no space, so only the sidebar can squeeze the
+      // center. Shrink just the sidebar; never feed the 0-width detail back into
+      // fitPanels (that would corrupt the remembered expanded width).
+      if (detailCollapsedRef.current) {
+        if (currentSb + CENTER_MIN > available) {
+          const sb = Math.max(SIDEBAR_MIN, available - CENTER_MIN);
+          setSidebarWidth(sb);
+          if (sidebarRef.current) sidebarRef.current.style.width = `${sb}px`;
+        }
+        return;
+      }
+
+      const currentDt = detailRef.current?.getBoundingClientRect().width ?? detailWidth;
       if (currentSb + currentDt + CENTER_MIN > available) {
         const fitted = fitPanels(currentSb, currentDt, available);
         applyWidths(fitted.sidebar, fitted.detail);
@@ -192,20 +238,30 @@ export function AppLayout() {
               </div>
 
               {/* Right detail column — hidden while the CI log owns the center
-                  pane (it spans the full card). Kept for graph / diff / conflicts. */}
+                  pane (it spans the full card). Kept for graph / diff / conflicts.
+                  When empty it collapses to zero width so the graph fills the card;
+                  the handle is dropped while collapsed. */}
               {!showCiLog && (
                 <>
-                  <ResizeHandle
-                    side="right"
-                    ghost
-                    panelRef={detailRef}
-                    minWidth={DETAIL_MIN}
-                    maxWidth={DETAIL_MAX}
-                    onResizeEnd={saveDetailWidth}
-                  />
+                  {!detailCollapsed && (
+                    <ResizeHandle
+                      side="right"
+                      ghost
+                      panelRef={detailRef}
+                      minWidth={DETAIL_MIN}
+                      maxWidth={DETAIL_MAX}
+                      onResizeEnd={saveDetailWidth}
+                    />
+                  )}
 
                   {/* Right detail — commit info / diff (flex-shrink default: shrinks when window narrows) */}
-                  <div ref={detailRef} style={{ width: detailWidth, minWidth: DETAIL_MIN }}>
+                  <div
+                    ref={detailRef}
+                    style={{
+                      width: detailCollapsed ? 0 : detailWidth,
+                      minWidth: detailCollapsed ? 0 : DETAIL_MIN,
+                    }}
+                  >
                     <DetailPanel />
                   </div>
                 </>
