@@ -43,6 +43,22 @@ interface KeyedExpandStates {
 
 const EMPTY_EXPAND_STATES = new Map<number, ExpandState>();
 
+// djb2 hash over hunk line content. Used to detect when a working-tree file's
+// content changes underneath an open diff: filePath + revision alone can't —
+// an uncommitted file keeps the same source identity while its bytes change.
+function hashHunks(hunks: DiffHunk[]): string {
+  let h = 5381;
+  for (const hunk of hunks) {
+    for (const line of hunk.lines) {
+      const s = line.origin + line.content;
+      for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) + h) ^ s.charCodeAt(i);
+      }
+    }
+  }
+  return (h >>> 0).toString(36);
+}
+
 export function useExpandableContext(
   hunks: DiffHunk[],
   filePath: string,
@@ -55,7 +71,14 @@ export function useExpandableContext(
   const fileLinesRef = useRef<KeyedLines | null>(null);
   const oldFileLinesRef = useRef<KeyedLines | null>(null);
 
-  const sourceKey = `${filePath}|${source.commitId ?? ""}|${source.stashIndex ?? ""}|${source.staged ?? false}`;
+  // Content signature, recomputed only when the hunks array identity changes
+  // (refreshActiveDiff produces a new array only on a real content change).
+  // Folded into sourceKey so an edit to an uncommitted file — which leaves
+  // filePath + revision unchanged — still invalidates the cached full-file
+  // lines, forcing a re-fetch + re-highlight instead of painting stale tokens.
+  const contentSig = useMemo(() => hashHunks(hunks), [hunks]);
+
+  const sourceKey = `${filePath}|${source.commitId ?? ""}|${source.stashIndex ?? ""}|${source.staged ?? false}|${contentSig}`;
 
   // Derive current-source values during render. If the stored entry was cached
   // for a different source, the getter returns null and any downstream effects
