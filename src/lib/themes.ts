@@ -420,6 +420,41 @@ export function getAppTheme(id: string): AppTheme {
 
 // ── Shiki theme definitions ──────────────────────────────────────────────
 
+// Markdown / markup token colors. The base tokenColors above only cover code
+// scopes (comment, string, keyword, …); markup scopes (`markup.bold`, headings,
+// inline code, links) have no rule, so Markdown renders almost entirely in the
+// default foreground with only punctuation greyed. Each theme appends these,
+// reusing its own palette so headings/bold/code/links pick up on-theme accents.
+function markdownTokens(p: {
+  heading: string;
+  strong: string;
+  code: string;
+  link: string;
+  quote: string;
+}): ShikiThemeDef["tokenColors"] {
+  return [
+    {
+      scope: ["heading", "markup.heading", "entity.name.section", "punctuation.definition.heading"],
+      settings: { foreground: p.heading, fontStyle: "bold" },
+    },
+    { scope: ["markup.bold", "punctuation.definition.bold"], settings: { foreground: p.strong, fontStyle: "bold" } },
+    { scope: ["markup.italic", "punctuation.definition.italic"], settings: { foreground: p.strong, fontStyle: "italic" } },
+    {
+      scope: ["markup.inline.raw", "markup.raw", "markup.fenced_code", "punctuation.definition.raw"],
+      settings: { foreground: p.code },
+    },
+    {
+      scope: ["markup.underline.link", "string.other.link", "constant.other.reference.link"],
+      settings: { foreground: p.link, fontStyle: "underline" },
+    },
+    { scope: ["markup.quote", "punctuation.definition.quote.begin"], settings: { foreground: p.quote, fontStyle: "italic" } },
+    {
+      scope: ["punctuation.definition.list.begin", "beginning.punctuation.definition.list"],
+      settings: { foreground: p.heading },
+    },
+  ];
+}
+
 const shikiMaterialDark: ShikiThemeDef = {
   name: "material-dark",
   type: "dark",
@@ -440,6 +475,7 @@ const shikiMaterialDark: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#71717a" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#93c5fd" } },
     { scope: ["constant.other"], settings: { foreground: "#2dd4bf" } },
+    ...markdownTokens({ heading: "#c084fc", strong: "#fbbf24", code: "#34d399", link: "#60a5fa", quote: "#52525b" }),
   ],
 };
 
@@ -464,6 +500,7 @@ const shikiVsDarkDimmed: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#606870" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#88b0d0" } },
     { scope: ["constant.other"], settings: { foreground: "#58a8c8" } },
+    ...markdownTokens({ heading: "#6a90b8", strong: "#58a898", code: "#b88468", link: "#c0b888", quote: "#5c7852" }),
   ],
 };
 
@@ -487,6 +524,7 @@ const shikiMinimalDark: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#909094" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#e4e4e4" } },
     { scope: ["constant.other"], settings: { foreground: "#c8b8e0" } },
+    ...markdownTokens({ heading: "#7ab0d8", strong: "#c8c8cc", code: "#d4c088", link: "#7ab0d8", quote: "#6a6a70" }),
   ],
 };
 
@@ -511,6 +549,7 @@ const shikiTokyoNight: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#565f89" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#73daca" } },
     { scope: ["constant.other"], settings: { foreground: "#ff9e64" } },
+    ...markdownTokens({ heading: "#bb9af7", strong: "#2ac3de", code: "#9ece6a", link: "#7aa2f7", quote: "#565f89" }),
   ],
 };
 
@@ -534,6 +573,7 @@ const shikiLight: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#a1a1aa" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#2563eb" } },
     { scope: ["constant.other"], settings: { foreground: "#0d9488" } },
+    ...markdownTokens({ heading: "#7c3aed", strong: "#d97706", code: "#16a34a", link: "#2563eb", quote: "#a1a1aa" }),
   ],
 };
 
@@ -812,6 +852,7 @@ const shikiVsDark: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#808080" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#9cdcfe" } },
     { scope: ["constant.other"], settings: { foreground: "#4fc1ff" } },
+    ...markdownTokens({ heading: "#569cd6", strong: "#4ec9b0", code: "#ce9178", link: "#4fc1ff", quote: "#6a9955" }),
   ],
 };
 
@@ -882,6 +923,7 @@ const shikiGithubDark: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#8b949e" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#79c0ff" } },
     { scope: ["constant.other"], settings: { foreground: "#79c0ff" } },
+    ...markdownTokens({ heading: "#79c0ff", strong: "#ff7b72", code: "#a5d6ff", link: "#79c0ff", quote: "#8b949e" }),
   ],
 };
 
@@ -952,6 +994,7 @@ const shikiMonokai: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#f8f8f2" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#f8f8f2" } },
     { scope: ["constant.other"], settings: { foreground: "#66d9ef" } },
+    ...markdownTokens({ heading: "#f92672", strong: "#66d9ef", code: "#e6db74", link: "#66d9ef", quote: "#75715e" }),
   ],
 };
 
@@ -1098,6 +1141,7 @@ const shikiCarbon: ShikiThemeDef = {
     { scope: ["punctuation"], settings: { foreground: "#6a6a6e" } },
     { scope: ["meta.object-literal.key"], settings: { foreground: "#63abcb" } },
     { scope: ["constant.other"], settings: { foreground: "#5795b0" } },
+    ...markdownTokens({ heading: "#a07dc8", strong: "#63abcb", code: "#cb9e74", link: "#63abcb", quote: "#71727b" }),
   ],
 };
 
