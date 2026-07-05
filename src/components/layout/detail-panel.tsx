@@ -16,8 +16,7 @@ import {
   ArrowRightLeft,
   HelpCircle,
 } from "lucide-react";
-import { parseCommitType, COMMIT_TYPE_META } from "@/lib/commit-type";
-import { COMMIT_TYPE_ICONS } from "@/lib/commit-type-icons";
+import { CommitMessageText } from "@/components/ui/commit-message-text";
 import { FileIcon } from "@/components/ui/file-icon";
 import {
   Tooltip,
@@ -254,30 +253,11 @@ function CommitDetailView({
         onToggle={() => setCommitOpen(!commitOpen)}
       >
         <div className="px-4 pb-4">
-          {/* Message — hero. Tint the conventional-commit type prefix + leading icon */}
-          {(() => {
-            const parsed = parseCommitType(commit.message);
-            if (!parsed) {
-              return <p className="text-sm text-foreground">{commit.message}</p>;
-            }
-            const meta = COMMIT_TYPE_META[parsed.type];
-            const TypeIcon = COMMIT_TYPE_ICONS[parsed.type];
-            return (
-              <p className="text-sm text-foreground flex items-baseline gap-1.5">
-                <TypeIcon
-                  className="h-3 w-3 shrink-0 translate-y-0.5"
-                  style={{ color: meta.color }}
-                  aria-hidden
-                />
-                <span>
-                  <span className="font-medium" style={{ color: meta.color }}>
-                    {parsed.prefix}
-                  </span>
-                  {commit.message.slice(parsed.prefix.length)}
-                </span>
-              </p>
-            );
-          })()}
+          {/* Message — hero. Tint every conventional-commit prefix + its icon */}
+          <CommitMessageText
+            message={commit.message}
+            className="text-sm text-foreground"
+          />
 
           {/* Body (description) */}
           {commit.body && (() => {

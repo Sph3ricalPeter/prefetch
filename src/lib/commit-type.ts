@@ -108,28 +108,56 @@ export const COMMIT_TYPE_ICON_NODES: Record<CommitType, IconNode> = {
   ],
 };
 
-const COMMIT_TYPE_RE =
-  /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?(!)?:/i;
+// Scan for conventional-commit prefixes wherever they begin a token — at the
+// start of the subject, or right after a non-word boundary char. This lets a
+// squashed subject like "fix(A): thing, feat(B): other" tint/icon BOTH the
+// leading `fix(A):` and the mid-subject `feat(B):`, not just the first. The
+// boundary char is captured separately so it stays part of the preceding text.
+const COMMIT_TYPE_SCAN_RE =
+  /(^|[^\w])(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?(!)?:/gi;
 
-export interface ParsedCommitType {
-  /** Normalized (lowercase) conventional-commit type. */
-  type: CommitType;
-  /** The matched prefix verbatim, up to and including the colon (e.g. "feat(api)!:"). */
-  prefix: string;
-  /** Whether the commit is marked breaking (trailing "!"). */
-  breaking: boolean;
-}
+/** One run of a commit subject: either plain text or a recognized type prefix. */
+export type CommitSegment =
+  | { kind: "text"; text: string }
+  | {
+      /** Conventional-commit prefix run (icon + tinted prefix). */
+      kind: "type";
+      /** Normalized (lowercase) conventional-commit type. */
+      type: CommitType;
+      /** The matched prefix verbatim, up to and including the colon (e.g. "feat(api)!:"). */
+      prefix: string;
+      /** Whether the prefix is marked breaking (trailing "!"). */
+      breaking: boolean;
+    };
 
 /**
- * Parse the conventional-commit type prefix from a commit subject.
- * Returns null when the subject doesn't start with a recognized type.
+ * Split a commit subject into alternating plain-text and typed-prefix segments.
+ * Every conventional-commit prefix that begins a token becomes a "type" segment
+ * (rendered with icon + color); the surrounding runs are "text". A subject with
+ * no recognized prefix yields a single "text" segment.
  */
-export function parseCommitType(message: string): ParsedCommitType | null {
-  const m = COMMIT_TYPE_RE.exec(message);
-  if (!m) return null;
-  return {
-    type: m[1].toLowerCase() as CommitType,
-    prefix: m[0],
-    breaking: m[3] === "!",
-  };
+export function parseCommitSegments(message: string): CommitSegment[] {
+  const segments: CommitSegment[] = [];
+  let cursor = 0;
+  COMMIT_TYPE_SCAN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = COMMIT_TYPE_SCAN_RE.exec(message)) !== null) {
+    const boundary = m[1];
+    const prefixStart = m.index + boundary.length;
+    const prefix = m[0].slice(boundary.length);
+    if (prefixStart > cursor) {
+      segments.push({ kind: "text", text: message.slice(cursor, prefixStart) });
+    }
+    segments.push({
+      kind: "type",
+      type: m[2].toLowerCase() as CommitType,
+      prefix,
+      breaking: m[4] === "!",
+    });
+    cursor = prefixStart + prefix.length;
+  }
+  if (cursor < message.length) {
+    segments.push({ kind: "text", text: message.slice(cursor) });
+  }
+  return segments;
 }

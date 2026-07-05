@@ -8,8 +8,13 @@ import type {
   TagInfo,
 } from "@/types/git";
 import { loadAvatarForEmail } from "@/lib/avatar-load";
-import { parseCommitType, COMMIT_TYPE_META, COMMIT_TYPE_ICON_NODES } from "@/lib/commit-type";
-import { COMMIT_TYPE_ICONS } from "@/lib/commit-type-icons";
+import {
+  parseCommitSegments,
+  COMMIT_TYPE_META,
+  COMMIT_TYPE_ICON_NODES,
+  type CommitSegment,
+} from "@/lib/commit-type";
+import { CommitMessageText } from "@/components/ui/commit-message-text";
 import { GRAPH_DENSITY, resolveGraphMetrics, type GraphDensity } from "@/lib/graph-density";
 import {
   branchColor,
@@ -432,6 +437,84 @@ function drawLucideIcon(
     }
   }
   ctx.restore();
+}
+
+// -- Commit subject (conventional-commit segments) ----------------------------
+
+/** Total drawn width of a subject: every type prefix costs its icon + gap +
+ *  prefix text; plain runs cost their measured text. `ctx.font` must already be
+ *  the body font. */
+function measureCommitSubject(
+  ctx: CanvasRenderingContext2D,
+  segments: CommitSegment[],
+): number {
+  let w = 0;
+  for (const seg of segments) {
+    if (seg.kind === "type") {
+      w += TYPE_ICON_SIZE + TYPE_ICON_GAP + cachedMeasureText(ctx, seg.prefix);
+    } else {
+      w += cachedMeasureText(ctx, seg.text);
+    }
+  }
+  return w;
+}
+
+/** Draw a commit subject at (x, y) with each conventional-commit prefix (even
+ *  mid-subject ones) icon-prefixed and tinted; plain runs use `fgColor`.
+ *  Truncates to `maxWidth` with an ellipsis. `ctx.font` must be the body font. */
+function drawCommitSubject(
+  ctx: CanvasRenderingContext2D,
+  segments: CommitSegment[],
+  x: number,
+  y: number,
+  maxWidth: number,
+  fgColor: string,
+  query: string,
+  fontSize: number,
+): void {
+  let cx = x;
+  for (const seg of segments) {
+    const remaining = maxWidth - (cx - x);
+    if (remaining <= 0) break;
+    if (seg.kind === "type") {
+      const iconAdvance = TYPE_ICON_SIZE + TYPE_ICON_GAP;
+      // Not enough room for even the icon — draw an ellipsis in the fg and stop.
+      if (iconAdvance >= remaining) {
+        ctx.fillStyle = fgColor;
+        ctx.fillText("…", cx, y);
+        break;
+      }
+      const color = COMMIT_TYPE_META[seg.type].color;
+      drawLucideIcon(ctx, COMMIT_TYPE_ICON_NODES[seg.type], cx, y, TYPE_ICON_SIZE, color);
+      cx += iconAdvance;
+      const prefixRemaining = maxWidth - (cx - x);
+      const prefixW = cachedMeasureText(ctx, seg.prefix);
+      ctx.fillStyle = color;
+      if (prefixW <= prefixRemaining) {
+        drawSearchHighlight(ctx, seg.prefix, cx, y, query, fontSize);
+        ctx.fillText(seg.prefix, cx, y);
+        cx += prefixW;
+      } else {
+        const trunc = truncateText(ctx, seg.prefix, prefixRemaining);
+        drawSearchHighlight(ctx, trunc, cx, y, query, fontSize);
+        ctx.fillText(trunc, cx, y);
+        break;
+      }
+    } else {
+      const textW = cachedMeasureText(ctx, seg.text);
+      ctx.fillStyle = fgColor;
+      if (textW <= remaining) {
+        drawSearchHighlight(ctx, seg.text, cx, y, query, fontSize);
+        ctx.fillText(seg.text, cx, y);
+        cx += textW;
+      } else {
+        const trunc = truncateText(ctx, seg.text, remaining);
+        drawSearchHighlight(ctx, trunc, cx, y, query, fontSize);
+        ctx.fillText(trunc, cx, y);
+        break;
+      }
+    }
+  }
 }
 
 // -- Icon wrappers (same signatures as before, backed by lucide data) ---------
@@ -1713,62 +1796,26 @@ export function CommitGraphCanvas({
       const msgAvail = Math.max(0, msgRight - msgLeft);
       ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
 
-      // Conventional-commit type: draw its icon, then tint the "feat:" prefix
-      // in its color; the rest of the subject stays default foreground.
-      const parsedType = parseCommitType(commit.message);
-      const typeColor = parsedType ? COMMIT_TYPE_META[parsedType.type].color : "";
-      const typeIconAdvance = parsedType ? TYPE_ICON_SIZE + TYPE_ICON_GAP : 0;
-      if (parsedType) {
-        drawLucideIcon(ctx, COMMIT_TYPE_ICON_NODES[parsedType.type], msgLeft, y, TYPE_ICON_SIZE, typeColor);
-      }
-      const textLeft = msgLeft + typeIconAdvance;
-      const textAvail = msgAvail - typeIconAdvance;
-      const fullMsgWidth = cachedMeasureText(ctx, commit.message);
-      if (fullMsgWidth <= textAvail) {
-        if (parsedType) {
-          ctx.fillStyle = typeColor;
-          drawSearchHighlight(ctx, parsedType.prefix, textLeft, y, hq, fontCfg.sizeBody);
-          ctx.fillText(parsedType.prefix, textLeft, y);
-          const prefixW = cachedMeasureText(ctx, parsedType.prefix);
-          ctx.fillStyle = graphColors.fg;
-          const restText = commit.message.slice(parsedType.prefix.length);
-          drawSearchHighlight(ctx, restText, textLeft + prefixW, y, hq, fontCfg.sizeBody);
-          ctx.fillText(restText, textLeft + prefixW, y);
-        } else {
-          ctx.fillStyle = graphColors.fg;
-          drawSearchHighlight(ctx, commit.message, textLeft, y, hq, fontCfg.sizeBody);
-          ctx.fillText(commit.message, textLeft, y);
-        }
+      // Conventional-commit types: icon + tinted prefix for EVERY prefix in the
+      // subject (leading and mid-subject), rest stays default foreground.
+      const msgSegments = parseCommitSegments(commit.message);
+      const fullMsgWidth = measureCommitSubject(ctx, msgSegments);
+      drawCommitSubject(ctx, msgSegments, msgLeft, y, msgAvail, graphColors.fg, hq, fontCfg.sizeBody);
 
-        if (commit.body) {
-          const bodyGap = 8;
-          const bodyX = textLeft + fullMsgWidth + bodyGap;
-          const bodyAvailW = textAvail - fullMsgWidth - bodyGap;
-          if (bodyAvailW > 30) {
-            // Body preview is secondary *body* text → use `muted`, not the
-            // darker `dim` tier (which is reserved for sha/date/email captions).
-            ctx.fillStyle = graphColors.muted;
-            const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
-            const bodyText = truncateText(ctx, bodyOneLine, bodyAvailW);
-            drawSearchHighlight(ctx, bodyText, bodyX, y, hq, fontCfg.sizeBody);
-            ctx.fillText(bodyText, bodyX, y);
-          }
+      // Body preview only when the whole subject fit (no ellipsis eaten space).
+      if (commit.body && fullMsgWidth <= msgAvail) {
+        const bodyGap = 8;
+        const bodyX = msgLeft + fullMsgWidth + bodyGap;
+        const bodyAvailW = msgAvail - fullMsgWidth - bodyGap;
+        if (bodyAvailW > 30) {
+          // Body preview is secondary *body* text → use `muted`, not the
+          // darker `dim` tier (which is reserved for sha/date/email captions).
+          ctx.fillStyle = graphColors.muted;
+          const bodyOneLine = commit.body.replace(/\n/g, " ").trim();
+          const bodyText = truncateText(ctx, bodyOneLine, bodyAvailW);
+          drawSearchHighlight(ctx, bodyText, bodyX, y, hq, fontCfg.sizeBody);
+          ctx.fillText(bodyText, bodyX, y);
         }
-      } else if (parsedType) {
-        ctx.fillStyle = typeColor;
-        drawSearchHighlight(ctx, parsedType.prefix, textLeft, y, hq, fontCfg.sizeBody);
-        ctx.fillText(parsedType.prefix, textLeft, y);
-        const prefixW = cachedMeasureText(ctx, parsedType.prefix);
-        ctx.fillStyle = graphColors.fg;
-        const rest = commit.message.slice(parsedType.prefix.length);
-        const restTrunc = truncateText(ctx, rest, Math.max(0, textAvail - prefixW));
-        drawSearchHighlight(ctx, restTrunc, textLeft + prefixW, y, hq, fontCfg.sizeBody);
-        ctx.fillText(restTrunc, textLeft + prefixW, y);
-      } else {
-        ctx.fillStyle = graphColors.fg;
-        const msgTrunc = truncateText(ctx, commit.message, textAvail);
-        drawSearchHighlight(ctx, msgTrunc, textLeft, y, hq, fontCfg.sizeBody);
-        ctx.fillText(msgTrunc, textLeft, y);
       }
 
       // Author column — show name + email when space allows
@@ -2205,27 +2252,12 @@ export function CommitGraphCanvas({
           >
             {hasText && (
               <div className="flex flex-col gap-1">
-                {subject && (() => {
-                  const parsed = parseCommitType(subject);
-                  if (!parsed) {
-                    return <p className="font-medium leading-snug">{subject}</p>;
-                  }
-                  const meta = COMMIT_TYPE_META[parsed.type];
-                  const TypeIcon = COMMIT_TYPE_ICONS[parsed.type];
-                  return (
-                    <p className="flex items-baseline gap-1.5 font-medium leading-snug">
-                      <TypeIcon
-                        className="h-3 w-3 shrink-0 translate-y-0.5"
-                        style={{ color: meta.color }}
-                        aria-hidden
-                      />
-                      <span>
-                        <span style={{ color: meta.color }}>{parsed.prefix}</span>
-                        {subject.slice(parsed.prefix.length)}
-                      </span>
-                    </p>
-                  );
-                })()}
+                {subject && (
+                  <CommitMessageText
+                    message={subject}
+                    className="font-medium leading-snug"
+                  />
+                )}
                 {body && (
                   <p className="whitespace-pre-wrap leading-snug text-muted-foreground">{body}</p>
                 )}
