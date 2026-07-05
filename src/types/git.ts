@@ -72,6 +72,8 @@ export type ConflictType =
 
 export interface FileStatus {
   path: string;
+  /** For renames/copies: the pre-rename path. `path` is always the new path. */
+  old_path: string | null;
   status_type: StatusType;
   is_staged: boolean;
   additions: number | null;

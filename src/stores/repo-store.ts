@@ -1261,7 +1261,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   unstage: async (paths) => {
     set({ isLoading: true });
     try {
-      await unstageFilesCmd(paths);
+      // Staged renames occupy two index entries (delete old + add new);
+      // reset both so the rename unstages cleanly.
+      const byPath = new Map(get().fileStatuses.map((f) => [f.path, f]));
+      const withRenameOrigins = paths.flatMap((p) => {
+        const oldPath = byPath.get(p)?.old_path;
+        return oldPath ? [p, oldPath] : [p];
+      });
+      await unstageFilesCmd(withRenameOrigins);
       await get().loadStatus();
       const { selectedFilePath } = get();
       if (selectedFilePath && paths.includes(selectedFilePath)) {

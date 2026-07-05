@@ -1309,37 +1309,7 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
 
     let numstat = numstat_handle.join().unwrap_or_default();
 
-    let mut files = Vec::new();
-
-    for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(2, '\t').collect();
-        if parts.len() == 2 {
-            let file_path = parse::unquote_git_path(parts[1]);
-            let status_type = match parts[0] {
-                "A" => "added",
-                "M" => "modified",
-                "D" => "deleted",
-                "R" => "renamed",
-                _ => "modified",
-            }
-            .to_string();
-            let (additions, deletions) = numstat
-                .get(&file_path)
-                .map(|&(a, d)| (Some(a), Some(d)))
-                .unwrap_or((None, None));
-            files.push(FileStatus {
-                path: file_path,
-                status_type,
-                is_staged: true,
-                additions,
-                deletions,
-                is_conflicted: false,
-                conflict_type: None,
-            });
-        }
-    }
-
-    Ok(files)
+    Ok(parse::name_status(&text, &numstat))
 }
 
 /// Get the diff for a specific file in a historical commit.
@@ -1585,37 +1555,7 @@ pub fn get_stash_files(path: &str, index: usize) -> Result<Vec<FileStatus>, AppE
 
     let numstat = parse_numstat(path, &["stash", "show", "-u", "--numstat", &stash_ref]);
 
-    let mut files = Vec::new();
-
-    for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(2, '\t').collect();
-        if parts.len() == 2 {
-            let file_path = parse::unquote_git_path(parts[1]);
-            let status_type = match parts[0] {
-                "A" => "added",
-                "M" => "modified",
-                "D" => "deleted",
-                "R" => "renamed",
-                _ => "modified",
-            }
-            .to_string();
-            let (additions, deletions) = numstat
-                .get(&file_path)
-                .map(|&(a, d)| (Some(a), Some(d)))
-                .unwrap_or((None, None));
-            files.push(FileStatus {
-                path: file_path,
-                status_type,
-                is_staged: true,
-                additions,
-                deletions,
-                is_conflicted: false,
-                conflict_type: None,
-            });
-        }
-    }
-
-    Ok(files)
+    Ok(parse::name_status(&text, &numstat))
 }
 
 /// List all tags with their commit SHAs and messages.
@@ -2505,6 +2445,32 @@ mod tests {
         assert!(entries
             .iter()
             .any(|f| !f.is_staged && f.status_type == "modified"));
+    }
+
+    #[test]
+    fn staged_rename_reports_both_paths_and_unstages_cleanly() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        std::fs::write(dir.path().join("orig.txt"), "same content\nlines\n").unwrap();
+        run_git(p, &["add", "orig.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "add orig"], &[]).unwrap();
+        run_git(p, &["mv", "orig.txt", "renamed.txt"], &[]).unwrap();
+
+        let status = get_status(p).unwrap();
+        let renamed = status
+            .iter()
+            .find(|f| f.status_type == "renamed")
+            .expect("staged rename row");
+        assert_eq!(renamed.path, "renamed.txt");
+        assert_eq!(renamed.old_path.as_deref(), Some("orig.txt"));
+        assert!(renamed.is_staged);
+
+        // Unstaging resets both index entries — the rename halves.
+        unstage_files(p, &["renamed.txt".into(), "orig.txt".into()]).unwrap();
+        let status = get_status(p).unwrap();
+        assert!(status.iter().all(|f| !f.is_staged));
+        assert!(status.iter().any(|f| f.path == "renamed.txt"));
     }
 
     #[test]

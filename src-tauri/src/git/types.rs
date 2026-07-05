@@ -65,6 +65,8 @@ pub struct BranchInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct FileStatus {
     pub path: String,
+    /// For renames/copies: the pre-rename path. `path` is always the new path.
+    pub old_path: Option<String>,
     pub status_type: String, // "modified", "added", "deleted", "renamed", "untracked", "conflicted"
     pub is_staged: bool,
     pub additions: Option<u32>,

@@ -69,6 +69,65 @@ pub fn unquote_git_path(raw: &str) -> String {
     String::from_utf8_lossy(&result).to_string()
 }
 
+/// Split a porcelain v1 rename/copy entry (`old -> new`, each side possibly
+/// git-quoted) into `(new_path, old_path)`, both unquoted.
+///
+/// The split is quote-aware: when the old path is quoted, the separator is
+/// searched only after the closing quote, so ` -> ` inside a quoted filename
+/// can't produce a bogus split. Returns `(raw, None)` when no separator is
+/// found (defensive — callers only pass rename entries).
+pub fn split_rename_path(raw: &str) -> (String, Option<String>) {
+    let sep_from = if raw.starts_with('"') {
+        // Find the closing quote of the old path, skipping escaped chars.
+        let bytes = raw.as_bytes();
+        let mut i = 1;
+        while i < bytes.len() && bytes[i] != b'"' {
+            if bytes[i] == b'\\' {
+                i += 1;
+            }
+            i += 1;
+        }
+        i + 1
+    } else {
+        0
+    };
+    match raw[sep_from.min(raw.len())..].find(" -> ") {
+        Some(pos) => {
+            let split_at = sep_from + pos;
+            let old = unquote_git_path(&raw[..split_at]);
+            let new = unquote_git_path(&raw[split_at + 4..]);
+            (new, Some(old))
+        }
+        None => (unquote_git_path(raw), None),
+    }
+}
+
+/// Resolve a `git diff --numstat` path field to the post-rename path.
+///
+/// Renames appear either as `old => new` or in brace form with a common
+/// prefix/suffix, e.g. `src/{old_dir => new_dir}/file.rs`. Non-rename paths
+/// are returned unchanged.
+fn numstat_new_path(raw: &str) -> String {
+    if let (Some(open), Some(close)) = (raw.find('{'), raw.rfind('}')) {
+        if open < close {
+            let inner = &raw[open + 1..close];
+            if let Some(pos) = inner.find(" => ") {
+                let new_seg = &inner[pos + 4..];
+                let mut result = String::new();
+                result.push_str(&raw[..open]);
+                result.push_str(new_seg);
+                result.push_str(&raw[close + 1..]);
+                // `{old => }` collapses to an empty segment — drop the double slash.
+                return result.replace("//", "/");
+            }
+        }
+    }
+    match raw.find(" => ") {
+        Some(pos) => raw[pos + 4..].to_string(),
+        None => raw.to_string(),
+    }
+}
+
 /// Map a git porcelain status char to a UI status string.
 pub fn status_type(ch: char) -> &'static str {
     match ch {
@@ -93,7 +152,7 @@ pub fn numstat(stdout: &str) -> NumstatMap {
             let add = parts[0].parse::<u32>().ok();
             let del = parts[1].parse::<u32>().ok();
             if let (Some(a), Some(d)) = (add, del) {
-                stats.insert(unquote_git_path(parts[2]), (a, d));
+                stats.insert(numstat_new_path(&unquote_git_path(parts[2])), (a, d));
             }
         }
     }
@@ -123,13 +182,20 @@ pub fn porcelain_status(
         }
         let index_status = line.as_bytes()[0] as char;
         let wt_status = line.as_bytes()[1] as char;
-        let file_path = unquote_git_path(&line[3..]);
+        // Renames/copies come as `R  old -> new`; keep the new path as the
+        // canonical `path` so pathspecs built from it match real files.
+        let (file_path, old_path) = if index_status == 'R' || index_status == 'C' {
+            split_rename_path(&line[3..])
+        } else {
+            (unquote_git_path(&line[3..]), None)
+        };
 
         // `-unormal` shows untracked directories with a trailing slash; `-uall`
         // never does, so this branch is inert for the common path.
         if file_path.ends_with('/') {
             result.push(FileStatus {
                 path: file_path.trim_end_matches('/').to_string(),
+                old_path: None,
                 status_type: "untracked".to_string(),
                 is_staged: false,
                 additions: None,
@@ -165,6 +231,7 @@ pub fn porcelain_status(
             };
             result.push(FileStatus {
                 path: file_path,
+                old_path: None,
                 status_type: "conflicted".to_string(),
                 is_staged: false,
                 additions: None,
@@ -183,6 +250,7 @@ pub fn porcelain_status(
                 .unwrap_or((None, None));
             result.push(FileStatus {
                 path: file_path.clone(),
+                old_path: old_path.clone(),
                 status_type: status_type(index_status).to_string(),
                 is_staged: true,
                 additions,
@@ -200,6 +268,7 @@ pub fn porcelain_status(
                 .unwrap_or((None, None));
             result.push(FileStatus {
                 path: file_path,
+                old_path: None,
                 status_type: if index_status == '?' {
                     "untracked".to_string()
                 } else {
@@ -216,6 +285,40 @@ pub fn porcelain_status(
 
     result.sort_by(|a, b| a.path.cmp(&b.path));
     result
+}
+
+/// Parse `--name-status` output (from `diff-tree` or `stash show`) into
+/// [`FileStatus`] rows. Renames/copies come as `R<score>\told\tnew`; the new
+/// path becomes `path` and the old one `old_path`. Line counts come from the
+/// matching `--numstat` map (keyed by post-rename path).
+pub fn name_status(stdout: &str, numstat: &NumstatMap) -> Vec<FileStatus> {
+    let mut files = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.split('\t');
+        let (Some(status), Some(first)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        let status_char = status.chars().next().unwrap_or('M');
+        let (path, old_path) = match (status_char, parts.next()) {
+            ('R' | 'C', Some(new)) => (unquote_git_path(new), Some(unquote_git_path(first))),
+            _ => (unquote_git_path(first), None),
+        };
+        let (additions, deletions) = numstat
+            .get(&path)
+            .map(|&(a, d)| (Some(a), Some(d)))
+            .unwrap_or((None, None));
+        files.push(FileStatus {
+            path,
+            old_path,
+            status_type: status_type(status_char).to_string(),
+            is_staged: true,
+            additions,
+            deletions,
+            is_conflicted: false,
+            conflict_type: None,
+        });
+    }
+    files
 }
 
 /// Whether a unified diff body carries git's "Binary files … differ" marker.
@@ -451,6 +554,47 @@ mod tests {
         let unstaged_row = out.iter().find(|f| !f.is_staged).unwrap();
         assert_eq!(staged_row.additions, Some(2));
         assert_eq!(unstaged_row.deletions, Some(3));
+    }
+
+    #[test]
+    fn porcelain_splits_staged_rename_into_old_and_new_path() {
+        let mut staged = HashMap::new();
+        // numstat() already resolves rename syntax to the new path.
+        staged.insert("new dir/b.txt".to_string(), (1u32, 1u32));
+
+        let out = porcelain_status(
+            "R  \"old dir/a.txt\" -> \"new dir/b.txt\"",
+            &staged,
+            &HashMap::new(),
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, "new dir/b.txt");
+        assert_eq!(out[0].old_path.as_deref(), Some("old dir/a.txt"));
+        assert_eq!(out[0].status_type, "renamed");
+        assert_eq!(out[0].additions, Some(1));
+
+        // Unquoted variant
+        let out = porcelain_status("R  a.txt -> b.txt", &HashMap::new(), &HashMap::new());
+        assert_eq!(out[0].path, "b.txt");
+        assert_eq!(out[0].old_path.as_deref(), Some("a.txt"));
+    }
+
+    #[test]
+    fn numstat_resolves_rename_paths_to_new_path() {
+        let out = numstat("1\t2\told.txt => new.txt\n3\t4\tsrc/{a => b}/f.rs\n5\t6\tplain.txt");
+        assert_eq!(out.get("new.txt"), Some(&(1, 2)));
+        assert_eq!(out.get("src/b/f.rs"), Some(&(3, 4)));
+        assert_eq!(out.get("plain.txt"), Some(&(5, 6)));
+    }
+
+    #[test]
+    fn name_status_parses_rename_with_score() {
+        let out = name_status("R100\told.txt\tnew.txt\nM\tm.txt", &HashMap::new());
+        assert_eq!(out[0].path, "new.txt");
+        assert_eq!(out[0].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(out[0].status_type, "renamed");
+        assert_eq!(out[1].path, "m.txt");
+        assert_eq!(out[1].old_path, None);
     }
 
     #[test]
