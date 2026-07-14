@@ -274,15 +274,9 @@ pub fn get_token_info(profile_id: Option<&str>, host: &str) -> Option<TokenInfo>
     let (username, avatar_url) = match result {
         Some(info) => info,
         None if refresh_token.is_some() => {
-            if let Some(new_token) =
-                try_refresh_blocking(profile_id, host, &kind, &refresh_token.unwrap())
-            {
-                token = new_token;
-                token_type = TokenType::OAuth;
-                p.get_user_info(host, &token)?
-            } else {
-                return None;
-            }
+            token = try_refresh_blocking(profile_id, host, &kind, &refresh_token.unwrap())?;
+            token_type = TokenType::OAuth;
+            p.get_user_info(host, &token)?
         }
         None => return None,
     };
