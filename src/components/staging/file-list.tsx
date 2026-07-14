@@ -32,11 +32,13 @@ import {
 import {
   buildFileTree,
   collectFilePaths,
+  collectDirPaths,
   flattenTreeFiles,
   fileMatchesFilter,
   treeNodeMatchesFilter,
 } from "@/lib/file-tree";
 import type { FileTreeNode } from "@/lib/file-tree";
+import { TreeCollapseProvider, useTreeCollapse } from "@/hooks/use-tree-collapse";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -681,7 +683,7 @@ function FileTreeView({
   const tree = useMemo(() => buildFileTree(files), [files]);
 
   return (
-    <div>
+    <TreeCollapseProvider>
       {tree.map((node) => (
         <TreeNodeView
           key={node.path}
@@ -703,7 +705,7 @@ function FileTreeView({
           onFolderContextMenu={onFolderContextMenu}
         />
       ))}
-    </div>
+    </TreeCollapseProvider>
   );
 }
 
@@ -735,7 +737,7 @@ function ConflictTreeView({
   const tree = useMemo(() => buildFileTree(files), [files]);
 
   return (
-    <div>
+    <TreeCollapseProvider>
       {tree.map((node) => (
         <ConflictTreeNodeView
           key={node.path}
@@ -752,7 +754,7 @@ function ConflictTreeView({
           disabled={disabled}
         />
       ))}
-    </div>
+    </TreeCollapseProvider>
   );
 }
 
@@ -781,7 +783,8 @@ function ConflictTreeNodeView({
   onFileContextMenu: (e: React.MouseEvent, file: FileStatus) => void;
   disabled: boolean;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const { collapsed, toggle } = useTreeCollapse();
+  const expanded = !collapsed.has(node.path);
   const indent = depth * 16;
   const dimmed = fileQuery !== "" && !treeNodeMatchesFilter(node, fileQuery);
 
@@ -795,7 +798,7 @@ function ConflictTreeNodeView({
             dimmed && FILTER_DIM_CLASS,
           )}
           style={{ paddingLeft: `${12 + indent}px` }}
-          onClick={() => setExpanded(!expanded)}
+          onClick={(e) => toggle(node.path, collectDirPaths(node), e.altKey)}
         >
           {Array.from({ length: depth }, (_, i) => (
             <div
@@ -954,7 +957,8 @@ function TreeNodeView({
   onFileContextMenu?: (file: FileStatus, x: number, y: number, e: React.MouseEvent) => void;
   onFolderContextMenu?: (paths: string[], folderPath: string, x: number, y: number) => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const { collapsed, toggle } = useTreeCollapse();
+  const expanded = !collapsed.has(node.path);
   const indent = depth * 16;
   // Dim when filtering and neither this node nor any descendant matches.
   const dimmed = fileQuery !== "" && !treeNodeMatchesFilter(node, fileQuery);
@@ -969,7 +973,7 @@ function TreeNodeView({
             dimmed && FILTER_DIM_CLASS,
           )}
           style={{ paddingLeft: `${12 + indent}px` }}
-          onClick={() => setExpanded(!expanded)}
+          onClick={(e) => toggle(node.path, collectDirPaths(node), e.altKey)}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();

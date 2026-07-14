@@ -75,6 +75,16 @@ export function collectFilePaths(node: FileTreeNode): string[] {
   return paths;
 }
 
+/** Recursively collect all directory paths under a node, including the node itself. */
+export function collectDirPaths(node: FileTreeNode): string[] {
+  if (node.type !== "directory") return [];
+  const paths = [node.path];
+  for (const child of node.children) {
+    paths.push(...collectDirPaths(child));
+  }
+  return paths;
+}
+
 /** Flatten a sorted tree into FileStatus[] in visual (DFS) order.
  *  Used so shift-click range selection matches what the user sees on screen. */
 export function flattenTreeFiles(roots: FileTreeNode[]): FileStatus[] {

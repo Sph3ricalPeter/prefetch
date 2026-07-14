@@ -30,10 +30,12 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { FileList } from "@/components/staging/file-list";
 import {
   buildFileTree,
+  collectDirPaths,
   fileMatchesFilter,
   treeNodeMatchesFilter,
 } from "@/lib/file-tree";
 import type { FileTreeNode } from "@/lib/file-tree";
+import { TreeCollapseProvider, useTreeCollapse } from "@/hooks/use-tree-collapse";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { IconButton } from "@/components/ui/icon-button";
@@ -375,6 +377,7 @@ function CommitDetailView({
               selectedFilePath={selectedFilePath}
               fileQuery={fileQuery}
               onFileClick={onFileClick}
+              storageKey={`commit:${commit.id}`}
             />
           ) : (
             <div className="px-2 pb-3">
@@ -471,6 +474,7 @@ function StashDetailView({
               selectedFilePath={selectedFilePath}
               fileQuery={fileQuery}
               onFileClick={onFileClick}
+              storageKey={`stash:${stash.index}`}
             />
           ) : (
             <div className="px-2 pb-3">
@@ -625,27 +629,31 @@ function CommitFileTreeView({
   selectedFilePath,
   fileQuery,
   onFileClick,
+  storageKey,
 }: {
   files: FileStatus[];
   selectedFilePath: string | null;
   fileQuery: string;
   onFileClick: (path: string) => void;
+  storageKey: string;
 }) {
   const tree = useMemo(() => buildFileTree(files), [files]);
 
   return (
-    <div className="px-2 pb-3">
-      {tree.map((node) => (
-        <CommitTreeNode
-          key={node.path}
-          node={node}
-          depth={0}
-          selectedFilePath={selectedFilePath}
-          fileQuery={fileQuery}
-          onFileClick={onFileClick}
-        />
-      ))}
-    </div>
+    <TreeCollapseProvider storageKey={storageKey}>
+      <div className="px-2 pb-3">
+        {tree.map((node) => (
+          <CommitTreeNode
+            key={node.path}
+            node={node}
+            depth={0}
+            selectedFilePath={selectedFilePath}
+            fileQuery={fileQuery}
+            onFileClick={onFileClick}
+          />
+        ))}
+      </div>
+    </TreeCollapseProvider>
   );
 }
 
@@ -662,7 +670,8 @@ function CommitTreeNode({
   fileQuery: string;
   onFileClick: (path: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const { collapsed, toggle } = useTreeCollapse();
+  const expanded = !collapsed.has(node.path);
   const indent = depth * 16;
   // Dim a node when filtering and neither it nor any descendant matches.
   const dimmed =
@@ -672,7 +681,7 @@ function CommitTreeNode({
     return (
       <div>
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={(e) => toggle(node.path, collectDirPaths(node), e.altKey)}
           className={cn(
             "relative flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 my-1 text-xs text-muted-foreground hover:bg-card-hover hover:text-foreground transition-colors",
             dimmed && FILTER_DIM_CLASS,

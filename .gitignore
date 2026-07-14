@@ -37,3 +37,6 @@ tmp/
 # Screenshots
 *.png
 !src-tauri/icons/*.png
+
+# Orphaned build archives (killed tauri builds)
+*.7z
