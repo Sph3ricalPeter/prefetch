@@ -245,12 +245,16 @@ export function FileList() {
           y: e.clientY,
         });
       } else {
-        // Clear multi-select and open single-file context menu
+        // Clear multi-select and open single-file context menu. Select the
+        // right-clicked row too, so the visible selection matches what the
+        // menu acts on (otherwise the menu targets this file while the old
+        // selection stays highlighted — the action appears to do nothing).
         setMultiSelected(new Set());
+        selectFile(file.path, isStaged);
         setFileContextMenu({ file, isStaged, x: e.clientX, y: e.clientY });
       }
     },
-    [multiSelected],
+    [multiSelected, selectFile],
   );
 
   const conflicted = fileStatuses.filter((f) => f.is_conflicted);
