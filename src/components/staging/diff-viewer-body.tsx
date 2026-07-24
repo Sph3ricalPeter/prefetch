@@ -170,14 +170,16 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
     return () => { cancelled = true; setFileTokens(null); };
   }, [expandCtx?.fileLines, lang, shikiThemeId]);
 
-  // Eagerly fetch file content for full-context syntax highlighting.
-  // Old-file fetch is skipped when the diff has no deletions.
+  // Eagerly fetch file content for full-context syntax highlighting. Also the
+  // only source of the file's line count, which the trailing gap needs — so it
+  // is fetched even when the file has no highlightable language.
+  // Old-file fetch is for deletion highlighting only: skipped without a lang or
+  // when the diff has no deletions.
   const fetchFileLines = expandCtx?.fetchFileLines;
   const fetchOldFileLines = expandCtx?.fetchOldFileLines;
   useEffect(() => {
-    if (!lang) return;
     fetchFileLines?.();
-    if (hasDeletions) fetchOldFileLines?.();
+    if (lang && hasDeletions) fetchOldFileLines?.();
   }, [lang, hasDeletions, fetchFileLines, fetchOldFileLines]);
 
   // Highlight old file (for deletion line tokens). Same deferral as new-file.
@@ -320,6 +322,10 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
 
+  // Gap after the last hunk — keyed one past the final hunk index, so it has no
+  // hunk to hang off of and is rendered after the map.
+  const trailingGap = expandCtx?.getGapRender(diff.hunks.length);
+
   const lineLabel = `${selectedLines.size} line${selectedLines.size > 1 ? "s" : ""}`;
   const selectionSlot = selectedLines.size > 0 ? (
     <>
@@ -383,30 +389,12 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
               <div key={hi} data-hunk-index={hi}>
                 {/* Expandable gap before this hunk */}
                 {gapRender && (
-                  <>
-                    {gapRender.topLines.length > 0 &&
-                      (diffViewMode === "side-by-side" ? (
-                        <SideBySideContextBlock lines={gapRender.topLines} wrapClass={wrapClass} fileTokens={fileTokens} />
-                      ) : (
-                        gapRender.topLines.map((line, i) => (
-                          <ContextLine key={`gt-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
-                        ))
-                      ))}
-                    {gapRender.remainingCount > 0 && (
-                      <ExpandSeparator
-                        remainingCount={gapRender.remainingCount}
-                        onExpandAll={gapRender.onExpandAll}
-                      />
-                    )}
-                    {gapRender.bottomLines.length > 0 &&
-                      (diffViewMode === "side-by-side" ? (
-                        <SideBySideContextBlock lines={gapRender.bottomLines} wrapClass={wrapClass} fileTokens={fileTokens} />
-                      ) : (
-                        gapRender.bottomLines.map((line, i) => (
-                          <ContextLine key={`gb-${hi}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
-                        ))
-                      ))}
-                  </>
+                  <GapBlock
+                    gapRender={gapRender}
+                    isSplit={diffViewMode === "side-by-side"}
+                    wrapClass={wrapClass}
+                    fileTokens={fileTokens}
+                  />
                 )}
 
                 {/* Hunk header — select-hunk checkbox always; stage button only when interactive
@@ -488,6 +476,16 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
               </div>
             );
           })}
+
+          {/* Trailing gap — everything after the last hunk to end of file */}
+          {trailingGap && (
+            <GapBlock
+              gapRender={trailingGap}
+              isSplit={diffViewMode === "side-by-side"}
+              wrapClass={wrapClass}
+              fileTokens={fileTokens}
+            />
+          )}
         </div>
         <DiffMinimap diff={diff} scrollRef={scrollRef} expandCtx={expandCtx} />
       </div>
@@ -925,6 +923,40 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
         );
       })}
     </div>
+  );
+}
+
+// ── Expandable gap ─────────────────────────────────────────────────────────
+
+interface GapBlockProps {
+  gapRender: NonNullable<ReturnType<ExpandableContext["getGapRender"]>>;
+  isSplit: boolean;
+  wrapClass: string;
+  fileTokens: ThemedToken[][] | null;
+}
+
+/** Revealed context lines plus the "N hidden lines" expander for one gap. */
+function GapBlock({ gapRender, isSplit, wrapClass, fileTokens }: GapBlockProps) {
+  const renderLines = (lines: DiffLine[], prefix: string) =>
+    isSplit ? (
+      <SideBySideContextBlock lines={lines} wrapClass={wrapClass} fileTokens={fileTokens} />
+    ) : (
+      lines.map((line, i) => (
+        <ContextLine key={`${prefix}-${i}`} line={line} tokens={fileTokens?.[line.new_lineno! - 1]} wrapClass={wrapClass} />
+      ))
+    );
+
+  return (
+    <>
+      {gapRender.topLines.length > 0 && renderLines(gapRender.topLines, "gt")}
+      {gapRender.remainingCount > 0 && (
+        <ExpandSeparator
+          remainingCount={gapRender.remainingCount}
+          onExpandAll={gapRender.onExpandAll}
+        />
+      )}
+      {gapRender.bottomLines.length > 0 && renderLines(gapRender.bottomLines, "gb")}
+    </>
   );
 }
 

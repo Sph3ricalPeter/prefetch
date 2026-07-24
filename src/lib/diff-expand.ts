@@ -16,7 +16,13 @@ export interface ExpandState {
 
 const EXPAND_STEP = 20;
 
-export function computeGaps(hunks: DiffHunk[]): DiffGap[] {
+/**
+ * Gaps of unchanged lines around/between hunks, keyed by the hunk index they
+ * precede. The gap after the last hunk gets index `hunks.length` and only
+ * exists once `totalNewLines` is known (the full file has been fetched) —
+ * without it there's no way to tell where the file ends.
+ */
+export function computeGaps(hunks: DiffHunk[], totalNewLines?: number): DiffGap[] {
   if (hunks.length === 0) return [];
   const gaps: DiffGap[] = [];
 
@@ -49,6 +55,23 @@ export function computeGaps(hunks: DiffHunk[]): DiffGap[] {
         count: newEnd - newStart + 1,
       });
     }
+  }
+
+  // tailStart < 1 means the last hunk has no new side at all (whole-file
+  // deletion, `@@ -1,N +0,0 @@`) — there is no trailing context to show.
+  const last = hunks[hunks.length - 1];
+  const tailStart = last.new_start + last.new_lines;
+  if (totalNewLines != null && tailStart >= 1 && totalNewLines >= tailStart) {
+    const oldStart = last.old_start + last.old_lines;
+    const count = totalNewLines - tailStart + 1;
+    gaps.push({
+      index: hunks.length,
+      oldStart,
+      oldEnd: oldStart + count - 1,
+      newStart: tailStart,
+      newEnd: totalNewLines,
+      count,
+    });
   }
 
   return gaps;

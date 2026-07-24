@@ -88,7 +88,9 @@ export function useExpandableContext(
   const oldFileLines = oldFileLinesEntry?.key === sourceKey ? oldFileLinesEntry.lines : null;
   const expandStates = expandStatesEntry?.key === sourceKey ? expandStatesEntry.states : EMPTY_EXPAND_STATES;
 
-  const gaps = useMemo(() => computeGaps(hunks), [hunks]);
+  // The trailing gap (after the last hunk) needs the file's real length, so it
+  // only materialises once fileLines has been fetched.
+  const gaps = useMemo(() => computeGaps(hunks, fileLines?.length), [hunks, fileLines]);
 
   const fetchFileLines = useCallback(async (): Promise<string[] | null> => {
     if (fileLinesRef.current?.key === sourceKey) return fileLinesRef.current.lines;

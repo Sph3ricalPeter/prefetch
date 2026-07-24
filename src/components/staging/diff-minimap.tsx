@@ -97,20 +97,23 @@ export function DiffMinimap({ diff, scrollRef, expandCtx }: DiffMinimapProps) {
 
 // ── Unified mode: sequential line positions ─────────────────────────────────
 
+/** Rows a gap occupies: revealed context lines plus the expander row, if shown. */
+function gapRows(gr: ReturnType<GapRenderFn> | undefined): number {
+  if (!gr) return 0;
+  return gr.topLines.length + gr.bottomLines.length + (gr.remainingCount > 0 ? 1 : 0);
+}
+
 function computeUnifiedRegions(hunks: DiffHunk[], getGapRender?: GapRenderFn): Region[] {
   const result: Region[] = [];
 
   let totalLines = 0;
   for (let hi = 0; hi < hunks.length; hi++) {
     const gr = getGapRender?.(hi);
-    if (gr) {
-      totalLines += gr.topLines.length;
-      if (gr.remainingCount > 0) totalLines += 1;
-      totalLines += gr.bottomLines.length;
-    }
+    totalLines += gapRows(gr);
     if (!gr || gr.remainingCount > 0) totalLines += 1; // header
     totalLines += hunks[hi].lines.length;
   }
+  totalLines += gapRows(getGapRender?.(hunks.length)); // trailing gap
   if (totalLines === 0) return result;
 
   let lineOffset = 0;
@@ -118,11 +121,7 @@ function computeUnifiedRegions(hunks: DiffHunk[], getGapRender?: GapRenderFn): R
     const hunk = hunks[hi];
     const gr = getGapRender?.(hi);
 
-    if (gr) {
-      lineOffset += gr.topLines.length;
-      if (gr.remainingCount > 0) lineOffset += 1;
-      lineOffset += gr.bottomLines.length;
-    }
+    lineOffset += gapRows(gr);
     if (!gr || gr.remainingCount > 0) lineOffset += 1; // header
 
     let regionStart: number | null = null;
@@ -169,14 +168,11 @@ function computeSplitRegions(hunks: DiffHunk[], getGapRender?: GapRenderFn): Reg
   let totalRows = 0;
   for (let hi = 0; hi < hunks.length; hi++) {
     const gr = getGapRender?.(hi);
-    if (gr) {
-      totalRows += gr.topLines.length;
-      if (gr.remainingCount > 0) totalRows += 1;
-      totalRows += gr.bottomLines.length;
-    }
+    totalRows += gapRows(gr);
     if (!gr || gr.remainingCount > 0) totalRows += 1; // header
     totalRows += countSideBySideRows(hunks[hi]);
   }
+  totalRows += gapRows(getGapRender?.(hunks.length)); // trailing gap
   if (totalRows === 0) return [];
 
   // Second pass: emit regions using row offsets
@@ -187,11 +183,7 @@ function computeSplitRegions(hunks: DiffHunk[], getGapRender?: GapRenderFn): Reg
     const hunk = hunks[hi];
     const gr = getGapRender?.(hi);
 
-    if (gr) {
-      rowOffset += gr.topLines.length;
-      if (gr.remainingCount > 0) rowOffset += 1;
-      rowOffset += gr.bottomLines.length;
-    }
+    rowOffset += gapRows(gr);
     if (!gr || gr.remainingCount > 0) rowOffset += 1; // header
 
     const lines = hunk.lines;
