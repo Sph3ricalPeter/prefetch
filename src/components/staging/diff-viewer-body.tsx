@@ -106,7 +106,13 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
   // substrings are highlighted (see useInViewSearch), with next/prev nav.
   const searchQuery = filterQuery.trim().toLowerCase();
 
-  const lang = useMemo(() => detectLang(filePath), [filePath]);
+  // Language follows the *rendered* diff, not the current selection. During a
+  // click → load transition `filePath` already points at the newly clicked file
+  // while `diff` still holds the previous one (same reason expandCtx is keyed to
+  // diff.path). Deriving lang from filePath tokenized the outgoing file's
+  // content with the incoming file's grammar — and turned highlighting *on* for
+  // content whose own extension had it off.
+  const lang = useMemo(() => detectLang(diff.path), [diff.path]);
   const hasDeletions = useMemo(
     () => diff.hunks.some((h) => h.lines.some((l) => l.origin === "-")),
     [diff],

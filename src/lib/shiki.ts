@@ -256,6 +256,32 @@ async function ensureMarkdownFenceLangs(hl: Highlighter, code: string): Promise<
   await Promise.all([...langs].map((l) => ensureLanguageLoaded(hl, l)));
 }
 
+// The renderer emits one <span> per token (see HighlightedLineContent), so a
+// minified line is a DOM bomb: a 360 KB single-line .json/.tmj tokenizes in
+// ~450 ms but yields ~200k tokens — rendering those spans locks the UI for tens
+// of seconds. Every size guard upstream counts *lines*, which a 1-line 360 KB
+// file sails straight through, so cap here instead: collapse an over-tokenized
+// line to one plain span. Measured, this trips only past ~5.7k chars *on a
+// single line* (minified JSON ~6k, dense Rust ~5.7k, dense TS ~7.2k, a long
+// import list ~40k); prose stays one token per line at any length. Hand-written
+// lines don't reach that — generated and minified ones do.
+//
+// ponytail: tokenization itself is still linear in size (~1.2 s/MB); add a
+// total-length bail if multi-MB minified blobs ever show up in a diff.
+const MAX_TOKENS_PER_LINE = 2000;
+
+/** Theme's default foreground, used for unhighlighted fallback tokens. */
+function fallbackColor(themeId: string): string {
+  return (
+    CODE_THEMES.find((t) => t.shikiTheme.name === themeId)?.shikiTheme.colors["editor.foreground"] ??
+    "#a1a1aa"
+  );
+}
+
+function plainLine(content: string, color: string, offset = 0): ThemedToken[] {
+  return [{ content, color, offset }];
+}
+
 /**
  * Yields control to the browser's macrotask queue (so click/render/paint can run).
  * Plain `await Promise.resolve()` only drains microtasks — clicks won't get a turn.
@@ -276,15 +302,12 @@ export async function highlightLines(
   const resolvedLang = lang ?? "text";
   const resolvedTheme = themeId ?? "vs-dark";
 
+  const fallbackFg = fallbackColor(resolvedTheme);
+
   // Dynamically load language if not preloaded (deduped across concurrent callers)
   const loaded = await ensureLanguageLoaded(hl, resolvedLang);
   if (!loaded) {
-    const fallbackFg =
-      CODE_THEMES.find((t) => t.shikiTheme.name === resolvedTheme)
-        ?.shikiTheme.colors["editor.foreground"] ?? "#a1a1aa";
-    return code.split("\n").map((line) => [
-      { content: line, color: fallbackFg, offset: 0 },
-    ]);
+    return code.split("\n").map((line) => plainLine(line, fallbackFg));
   }
 
   // Load languages referenced by fenced code blocks so they highlight per-language.
@@ -292,8 +315,14 @@ export async function highlightLines(
     await ensureMarkdownFenceLangs(hl, code);
   }
 
-  return hl.codeToTokensBase(code, {
+  const lines = hl.codeToTokensBase(code, {
     lang: resolvedLang as never,
     theme: resolvedTheme as never,
   });
+
+  return lines.map((line) =>
+    line.length > MAX_TOKENS_PER_LINE
+      ? plainLine(line.map((t) => t.content).join(""), fallbackFg, line[0].offset)
+      : line,
+  );
 }
