@@ -46,6 +46,7 @@ const LANG_MAP: Record<string, string> = {
   kt: "kotlin",
   vue: "vue",
   svelte: "svelte",
+  odin: "odin",
 };
 
 // Common languages to preload
