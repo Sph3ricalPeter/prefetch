@@ -886,10 +886,10 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
       {lines.map((line, i) => {
         const tokens = line.new_lineno != null ? fileTokens?.[line.new_lineno - 1] : undefined;
         return (
-          <div key={i} className="flex opacity-80">
+          <div key={i} className="flex opacity-80 group/diffpair">
             <div className="flex flex-1 min-w-0 overflow-hidden border-r border-border">
               <span className="w-5 shrink-0" />
-              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
+              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-caption">
                 {line.old_lineno ?? ""}
               </span>
               <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
@@ -903,7 +903,7 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
             </div>
             <div className="flex flex-1 min-w-0 overflow-hidden">
               <span className="w-5 shrink-0" />
-              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
+              <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-caption">
                 {line.new_lineno ?? ""}
               </span>
               <span className="w-4 shrink-0 text-center select-none text-muted-foreground/50" />
