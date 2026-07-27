@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Monitor, Cloud, Tag, Archive, Calendar, Hash } from "lucide-react";
 import type {
   BranchInfo,
@@ -62,6 +62,7 @@ const ROW_CONTENT_HEIGHT = 28;   // row highlight box height — constant across
                                  // the pitch so Comfortable adds gap, not a taller box
 const GRAPH_DIM_ALPHA = 0.25;    // opacity for commit rows that don't match the filter
 const SEARCH_HIGHLIGHT_COLOR = "rgba(250, 204, 21, 0.28)"; // amber, matches the diff/log search highlight
+const TOOLTIP_OFFSET = 12;       // gap between cursor and the commit-row tooltip
 
 // Mutable font config — updated from the theme store before each draw() call.
 // Module-level so standalone drawing helpers can read it without extra parameters.
@@ -913,6 +914,13 @@ export function CommitGraphCanvas({
   const rowTooltipAreasRef = useRef<RowTooltipArea[]>([]);
   const [canvasHover, setCanvasHover] = useState<CanvasHoverInfo | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Measured tooltip placement — see the useLayoutEffect above the return.
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [tooltipPlacement, setTooltipPlacement] = useState({
+    up: false,
+    left: false,
+    maxHeight: 0,
+  });
   // Hover dropdown state (#39) — opens when pointer rests over a badge whose
   // commit has multiple refs. Anchored to the badge's left edge.
   const [hoverDropdown, setHoverDropdown] = useState<{
@@ -1968,6 +1976,10 @@ export function CommitGraphCanvas({
       closeHoverTimer.current = null;
     }
     setHoverDropdown(null);
+    // Rows slide out from under a stationary pointer — same rule as moving off
+    // a row: the tooltip's commit is gone, so is the tooltip.
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    setCanvasHover(null);
   }, [requestDraw]);
 
   const handleClick = useCallback(
@@ -2111,6 +2123,9 @@ export function CommitGraphCanvas({
 
       if (overRow) {
         if (!canvasHover || canvasHover.row !== overRow.row) {
+          // Drop the previous row's tooltip immediately — leaving the row it
+          // described is what dismisses it, not the next one opening.
+          if (canvasHover) setCanvasHover(null);
           if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
           const { subject, body, author, date, sha } = overRow;
           const hoverRow = overRow.row;
@@ -2217,6 +2232,27 @@ export function CommitGraphCanvas({
     return () => window.removeEventListener("keydown", onKey);
   }, [hoverDropdown]);
 
+  // Tooltip placement — measured, so it only flips when the default down/right
+  // placement actually doesn't fit. Runs before paint, so the corrected position
+  // is the first one drawn; scrollHeight/offsetWidth read the natural size even
+  // when the previous row's maxHeight is still clamping the box.
+  useLayoutEffect(() => {
+    const el = tooltipRef.current;
+    if (!el || !canvasHover) return;
+    const pad = 8;
+    const availBelow = window.innerHeight - (canvasHover.y + TOOLTIP_OFFSET) - pad;
+    const availAbove = canvasHover.y - TOOLTIP_OFFSET - pad;
+    const availRight = window.innerWidth - (canvasHover.x + TOOLTIP_OFFSET) - pad;
+    const availLeft = canvasHover.x - TOOLTIP_OFFSET - pad;
+    const up = el.scrollHeight > availBelow && availAbove > availBelow;
+    setTooltipPlacement({
+      up,
+      left: el.offsetWidth > availRight && availLeft > availRight,
+      // Only bites when neither side has room; otherwise it's ≥ the natural height.
+      maxHeight: up ? availAbove : availBelow,
+    });
+  }, [canvasHover]);
+
   return (
     <div className="relative h-full w-full">
       <div
@@ -2242,13 +2278,25 @@ export function CommitGraphCanvas({
         const { subject, body, author, date, sha } = canvasHover;
         const hasMeta = !!(author || date || sha);
         const hasText = !!(subject || body);
+        const { up, left, maxHeight } = tooltipPlacement;
         return (
           <div
+            ref={tooltipRef}
             // Key by row so moving to another commit remounts the tooltip
             // (replaying animate-enter-up) instead of morphing in place.
             key={canvasHover.row}
-            className="pointer-events-none fixed z-50 w-max max-w-xs rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground shadow-lg animate-enter-up"
-            style={{ left: canvasHover.x + 12, top: canvasHover.y + 12 }}
+            className="pointer-events-none fixed z-50 w-max max-w-md overflow-hidden rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground shadow-lg animate-enter-up"
+            style={{
+              // Anchoring to the opposite edge makes the box grow back toward
+              // the cursor; only used when the default side has no room.
+              ...(left
+                ? { right: window.innerWidth - canvasHover.x + TOOLTIP_OFFSET }
+                : { left: canvasHover.x + TOOLTIP_OFFSET }),
+              ...(up
+                ? { bottom: window.innerHeight - canvasHover.y + TOOLTIP_OFFSET }
+                : { top: canvasHover.y + TOOLTIP_OFFSET }),
+              maxHeight: maxHeight || undefined,
+            }}
           >
             {hasText && (
               <div className="flex flex-col gap-1">
