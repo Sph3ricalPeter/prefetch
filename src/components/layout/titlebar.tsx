@@ -93,7 +93,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: 
         style={{ paddingLeft: IS_MAC ? 78 : 14 }}
         data-tauri-drag-region
       >
-        <PrefetchLogo className="h-4 w-4 shrink-0" />
+        <PrefetchLogo className="h-5 w-5 shrink-0" />
         {!IS_MAC && (
           <span
             className="text-xs font-semibold tracking-tight text-foreground"
@@ -763,7 +763,7 @@ function PrefetchLogo({ className }: { className?: string }) {
       <rect width="48" height="48" rx="10" fill="#18181B" />
       <text
         x="24"
-        y="31.5"
+        y="33.5"
         textAnchor="middle"
         fontFamily="Inter, system-ui, -apple-system, sans-serif"
         fontWeight="800"
