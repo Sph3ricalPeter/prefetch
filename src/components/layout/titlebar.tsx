@@ -102,7 +102,7 @@ export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: 
             Prefetch
           </span>
         )}
-        <span className="rounded-md bg-brand/15 px-1.5 py-0.5 text-label font-medium tracking-wider text-brand">
+        <span className="rounded-md bg-brand/15 px-1.5 py-0.5 text-caption font-medium tracking-wider text-brand">
           α{appVersion ? ` v${appVersion}` : ""}{import.meta.env.DEV ? " DEV" : ""}
         </span>
       </div>
