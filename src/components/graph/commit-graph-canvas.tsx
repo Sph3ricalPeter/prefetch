@@ -858,6 +858,9 @@ interface CommitGraphCanvasProps {
     focusRefName?: string,
   ) => void;
   onStashContextMenu?: (index: number, x: number, y: number) => void;
+  /** True while a context menu spawned from the graph is open — suppresses the
+   *  row hover tooltip so the two never overlap. */
+  menuOpen?: boolean;
   columnWidths: GraphColumnWidths;
   /** Effective visibility actually rendered — optional columns the panel
    *  auto-collapsed when too narrow are already false here. Any column that's
@@ -890,6 +893,7 @@ export function CommitGraphCanvas({
   onSelectStash,
   onCommitContextMenu,
   onStashContextMenu,
+  menuOpen,
   columnWidths,
   columnVisibility,
   dateFormat,
@@ -2114,8 +2118,9 @@ export function CommitGraphCanvas({
 
       // Unified row tooltip — one hover target per commit row, surfacing the
       // truncated subject, body, and any column not fully visible. Suppressed
-      // while a badge is hovered so it doesn't fight the ref dropdown.
-      const overRow = !overBadgeArea
+      // while a badge is hovered so it doesn't fight the ref dropdown, and
+      // while a context menu is open — that menu takes precedence.
+      const overRow = !overBadgeArea && !menuOpen
         ? rowTooltipAreasRef.current.find(
             (r) => mx >= r.x && mx <= r.x + r.width && my >= r.y && my <= r.y + r.height,
           )
@@ -2138,7 +2143,7 @@ export function CommitGraphCanvas({
         if (canvasHover) setCanvasHover(null);
       }
     },
-    [canvasHover, hoverDropdown, totalRows, dm],
+    [canvasHover, hoverDropdown, totalRows, dm, menuOpen],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -2158,6 +2163,10 @@ export function CommitGraphCanvas({
     (e: React.MouseEvent) => {
       const scroll = scrollRef.current;
       if (!scroll) return;
+
+      // Context menu wins over the hover tooltip — drop it before the menu opens.
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      setCanvasHover(null);
 
       const rect = scroll.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
@@ -2285,7 +2294,7 @@ export function CommitGraphCanvas({
             // Key by row so moving to another commit remounts the tooltip
             // (replaying animate-enter-up) instead of morphing in place.
             key={canvasHover.row}
-            className="pointer-events-none fixed z-50 w-max max-w-md overflow-hidden rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground shadow-lg animate-enter-up"
+            className="pointer-events-none fixed z-50 w-max max-w-md overflow-hidden rounded-md border border-foreground/15 bg-card px-3 py-2 text-xs text-foreground shadow-xl animate-enter-up"
             style={{
               // Anchoring to the opposite edge makes the box grow back toward
               // the cursor; only used when the default side has no room.

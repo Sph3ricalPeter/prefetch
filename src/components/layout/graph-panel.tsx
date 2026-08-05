@@ -706,6 +706,7 @@ export function GraphPanel() {
                   if (isLoading) return;
                   setStashContextMenu({ index, x, y });
                 }}
+                menuOpen={!!commitContextMenu || !!stashContextMenu}
                 columnWidths={effectiveWidths}
                 columnVisibility={effectiveVisibility}
                 dateFormat={dateFormat}
