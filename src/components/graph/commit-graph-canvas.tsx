@@ -920,6 +920,7 @@ export function CommitGraphCanvas({
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Measured tooltip placement — see the useLayoutEffect above the return.
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const tooltipBodyRef = useRef<HTMLParagraphElement>(null);
   const [tooltipPlacement, setTooltipPlacement] = useState({
     up: false,
     left: false,
@@ -2243,22 +2244,45 @@ export function CommitGraphCanvas({
 
   // Tooltip placement — measured, so it only flips when the default down/right
   // placement actually doesn't fit. Runs before paint, so the corrected position
-  // is the first one drawn; scrollHeight/offsetWidth read the natural size even
-  // when the previous row's maxHeight is still clamping the box.
+  // is the first one drawn.
   useLayoutEffect(() => {
     const el = tooltipRef.current;
     if (!el || !canvasHover) return;
+    // Measure unclamped. The element still carries the *previous* row's clamp
+    // and maxHeight on this first paint, and the text block shrinks (min-h-0)
+    // and clips under that maxHeight — so scrollHeight would report the clamped
+    // height, not the natural one. Restore maxHeight straight after so the DOM
+    // still matches what React last wrote; the state update below drives the
+    // real value.
+    const bodyEl = tooltipBodyRef.current;
+    bodyEl?.style.removeProperty("-webkit-line-clamp");
+    const prevMaxHeight = el.style.maxHeight;
+    el.style.maxHeight = "none";
+    const naturalHeight = el.scrollHeight;
+    const naturalWidth = el.offsetWidth;
+    const naturalBodyHeight = bodyEl?.clientHeight ?? 0;
+    el.style.maxHeight = prevMaxHeight;
+
     const pad = 8;
     const availBelow = window.innerHeight - (canvasHover.y + TOOLTIP_OFFSET) - pad;
     const availAbove = canvasHover.y - TOOLTIP_OFFSET - pad;
     const availRight = window.innerWidth - (canvasHover.x + TOOLTIP_OFFSET) - pad;
     const availLeft = canvasHover.x - TOOLTIP_OFFSET - pad;
-    const up = el.scrollHeight > availBelow && availAbove > availBelow;
+    const up = naturalHeight > availBelow && availAbove > availBelow;
+    const maxHeight = up ? availAbove : availBelow;
+    // Still too tall for the taller side: drop body lines (ellipsised) rather
+    // than let the box clip its bottom, which is where author/date/sha live.
+    const overflow = naturalHeight - maxHeight;
+    if (bodyEl && overflow > 0) {
+      const lh = parseFloat(getComputedStyle(bodyEl).lineHeight) || 16;
+      const lines = Math.max(1, Math.floor((naturalBodyHeight - overflow) / lh));
+      bodyEl.style.setProperty("-webkit-line-clamp", String(lines));
+    }
     setTooltipPlacement({
       up,
-      left: el.offsetWidth > availRight && availLeft > availRight,
+      left: naturalWidth > availRight && availLeft > availRight,
       // Only bites when neither side has room; otherwise it's ≥ the natural height.
-      maxHeight: up ? availAbove : availBelow,
+      maxHeight,
     });
   }, [canvasHover]);
 
@@ -2294,7 +2318,7 @@ export function CommitGraphCanvas({
             // Key by row so moving to another commit remounts the tooltip
             // (replaying animate-enter-up) instead of morphing in place.
             key={canvasHover.row}
-            className="pointer-events-none fixed z-50 w-max max-w-md overflow-hidden rounded-md border border-foreground/15 bg-card px-3 py-2 text-xs text-foreground shadow-xl animate-enter-up"
+            className="pointer-events-none fixed z-50 flex w-max max-w-md flex-col overflow-hidden rounded-md border border-foreground/15 bg-card px-3 py-2 text-xs text-foreground shadow-xl animate-enter-up"
             style={{
               // Anchoring to the opposite edge makes the box grow back toward
               // the cursor; only used when the default side has no room.
@@ -2308,7 +2332,7 @@ export function CommitGraphCanvas({
             }}
           >
             {hasText && (
-              <div className="flex flex-col gap-1">
+              <div className="flex min-h-0 flex-col gap-1 overflow-hidden">
                 {subject && (
                   <CommitMessageText
                     message={subject}
@@ -2316,13 +2340,20 @@ export function CommitGraphCanvas({
                   />
                 )}
                 {body && (
-                  <p className="whitespace-pre-wrap leading-snug text-muted-foreground">{body}</p>
+                  <p
+                    ref={tooltipBodyRef}
+                    // -webkit-box + the clamp set in the layout effect: the body
+                    // is the only part allowed to lose lines, and it ellipsises.
+                    className="overflow-hidden whitespace-pre-wrap leading-snug text-muted-foreground [-webkit-box-orient:vertical] [display:-webkit-box]"
+                  >
+                    {body}
+                  </p>
                 )}
               </div>
             )}
             {hasMeta && (
               <div
-                className={`flex flex-col gap-1.5 ${hasText ? "mt-2 border-t border-border pt-2" : ""}`}
+                className={`flex shrink-0 flex-col gap-1.5 ${hasText ? "mt-2 border-t border-border pt-2" : ""}`}
               >
                 {author && (
                   <div className="flex items-center gap-2">
