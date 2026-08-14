@@ -79,6 +79,8 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const loadConflictContents = useRepoStore((s) => s.loadConflictContents);
   const rebaseProgress = useRepoStore((s) => s.rebaseProgress);
   const conflictState = useRepoStore((s) => s.conflictState);
+  const diffExpandContext = useRepoStore((s) => s.diffExpandContext);
+  const setDiffExpandContext = useRepoStore((s) => s.setDiffExpandContext);
   const codeTheme = useThemeStore((s) => s.codeTheme);
   const shikiThemeId = codeTheme.shikiTheme.name;
 
@@ -89,16 +91,10 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const outputScrollRef = useRef<HTMLDivElement>(null);
 
   // ── Synchronized expand/collapse (ours ↔ theirs) ───────────
-  const [expandedRegions, setExpandedRegions] = useState<Set<number>>(new Set());
-  const toggleRegionExpanded = useCallback((regionIndex: number) => {
-    setExpandedRegions((prev) => {
-      const next = new Set(prev);
-      if (next.has(regionIndex)) next.delete(regionIndex);
-      else next.add(regionIndex);
-      return next;
-    });
-  }, []);
-  const [expandedBases, setExpandedBases] = useState<Set<number>>(new Set());
+  // null = untouched for this conflict, so the sticky "Expand" preference decides.
+  // Derived sets and the toggles live below, once the expandable keys are known.
+  const [expandedRegionsState, setExpandedRegions] = useState<Set<number> | null>(null);
+  const [expandedBasesState, setExpandedBases] = useState<Set<number> | null>(null);
   const [showAutoResolved, setShowAutoResolved] = useState(false);
   const [autoResolveEnabled, setAutoResolveEnabled] = useState(false);
   const didAutoResolve = useRef(false);
@@ -107,15 +103,6 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     getUiState("conflict_auto_resolve").then((v) => {
       if (v === "true") setAutoResolveEnabled(true);
     }).catch(() => {});
-  }, []);
-
-  const toggleBaseExpanded = useCallback((regionIndex: number) => {
-    setExpandedBases((prev) => {
-      const next = new Set(prev);
-      if (next.has(regionIndex)) next.delete(regionIndex);
-      else next.add(regionIndex);
-      return next;
-    });
   }, []);
 
   // ── Resizable split state ──────────────────────────────────
@@ -770,6 +757,29 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     [displayItems],
   );
 
+  const expandedRegions = useMemo(
+    () => expandedRegionsState ?? new Set(diffExpandContext ? unchangedExpandKeys : []),
+    [expandedRegionsState, diffExpandContext, unchangedExpandKeys],
+  );
+  const expandedBases = useMemo(
+    () => expandedBasesState ?? new Set(diffExpandContext ? baseRegionIndices : []),
+    [expandedBasesState, diffExpandContext, baseRegionIndices],
+  );
+
+  const toggleRegionExpanded = useCallback((regionIndex: number) => {
+    const next = new Set(expandedRegions);
+    if (next.has(regionIndex)) next.delete(regionIndex);
+    else next.add(regionIndex);
+    setExpandedRegions(next);
+  }, [expandedRegions]);
+
+  const toggleBaseExpanded = useCallback((regionIndex: number) => {
+    const next = new Set(expandedBases);
+    if (next.has(regionIndex)) next.delete(regionIndex);
+    else next.add(regionIndex);
+    setExpandedBases(next);
+  }, [expandedBases]);
+
   const allExpanded = useMemo(() => {
     const hasExpandable = baseRegionIndices.length > 0 || unchangedExpandKeys.length > 0;
     if (!hasExpandable) return false;
@@ -778,6 +788,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   }, [baseRegionIndices, unchangedExpandKeys, expandedBases, expandedRegions]);
 
   const toggleExpandAll = useCallback(() => {
+    setDiffExpandContext(!allExpanded);
     if (allExpanded) {
       setExpandedBases(new Set());
       setExpandedRegions(new Set());
@@ -785,7 +796,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
       setExpandedBases(new Set(baseRegionIndices));
       setExpandedRegions(new Set(unchangedExpandKeys));
     }
-  }, [allExpanded, baseRegionIndices, unchangedExpandKeys]);
+  }, [allExpanded, baseRegionIndices, unchangedExpandKeys, setDiffExpandContext]);
 
   const conflictNumberMap = useMemo(() => {
     const map = new Map<number, number>();

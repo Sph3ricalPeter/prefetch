@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef } from "react";
+import { useRepoStore } from "@/stores/repo-store";
 import { getFileBlob } from "@/lib/commands";
 import type { DiffHunk, DiffLine } from "@/types/git";
 import {
@@ -86,11 +87,26 @@ export function useExpandableContext(
   // the previous file's content over the new diff.
   const fileLines = fileLinesEntry?.key === sourceKey ? fileLinesEntry.lines : null;
   const oldFileLines = oldFileLinesEntry?.key === sourceKey ? oldFileLinesEntry.lines : null;
-  const expandStates = expandStatesEntry?.key === sourceKey ? expandStatesEntry.states : EMPTY_EXPAND_STATES;
 
   // The trailing gap (after the last hunk) needs the file's real length, so it
   // only materialises once fileLines has been fetched.
   const gaps = useMemo(() => computeGaps(hunks, fileLines?.length), [hunks, fileLines]);
+
+  // Sticky "Expand" preference — until the user touches this diff's gaps, it
+  // decides the starting state, so a new diff opens the way the last one was left.
+  const expandContextPref = useRepoStore((s) => s.diffExpandContext);
+  // Gated on fileLines: without the blob, buildContextLines would emit `count`
+  // blank rows with remainingCount 0 — no text and no expander to recover it.
+  // diff-viewer-body fetches on mount, so this flips as soon as it lands (and
+  // stays collapsed-but-expandable if the fetch fails).
+  const defaultExpandStates = useMemo(() => {
+    if (!expandContextPref || !fileLines) return EMPTY_EXPAND_STATES;
+    const states = new Map<number, ExpandState>();
+    for (const gap of gaps) states.set(gap.index, expandAll(gap.count));
+    return states;
+  }, [expandContextPref, fileLines, gaps]);
+
+  const expandStates = expandStatesEntry?.key === sourceKey ? expandStatesEntry.states : defaultExpandStates;
 
   const fetchFileLines = useCallback(async (): Promise<string[] | null> => {
     if (fileLinesRef.current?.key === sourceKey) return fileLinesRef.current.lines;
@@ -143,12 +159,14 @@ export function useExpandableContext(
 
   const updateExpandStates = useCallback(
     (updater: (prev: Map<number, ExpandState>) => Map<number, ExpandState>) => {
-      setExpandStatesEntry((entry) => {
-        const prevStates = entry?.key === sourceKey ? entry.states : EMPTY_EXPAND_STATES;
-        return { key: sourceKey, states: updater(prevStates) };
-      });
+      // Functional form: two expansions can overlap the async fetch in `expand`,
+      // and both would otherwise start from the same stale map.
+      setExpandStatesEntry((entry) => ({
+        key: sourceKey,
+        states: updater(entry?.key === sourceKey ? entry.states : defaultExpandStates),
+      }));
     },
-    [sourceKey],
+    [sourceKey, defaultExpandStates],
   );
 
   const expand = useCallback(

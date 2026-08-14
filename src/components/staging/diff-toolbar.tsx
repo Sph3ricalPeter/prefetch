@@ -16,6 +16,7 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
   const diffWrapLines = useRepoStore((s) => s.diffWrapLines);
   const setDiffViewMode = useRepoStore((s) => s.setDiffViewMode);
   const setDiffWrapLines = useRepoStore((s) => s.setDiffWrapLines);
+  const setDiffExpandContext = useRepoStore((s) => s.setDiffExpandContext);
 
   return (
     <div className="flex items-center gap-2 py-1 border-b border-border bg-background shrink-0">
@@ -82,7 +83,12 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
       {onExpandAll && onCollapseAll && (
         <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
           <button
-            onClick={isExpanded ? onCollapseAll : onExpandAll}
+            onClick={() => {
+              // Sticky preference: new diffs open in whichever state was last chosen
+              setDiffExpandContext(!isExpanded);
+              if (isExpanded) onCollapseAll();
+              else onExpandAll();
+            }}
             title={isExpanded ? "Collapse all context" : "Expand all context"}
             className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
               isExpanded

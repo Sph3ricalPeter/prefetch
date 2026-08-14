@@ -412,6 +412,8 @@ interface RepoState {
   imageDiffViewMode: "unified" | "side-by-side" | "swipe";
   /** Whether long lines wrap in the diff viewer */
   diffWrapLines: boolean;
+  /** Whether unchanged context between hunks starts expanded */
+  diffExpandContext: boolean;
 
   /** Which optional graph columns are visible (global) */
   graphColumnVisibility: GraphColumnVisibility;
@@ -528,6 +530,7 @@ interface RepoState {
   setDiffViewMode: (mode: "unified" | "side-by-side") => void;
   setImageDiffViewMode: (mode: "unified" | "side-by-side" | "swipe") => void;
   setDiffWrapLines: (on: boolean) => void;
+  setDiffExpandContext: (on: boolean) => void;
   loadDiffPreferences: () => Promise<void>;
   setGraphColumnVisibility: (v: GraphColumnVisibility) => void;
   setGraphDateFormat: (f: DateFormatId) => void;
@@ -654,6 +657,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   diffViewMode: "unified",
   imageDiffViewMode: "side-by-side",
   diffWrapLines: true,
+  diffExpandContext: false,
   graphColumnVisibility: { sha: false, author: false, date: false },
   graphDateFormat: "short",
   graphDensity: "comfortable",
@@ -2241,12 +2245,18 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     setUiState("diff_wrap_lines", on ? "true" : "false").catch(() => {});
   },
 
+  setDiffExpandContext: (on) => {
+    set({ diffExpandContext: on });
+    setUiState("diff_expand_context", on ? "true" : "false").catch(() => {});
+  },
+
   loadDiffPreferences: async () => {
     try {
-      const [viewMode, imageViewMode, wrapLines] = await Promise.all([
+      const [viewMode, imageViewMode, wrapLines, expandContext] = await Promise.all([
         getUiState("diff_view_mode"),
         getUiState("image_diff_view_mode"),
         getUiState("diff_wrap_lines"),
+        getUiState("diff_expand_context"),
       ]);
       const update: Partial<RepoState> = {};
       if (viewMode === "unified" || viewMode === "side-by-side") {
@@ -2257,6 +2267,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       if (wrapLines === "true" || wrapLines === "false") {
         update.diffWrapLines = wrapLines === "true";
+      }
+      if (expandContext === "true" || expandContext === "false") {
+        update.diffExpandContext = expandContext === "true";
       }
       if (Object.keys(update).length > 0) set(update);
     } catch {
