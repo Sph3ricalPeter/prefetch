@@ -17,6 +17,7 @@ export function SectionHeader({
   onToggle,
   count,
   badge,
+  stats,
   action,
   className,
   labelClassName,
@@ -28,6 +29,8 @@ export function SectionHeader({
   count?: number;
   /** Inline content between label and count (e.g. a status dot/icon), inside the toggle. */
   badge?: ReactNode;
+  /** Inline content after the count (e.g. a diffstat), outside the toggle. */
+  stats?: ReactNode;
   /** Right-aligned controls (refresh, add, "Stage All"), outside the toggle. */
   action?: ReactNode;
   /** Override the row padding (defaults to `px-2 py-1.5`). */
@@ -55,6 +58,7 @@ export function SectionHeader({
           <span className="ml-1 text-faint">{count}</span>
         )}
       </button>
+      {stats && <div className="ml-1.5 min-w-0">{stats}</div>}
       {action && <div className="ml-auto flex items-center gap-1.5">{action}</div>}
     </div>
   );

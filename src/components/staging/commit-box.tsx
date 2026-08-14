@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { getTokenInfo } from "@/lib/commands";
@@ -12,7 +12,8 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Kbd } from "@/components/ui/kbd";
 import { ProfileAvatar } from "@/components/ui/avatar";
-import { ResizableTextarea } from "@/components/ui/resizable-textarea";
+import { ResizableTextarea, type ResizableTextareaApi } from "@/components/ui/resizable-textarea";
+import { RowDragHandle } from "@/components/ui/row-drag-handle";
 
 const SOURCE_LABELS: Record<string, string> = {
   local: "Local repo config",
@@ -47,7 +48,10 @@ export function CommitBox() {
   const headCommitId = useRepoStore((s) => s.headCommitId);
   const repoPath = useRepoStore((s) => s.repoPath);
 
-  const [showDescription, setShowDescription] = useState(false);
+  // Drag handle above the card resizes the merged commit field — the
+  // description part when it's shown, the subject otherwise.
+  const messageResize = useRef<ResizableTextareaApi>(null);
+  const descriptionResize = useRef<ResizableTextareaApi>(null);
   const [authInfoResult, setAuthInfoResult] = useState<{
     profileId: string;
     host: string;
@@ -195,7 +199,14 @@ export function CommitBox() {
       : null;
 
   return (
-    <div className="flex flex-col gap-2 px-3 py-3">
+    <>
+      <RowDragHandle
+        onMouseDown={(e) =>
+          (descriptionResize.current ?? messageResize.current)?.startResize(e)
+        }
+        label="Resize commit message"
+      />
+      <div className="flex shrink-0 flex-col gap-2 rounded-md border border-border bg-card px-3 py-3 animate-fade-in">
       {/* Operation progress header */}
       {isOperationInProgress && (
         <div className="flex items-center gap-2">
@@ -245,16 +256,12 @@ export function CommitBox() {
         </Tooltip>
       )}
 
-      <ResizableTextarea
-        value={commitMessage}
-        onChange={handleMessageChange}
-        onKeyDown={handleKeyDown}
-        placeholder={isOperationInProgress ? "Commit message for this step..." : "Commit message..."}
-        autoGrow
-        minHeight={34}
-        maxHeight={220}
-        gripPosition="top-right"
-        className={`pr-10 ${
+      {/* Merged commit field — subject on top (bright), extended description
+          below the rule (dim). Two textareas styled as one box: a single
+          textarea can't paint two colours or hold a divider, and an overlay
+          mirror would have to keep caret metrics in sync. */}
+      <div
+        className={`flex flex-col rounded-md border bg-field transition-colors focus-within:ring-1 focus-within:ring-ring ${
           commitMessage.length > 72
             ? "border-destructive/60"
             : commitMessage.length > 50
@@ -263,51 +270,57 @@ export function CommitBox() {
                 ? "border-yellow-500/30"
                 : "border-border"
         }`}
-        overlay={
-          commitMessage.length > 0 ? (
-            <span
-              className={`pointer-events-none absolute right-2 bottom-2 text-caption tabular-nums ${
-                commitMessage.length > 72
-                  ? "text-destructive"
-                  : commitMessage.length > 50
-                    ? "text-yellow-500"
-                    : "text-faint"
-              }`}
-            >
-              {commitMessage.length}
-            </span>
-          ) : null
-        }
-      />
+      >
+        <ResizableTextarea
+          value={commitMessage}
+          onChange={handleMessageChange}
+          onKeyDown={handleKeyDown}
+          placeholder={isOperationInProgress ? "Commit message for this step..." : "Commit message..."}
+          autoGrow
+          minHeight={50}
+          maxHeight={480}
+          gripPosition="none"
+          apiRef={messageResize}
+          className="rounded-none border-0 bg-transparent pr-10 focus:ring-0"
+          overlay={
+            commitMessage.length > 0 ? (
+              <span
+                className={`pointer-events-none absolute right-2 top-2 text-caption tabular-nums ${
+                  commitMessage.length > 72
+                    ? "text-destructive"
+                    : commitMessage.length > 50
+                      ? "text-yellow-500"
+                      : "text-faint"
+                }`}
+              >
+                {commitMessage.length}
+              </span>
+            ) : null
+          }
+        />
 
-      {/* Description toggle + field — only in normal commit mode */}
-      {!isOperationInProgress && (
-        <>
-          <button
-            onClick={() => setShowDescription(!showDescription)}
-            className="flex items-center gap-1 text-xs text-dim hover:text-muted-foreground transition-colors self-start"
-          >
-            {showDescription ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            Description
-          </button>
-
-          {showDescription && (
+        {/* Description — hidden mid-operation (rebase/merge steps take a
+            subject only). */}
+        {!isOperationInProgress && (
+          <>
+            <div className="mx-3 border-t border-border" />
             <ResizableTextarea
               value={commitDescription}
               onChange={handleDescriptionChange}
               onKeyDown={handleKeyDown}
-              placeholder="Optional extended description..."
-              minHeight={76}
-              maxHeight={320}
-              gripPosition="top-right"
-              className="border-border"
+              placeholder="Extended description..."
+              minHeight={64}
+              maxHeight={480}
+              gripPosition="none"
+              apiRef={descriptionResize}
+              className="rounded-none border-0 bg-transparent text-dim focus:ring-0"
             />
-          )}
+          </>
+        )}
+      </div>
 
+      {!isOperationInProgress && (
+        <>
           {/* Amend last commit toggle */}
           {headCommitId && (
             <label className="flex items-center gap-2 cursor-pointer group">
@@ -391,6 +404,7 @@ export function CommitBox() {
           )}
         </button>
       )}
-    </div>
+      </div>
+    </>
   );
 }

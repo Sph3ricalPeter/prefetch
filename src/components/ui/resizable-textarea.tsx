@@ -17,14 +17,22 @@ interface ResizableTextareaProps
   minHeight: number;
   /** Maximum height in px the box can grow/be dragged to. */
   maxHeight: number;
-  /** Which corner the custom drag-to-resize grip sits in. */
-  gripPosition?: "top-right" | "bottom-right";
+  /** Which corner the custom drag-to-resize grip sits in. "none" hides it —
+   *  use with `apiRef` to drive resizing from a handle outside the box. */
+  gripPosition?: "top-right" | "bottom-right" | "none";
+  /** Exposes `startResize` so an external handle can drag this box. */
+  apiRef?: Ref<ResizableTextareaApi>;
   /** Extra classes for the relative wrapper. */
   wrapperClassName?: string;
   /** Optional absolutely-positioned overlay (e.g. a character counter). */
   overlay?: ReactNode;
   /** Forwarded ref to the underlying textarea. */
   textareaRef?: Ref<HTMLTextAreaElement>;
+}
+
+export interface ResizableTextareaApi {
+  /** Begin a drag-to-resize from an external handle above the box. */
+  startResize: (e: React.MouseEvent) => void;
 }
 
 /**
@@ -43,6 +51,7 @@ export function ResizableTextarea({
   wrapperClassName,
   overlay,
   textareaRef,
+  apiRef,
   className,
   value,
   ...props
@@ -78,7 +87,7 @@ export function ResizableTextarea({
       if (!el) return;
       const startY = e.clientY;
       const startH = el.getBoundingClientRect().height;
-      const grows = gripPosition === "top-right" ? -1 : 1; // drag direction
+      const grows = gripPosition === "bottom-right" ? 1 : -1; // drag direction
 
       const onMove = (ev: MouseEvent) => {
         const delta = (ev.clientY - startY) * grows;
@@ -98,6 +107,8 @@ export function ResizableTextarea({
     [apply, gripPosition, minHeight, maxHeight],
   );
 
+  useImperativeHandle(apiRef, () => ({ startResize: onResizeStart }), [onResizeStart]);
+
   return (
     <div className={cn("relative", wrapperClassName)}>
       <textarea
@@ -114,6 +125,7 @@ export function ResizableTextarea({
       />
       {overlay}
       {/* Custom resize grip — the native handle can only sit bottom-right. */}
+      {gripPosition !== "none" && (
       <div
         onMouseDown={onResizeStart}
         className={cn(
@@ -123,6 +135,7 @@ export function ResizableTextarea({
       >
         <div className="h-1 w-4 rounded-full bg-muted-foreground/30 transition-colors group-hover:bg-muted-foreground/60" />
       </div>
+      )}
     </div>
   );
 }

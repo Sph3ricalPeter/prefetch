@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowLeft,
   FolderGit2,
   X,
   AlertTriangle,
@@ -26,6 +25,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { getUiState, setUiState } from "@/lib/database";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRepoStore } from "@/stores/repo-store";
+import { useDelayedFlag } from "@/hooks/use-delayed-flag";
 import { useProfileStore } from "@/stores/profile-store";
 import { Modal, ConfirmDialog } from "@/components/ui/modal";
 import {
@@ -38,6 +38,7 @@ import {
 import { laneWidthFor, LANE_WIDTH } from "@/lib/graph-density";
 import { GraphHeader } from "@/components/graph/graph-header";
 import { DiffViewer } from "@/components/staging/diff-viewer";
+import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { CiLogViewer } from "@/components/ci/ci-log-viewer";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
@@ -260,6 +261,10 @@ export function GraphPanel() {
   const selectedFileStaged = useRepoStore((s) => s.selectedFileStaged);
   const largeDiffPending = useRepoStore((s) => s.largeDiffPending);
   const diffLoading = useRepoStore((s) => s.diffLoading);
+  // Local diffs return in a few ms — showing the dim overlay immediately just
+  // flashes. Only diffs slower than half a second get one; the git-op overlay
+  // (isLoading) stays instant since it also blocks interaction.
+  const showDiffSpinner = useDelayedFlag(diffLoading, 500);
   const ciSelectedJobId = useRepoStore((s) => s.ciSelectedJobId);
 
   const openRepository = useRepoStore((s) => s.openRepository);
@@ -574,19 +579,10 @@ export function GraphPanel() {
 
   return (
     <div className="relative flex h-full flex-col bg-background">
-      {/* File path bar — only for large diff guard or diff loading (DiffViewer has its own) */}
-      {!showDiff && (showLargeDiffGuard || (diffLoading && selectedFilePath)) && (
-        <div className="shrink-0">
-          <div className="flex min-h-9 items-center px-3 py-1">
-            <IconButton onClick={clearDiff} className="mr-2">
-              <ArrowLeft className="h-3.5 w-3.5" />
-            </IconButton>
-            <span className="truncate text-xs font-medium text-foreground">
-              {selectedFilePath}
-            </span>
-          </div>
-          <div className="mx-3 border-t border-border" />
-        </div>
+      {/* Header for the large-diff guard — the same DiffToolbar the diff itself
+          renders, so nothing shifts when "Load anyway" swaps one for the other. */}
+      {!showDiff && showLargeDiffGuard && (
+        <DiffToolbar filePath={selectedFilePath ?? undefined} onBack={clearDiff} />
       )}
 
       {/* Conflict banner — hidden when conflict editor is active (it has its own toolbar) */}
@@ -636,7 +632,6 @@ export function GraphPanel() {
           <div className="h-full overflow-hidden">
             <DiffViewer
               diff={activeDiff}
-              filePath={selectedFilePath ?? activeDiff.path}
               mode={
                 selectedCommitId || selectedStashIndex != null
                   ? "readonly"
@@ -719,7 +714,7 @@ export function GraphPanel() {
         )}
 
         {/* Loading overlay — blocks interaction during git ops or diff loading */}
-        {(isLoading || diffLoading) && (
+        {(isLoading || showDiffSpinner) && (
           <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50 animate-fade-in">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>

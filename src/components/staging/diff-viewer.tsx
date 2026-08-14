@@ -7,7 +7,6 @@ import { isImageFile } from "@/lib/utils";
 
 interface DiffViewerProps {
   diff: FileDiff;
-  filePath?: string;
   mode?: "readonly" | "interactive";
   source?: DiffSource;
   staged?: boolean;
@@ -25,14 +24,14 @@ function EmptyState({ message, filePath, onBack }: { message: string; filePath?:
   );
 }
 
-export function DiffViewer({ diff, filePath, mode = "readonly", source = {}, staged = false, onBack }: DiffViewerProps) {
-  const resolvedPath = filePath ?? diff.path;
-  // Key the hook to diff.path (the actually-rendered diff) rather than filePath
-  // (the user's current selection). During a click → loading transition, filePath
-  // updates immediately but activeDiff lags behind the IPC; tying the hook to
-  // diff.path keeps state stable across that window so the spinner can paint
-  // without an extra re-render of the (heavy) diff subtree.
-  const ctx = useExpandableContext(diff.hunks, diff.path, source);
+export function DiffViewer({ diff, mode = "readonly", source = {}, staged = false, onBack }: DiffViewerProps) {
+  // Everything here follows diff.path — the actually-rendered diff — not the
+  // user's current selection. During a click → load transition the selection
+  // updates immediately while activeDiff lags behind the IPC; using diff.path
+  // keeps the path text, the language and the expand state in step with the
+  // content on screen, so the whole viewer swaps in one frame.
+  const resolvedPath = diff.path;
+  const ctx = useExpandableContext(diff.hunks, resolvedPath, source);
 
   if (diff.is_binary) {
     if (isImageFile(resolvedPath)) {

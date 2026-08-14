@@ -19,7 +19,7 @@ import {
   Save,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import type { FileStatus } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -42,8 +42,11 @@ import { TreeCollapseProvider, useTreeCollapse } from "@/hooks/use-tree-collapse
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { SectionHeader } from "@/components/ui/section-header";
+import { DiffStat } from "@/components/ui/diff-stat";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/modal";
+import { RowDragHandle } from "@/components/ui/row-drag-handle";
+import { useSplitRatio, splitGrowStyle } from "@/hooks/use-split-ratio";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
 function matchesLfsPattern(filePath: string, pattern: string): boolean {
@@ -129,46 +132,9 @@ export function FileList() {
 
   // ── Unstaged / staged split ratio (drag handle between the two cards) ──────
   // `ratio` is the unstaged card's share (0..1) of the resizable area; the
-  // staged card gets the rest. Drag the handle to rebalance. Kept in component
-  // state (resets to an even split when the view remounts).
-  const [splitRatio, setSplitRatio] = useState(0.5);
-  const [splitDragging, setSplitDragging] = useState(false);
-  const splitRef = useRef<HTMLDivElement>(null);
-  const splitDragRef = useRef<{ startY: number; startRatio: number; avail: number } | null>(null);
-
-  const onSplitDragStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const el = splitRef.current;
-      if (!el) return;
-      splitDragRef.current = { startY: e.clientY, startRatio: splitRatio, avail: el.clientHeight };
-      setSplitDragging(true);
-    },
-    [splitRatio],
-  );
-
-  useEffect(() => {
-    if (!splitDragging) return;
-    const onMove = (e: MouseEvent) => {
-      const d = splitDragRef.current;
-      if (!d || d.avail <= 0) return;
-      const next = Math.max(0.15, Math.min(0.85, d.startRatio + (e.clientY - d.startY) / d.avail));
-      setSplitRatio(next);
-    };
-    const onUp = () => setSplitDragging(false);
-    const prevCursor = document.body.style.cursor;
-    const prevSelect = document.body.style.userSelect;
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    return () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = prevCursor;
-      document.body.style.userSelect = prevSelect;
-    };
-  }, [splitDragging]);
+  // staged card gets the rest. Resets to an even split when the view remounts.
+  const { ratio: splitRatio, containerRef: splitRef, onDragStart: onSplitDragStart } =
+    useSplitRatio();
 
   // ── Multi-select state ────────────────────────────────────────────────────
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
@@ -276,10 +242,6 @@ export function FileList() {
   const unstagedExpands = unstagedOpen && unstaged.length > 0;
   const stagedExpands = stagedOpen && staged.length > 0;
   const bothExpand = unstagedExpands && stagedExpands;
-  const growStyle = (expands: boolean, grow: number): React.CSSProperties =>
-    expands
-      ? { flexGrow: grow, flexShrink: 1, flexBasis: 0, minHeight: 0 }
-      : { flexShrink: 0 };
 
   if (fileStatuses.length === 0) {
     return (
@@ -355,6 +317,7 @@ export function FileList() {
       <FileSection
         label="Unstaged"
         count={unstaged.length}
+        stats={<DiffStat files={unstaged} />}
         isOpen={unstagedOpen}
         onToggle={() => setUnstagedOpen(!unstagedOpen)}
         actionLabel="Stage All"
@@ -365,7 +328,7 @@ export function FileList() {
         }
         actionDisabled={isLoading || busyOp !== null}
         isBusy={busyOp === "stage"}
-        style={growStyle(unstagedExpands, bothExpand ? splitRatio : 1)}
+        style={splitGrowStyle(unstagedExpands, bothExpand ? splitRatio : 1)}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -407,15 +370,7 @@ export function FileList() {
       </FileSection>
 
       {bothExpand ? (
-        <div
-          onMouseDown={onSplitDragStart}
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize unstaged and staged"
-          className="group relative h-2 shrink-0 cursor-row-resize"
-        >
-          <div className="absolute left-1/2 top-1/2 h-1 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-muted-foreground/30 transition-colors group-hover:bg-muted-foreground/60" />
-        </div>
+        <RowDragHandle onMouseDown={onSplitDragStart} label="Resize unstaged and staged" />
       ) : (
         <div className="h-2 shrink-0" aria-hidden="true" />
       )}
@@ -424,6 +379,7 @@ export function FileList() {
       <FileSection
         label="Staged"
         count={staged.length}
+        stats={<DiffStat files={staged} />}
         isOpen={stagedOpen}
         onToggle={() => setStagedOpen(!stagedOpen)}
         actionLabel="Unstage All"
@@ -434,7 +390,7 @@ export function FileList() {
         }
         actionDisabled={isLoading || busyOp !== null}
         isBusy={busyOp === "unstage"}
-        style={growStyle(stagedExpands, bothExpand ? 1 - splitRatio : 1)}
+        style={splitGrowStyle(stagedExpands, bothExpand ? 1 - splitRatio : 1)}
       >
         {viewMode === "tree" ? (
           <FileTreeView
@@ -585,6 +541,7 @@ function FileSection({
   count,
   isOpen,
   onToggle,
+  stats,
   actionLabel,
   onAction,
   actionDisabled,
@@ -599,6 +556,8 @@ function FileSection({
   count: number;
   isOpen: boolean;
   onToggle: () => void;
+  /** Inline diffstat after the count. */
+  stats?: React.ReactNode;
   actionLabel: string;
   onAction?: () => void;
   actionDisabled: boolean;
@@ -615,7 +574,7 @@ function FileSection({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-card",
+        "flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-card animate-fade-in",
         className,
       )}
       style={style}
@@ -625,6 +584,7 @@ function FileSection({
         count={count}
         isOpen={isOpen}
         onToggle={onToggle}
+        stats={stats}
         className="shrink-0 px-3"
         labelClassName={labelClassName}
         action={
@@ -804,13 +764,6 @@ function ConflictTreeNodeView({
           style={{ paddingLeft: `${12 + indent}px` }}
           onClick={(e) => toggle(node.path, collectDirPaths(node), e.altKey)}
         >
-          {Array.from({ length: depth }, (_, i) => (
-            <div
-              key={i}
-              className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
-              style={{ left: `${18 + i * 16}px` }}
-            />
-          ))}
           {expanded ? (
             <ChevronDown className="h-3 w-3 shrink-0" />
           ) : (
@@ -824,22 +777,30 @@ function ConflictTreeNodeView({
           <span className="truncate"><HighlightedText text={node.name} /></span>
           <span className="text-faint">{fileCount}</span>
         </div>
-        {expanded && node.children.map((child) => (
-          <ConflictTreeNodeView
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            selectedFilePath={selectedFilePath}
-            fileQuery={fileQuery}
-            isAutoResolved={isAutoResolved}
-            onSelect={onSelect}
-            onResolveOurs={onResolveOurs}
-            onResolveTheirs={onResolveTheirs}
-            onSave={onSave}
-            onFileContextMenu={onFileContextMenu}
-            disabled={disabled}
-          />
-        ))}
+        {expanded && (
+          <div className="relative">
+            <div
+              className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
+              style={{ left: `${18 + indent}px` }}
+            />
+            {node.children.map((child) => (
+              <ConflictTreeNodeView
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                selectedFilePath={selectedFilePath}
+                fileQuery={fileQuery}
+                isAutoResolved={isAutoResolved}
+                onSelect={onSelect}
+                onResolveOurs={onResolveOurs}
+                onResolveTheirs={onResolveTheirs}
+                onSave={onSave}
+                onFileContextMenu={onFileContextMenu}
+                disabled={disabled}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -859,13 +820,6 @@ function ConflictTreeNodeView({
       onClick={() => onSelect(file.path)}
       onContextMenu={(e) => onFileContextMenu(e, file)}
     >
-      {Array.from({ length: depth }, (_, i) => (
-        <div
-          key={i}
-          className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
-          style={{ left: `${18 + i * 16}px` }}
-        />
-      ))}
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${fileAutoResolved ? "text-purple-400" : "text-red-400"}`}>
         {fileAutoResolved
           ? <Check className="h-[13px] w-[13px] inline-block" />
@@ -984,13 +938,6 @@ function TreeNodeView({
             onFolderContextMenu?.(collectFilePaths(node), node.path, e.clientX, e.clientY);
           }}
         >
-          {Array.from({ length: depth }, (_, i) => (
-            <div
-              key={i}
-              className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
-              style={{ left: `${18 + i * 16}px` }}
-            />
-          ))}
           {expanded ? (
             <ChevronDown className="h-3 w-3 shrink-0" />
           ) : (
@@ -1041,27 +988,35 @@ function TreeNodeView({
             </Tooltip>
           </span>
         </div>
-        {expanded && node.children.map((child) => (
-          <TreeNodeView
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            selectedFilePath={selectedFilePath}
-            multiSelected={multiSelected}
-            isLfsFile={isLfsFile}
-            fileQuery={fileQuery}
-            onSelect={onSelect}
-            onToggle={onToggle}
-            toggleIcon={toggleIcon}
-            toggleTitle={toggleTitle}
-            onDiscard={onDiscard}
-            onToggleBatch={onToggleBatch}
-            onDiscardBatch={onDiscardBatch}
-            disabled={disabled}
-            onFileContextMenu={onFileContextMenu}
-            onFolderContextMenu={onFolderContextMenu}
-          />
-        ))}
+        {expanded && (
+          <div className="relative">
+            <div
+              className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
+              style={{ left: `${18 + indent}px` }}
+            />
+            {node.children.map((child) => (
+              <TreeNodeView
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                selectedFilePath={selectedFilePath}
+                multiSelected={multiSelected}
+                isLfsFile={isLfsFile}
+                fileQuery={fileQuery}
+                onSelect={onSelect}
+                onToggle={onToggle}
+                toggleIcon={toggleIcon}
+                toggleTitle={toggleTitle}
+                onDiscard={onDiscard}
+                onToggleBatch={onToggleBatch}
+                onDiscardBatch={onDiscardBatch}
+                disabled={disabled}
+                onFileContextMenu={onFileContextMenu}
+                onFolderContextMenu={onFolderContextMenu}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -1093,13 +1048,6 @@ function TreeNodeView({
         onFileContextMenu?.(file, e.clientX, e.clientY, e);
       }}
     >
-      {Array.from({ length: depth }, (_, i) => (
-        <div
-          key={i}
-          className="absolute -top-1.5 -bottom-1.5 w-px bg-border"
-          style={{ left: `${18 + i * 16}px` }}
-        />
-      ))}
       <span className={`w-4 shrink-0 text-center text-xs font-medium ${statusColor}`}>
         {statusLabel}
       </span>
