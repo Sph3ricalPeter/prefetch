@@ -20,6 +20,8 @@ export type UpdateStatus =
 interface UpdaterState {
   status: UpdateStatus;
   availableVersion: string | null;
+  /** Release notes (markdown) for the available version, if the feed supplied any. */
+  releaseNotes: string | null;
   currentVersion: string | null;
   downloadProgress: number;
   error: string | null;
@@ -46,6 +48,7 @@ interface UpdaterState {
 export const useUpdaterStore = create<UpdaterState>((set, get) => ({
   status: "idle",
   availableVersion: null,
+  releaseNotes: null,
   currentVersion: null,
   downloadProgress: 0,
   error: null,
@@ -61,13 +64,19 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
     try {
       const update = await check();
       if (!update) {
-        set({ status: "idle", availableVersion: null, _updateHandle: null });
+        set({
+          status: "idle",
+          availableVersion: null,
+          releaseNotes: null,
+          _updateHandle: null,
+        });
         return;
       }
 
       set({
         status: "available",
         availableVersion: update.version,
+        releaseNotes: update.body?.trim() || null,
         _updateHandle: update,
       });
     } catch (err) {
@@ -76,7 +85,12 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       // Release exists but platform artifact not uploaded yet — treat as
       // "no update available" rather than surfacing a confusing error.
       if (message.includes("fallback platforms")) {
-        set({ status: "idle", availableVersion: null, _updateHandle: null });
+        set({
+          status: "idle",
+          availableVersion: null,
+          releaseNotes: null,
+          _updateHandle: null,
+        });
         return;
       }
 
