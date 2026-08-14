@@ -19,7 +19,7 @@ import { useRepoStore } from "@/stores/repo-store";
 import { openUrl } from "@/lib/commands";
 import { getUiState, setUiState } from "@/lib/database";
 import { formatDuration } from "@/lib/ci-utils";
-import { parseCiLog, type LogLine, type GroupStatus } from "@/lib/ci-log-parse";
+import { parseCiLog, type LogLine, type LogLineKind, type GroupStatus } from "@/lib/ci-log-parse";
 import { cn } from "@/lib/utils";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { useInViewSearch } from "@/hooks/use-in-view-search";
@@ -88,15 +88,35 @@ function ansiToHtml(text: string): string {
   return result;
 }
 
-function lineToHtml(line: LogLine): string {
-  const inner = ansiToHtml(line.content);
-  switch (line.kind) {
+/** Line kinds the viewer can color: parser kinds plus generically-detected debug. */
+type RenderKind = LogLineKind | "debug";
+
+/** Generic, format-agnostic log-level detection: matches a level token however
+ *  it's delimited (`[WARN]`, `warn:`, `level=error`, `12:00:01 DEBUG …`) as its
+ *  own word. ponytail: only scans the first 48 chars — levels live near the line
+ *  start, and a mid-sentence "error" shouldn't color the whole line. */
+const LEVEL_RE = /(?:^|[\s[(<:|=])(error|fatal|critical|warn|warning|debug)(?=$|[\s\]:>)|,=])/i;
+
+function detectLevel(plain: string): RenderKind | null {
+  const m = LEVEL_RE.exec(plain.slice(0, 48));
+  if (!m) return null;
+  const t = m[1];
+  if (t === "warn" || t === "warning") return "warning";
+  if (t === "debug") return "debug";
+  return "error";
+}
+
+function lineToHtml(content: string, kind: RenderKind): string {
+  const inner = ansiToHtml(content);
+  switch (kind) {
     case "error":
       return `<span style="color:#f85149">${inner}</span>`;
     case "warning":
       return `<span style="color:#d29922">${inner}</span>`;
     case "command":
-      return `<span style="color:#58a6ff">${inner}</span>`;
+      return `<span style="color:#3fb950">${inner}</span>`;
+    case "debug":
+      return `<span style="color:#8b949e">${inner}</span>`;
     default:
       return inner;
   }
@@ -110,12 +130,25 @@ function rawToRenderLines(text: string): RenderLine[] {
   }));
 }
 
-/** Convert parsed LogLines to per-line HTML + lowercased plain text. */
-function toRenderLines(lines: LogLine[]): RenderLine[] {
-  return lines.map((line) => ({
-    html: lineToHtml(line),
-    plain: stripAnsi(line.content).toLowerCase(),
-  }));
+/** Convert parsed LogLines to per-line HTML + lowercased plain text.
+ *  Forge-marker kinds win; lines the parser left "normal" get generic
+ *  content-based detection: `$ `-prefixed shell echoes become commands, and
+ *  level tokens (Maven `[INFO]`, `level=warn`, etc.) pick the line color. */
+function toRenderLines(lines: LogLine[], failed = false): RenderLine[] {
+  const plains = lines.map((line) => stripAnsi(line.content).toLowerCase());
+  const kinds: RenderKind[] = lines.map((line, i) => {
+    if (line.kind !== "normal") return line.kind;
+    if (plains[i].startsWith("$ ")) return "command";
+    return detectLevel(plains[i]) ?? "normal";
+  });
+  // ponytail: logs carry no per-command exit codes, so commands render green
+  // wholesale; in a failed group the last command is the one that aborted the
+  // script, and it alone goes red.
+  if (failed) {
+    const last = kinds.lastIndexOf("command");
+    if (last >= 0) kinds[last] = "error";
+  }
+  return lines.map((line, i) => ({ html: lineToHtml(line.content, kinds[i]), plain: plains[i] }));
 }
 
 interface RenderLine {
@@ -179,7 +212,12 @@ export function CiLogViewer() {
   // groups / typing in the filter doesn't re-convert every line.
   const rawLines = useMemo(() => rawToRenderLines(ciJobLog ?? ""), [ciJobLog]);
   const segLines = useMemo(
-    () => parsed.segments.map((seg) => toRenderLines(seg.type === "loose" ? seg.lines : seg.group.lines)),
+    () =>
+      parsed.segments.map((seg) =>
+        seg.type === "loose"
+          ? toRenderLines(seg.lines)
+          : toRenderLines(seg.group.lines, seg.group.status === "failure"),
+      ),
     [parsed],
   );
 
