@@ -2080,7 +2080,9 @@ pub fn stash_push_files(
 
     let backup_hash = create_stash_backup(path, extra_env);
 
-    let mut args = vec!["stash", "push"];
+    // `-u` so untracked paths in the selection are stashable — without it git
+    // rejects the WHOLE batch with a pathspec error on the first untracked file.
+    let mut args = vec!["stash", "push", "-u"];
     if let Some(msg) = message {
         args.push("-m");
         args.push(msg);
