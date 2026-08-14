@@ -1475,6 +1475,11 @@ fn create_stash_backup(path: &str, extra_env: &[(String, String)]) -> Option<Str
 }
 
 /// Store a backup stash commit so it shows up in `git stash list`.
+///
+/// Retrying a failed stash re-snapshots the same working tree, which would
+/// pile up identical `RECOVERED:` entries. `create_stash_backup` stages
+/// everything first, so the commit's tree captures tracked *and* untracked
+/// content — an existing entry with the same tree already holds these changes.
 fn store_stash_backup(
     path: &str,
     extra_env: &[(String, String)],
@@ -1482,6 +1487,15 @@ fn store_stash_backup(
     message: Option<&str>,
 ) {
     let Some(hash) = hash else { return };
+
+    if let Ok(tree) = capture(path, &["rev-parse", &format!("{hash}^{{tree}}")], extra_env) {
+        let tree = tree.trim();
+        let existing =
+            capture(path, &["stash", "list", "--format=%T"], extra_env).unwrap_or_default();
+        if !tree.is_empty() && existing.lines().any(|line| line.trim() == tree) {
+            return;
+        }
+    }
     let msg = format!(
         "RECOVERED: {}",
         message.unwrap_or("stash failed, changes saved here")
@@ -2567,5 +2581,30 @@ mod tests {
         assert!(!dir.path().join("untracked.txt").exists());
         // Working tree is clean
         assert!(get_status(p).unwrap().is_empty());
+    }
+
+    #[test]
+    fn store_stash_backup_skips_duplicate_content() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        std::fs::write(dir.path().join("tracked.txt"), "change").unwrap();
+        std::fs::write(dir.path().join("untracked.txt"), "new").unwrap();
+
+        let first = create_stash_backup(p, &[]);
+        assert!(first.is_some());
+        store_stash_backup(p, &[], first.as_deref(), None);
+        assert_eq!(list_stashes(p).unwrap().len(), 1);
+
+        // Same working tree → second failed attempt must not add another entry.
+        let second = create_stash_backup(p, &[]);
+        store_stash_backup(p, &[], second.as_deref(), None);
+        assert_eq!(list_stashes(p).unwrap().len(), 1);
+
+        // Different content → a new entry is stored.
+        std::fs::write(dir.path().join("untracked.txt"), "different").unwrap();
+        let third = create_stash_backup(p, &[]);
+        store_stash_backup(p, &[], third.as_deref(), None);
+        assert_eq!(list_stashes(p).unwrap().len(), 2);
     }
 }
