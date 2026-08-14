@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
 import { ProfileAvatar } from "@/components/ui/avatar";
+import { DropdownPanel } from "@/components/ui/dropdown-panel";
 
 interface ProfileSwitcherProps {
   onManageProfiles: () => void;
@@ -76,7 +77,7 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-md border border-border bg-popover shadow-lg py-1 animate-enter-down">
+        <DropdownPanel align="right" className="w-56">
           {/* No profile option */}
           <button
             onClick={() => handleSwitch(null)}
@@ -133,7 +134,7 @@ export function ProfileSwitcher({ onManageProfiles }: ProfileSwitcherProps) {
             <Settings2 className="h-3.5 w-3.5 shrink-0" />
             <span>Manage Profiles…</span>
           </button>
-        </div>
+        </DropdownPanel>
       )}
     </div>
   );

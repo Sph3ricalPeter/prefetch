@@ -1,6 +1,5 @@
 import { useMemo } from "react";
-import { Settings, Check, AlertTriangle, GitCommit } from "lucide-react";
-import { IconButton } from "@/components/ui/icon-button";
+import { Check, AlertTriangle, GitCommit } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { ForgeIcon } from "@/components/ui/forge-icons";
 import {
@@ -48,7 +47,7 @@ export function StatusBar({ onOpenSettings }: { onOpenSettings: (target?: Settin
   if (!repoPath) return null;
 
   return (
-    <div className="flex h-6 shrink-0 items-center bg-shell px-3 text-xs text-muted-foreground select-none">
+    <div className="flex h-6 shrink-0 items-center bg-shell px-3 mb-1 text-xs text-muted-foreground select-none">
       <div className="flex-1" />
 
       {/* Right: forge status, user metrics, commit count, LFS, settings */}
@@ -117,18 +116,6 @@ export function StatusBar({ onOpenSettings }: { onOpenSettings: (target?: Settin
             </TooltipContent>
           </Tooltip>
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <IconButton
-              size="sm"
-              onClick={() => onOpenSettings()}
-              className="shrink-0 hover:bg-accent"
-            >
-              <Settings className="h-3 w-3" />
-            </IconButton>
-          </TooltipTrigger>
-          <TooltipContent>Settings</TooltipContent>
-        </Tooltip>
       </div>
     </div>
   );

@@ -5,7 +5,13 @@ import { deleteUiState, getUiState, setUiState } from "@/lib/database";
 import { useUpdaterStore } from "@/stores/updater-store";
 import { useRepoStore } from "@/stores/repo-store";
 import { setFetchInterval as setFetchIntervalCmd } from "@/lib/commands";
-import { DATE_FORMATS } from "@/lib/date-format";
+import { DATE_FORMATS, type DateFormatId } from "@/lib/date-format";
+import {
+  SettingsHeader,
+  SettingsGroup,
+  SettingsRow,
+  SettingsChoice,
+} from "./settings-card";
 
 /** UI-state keys that hold visual / layout preferences (themes, fonts, panel
  *  widths, diff display modes, graph column visibility + date format). Reset
@@ -23,6 +29,7 @@ const VISUAL_LAYOUT_KEYS = [
   "diff_view_mode",
   "image_diff_view_mode",
   "diff_wrap_lines",
+  "diff_expand_context",
   "file_view_mode",
   "graph_column_visibility",
   "graph_date_format",
@@ -45,6 +52,13 @@ const VIEW_MODES = [
   { label: "Flat list", value: "flat" },
   { label: "Tree view", value: "tree" },
 ];
+
+/** DATE_FORMATS keyed as `value` for the shared segmented control. */
+const DATE_FORMAT_OPTIONS = DATE_FORMATS.map((f) => ({
+  label: f.label,
+  value: f.id,
+  example: f.example,
+}));
 
 export function GeneralSection() {
   const [fetchInterval, setFetchInterval] = useState("300");
@@ -83,52 +97,31 @@ export function GeneralSection() {
     setUiState("file_view_mode", value).catch(() => {});
   };
 
-  const handleDateFormatChange = (value: string) => {
-    if (value === "relative" || value === "short" || value === "long" || value === "iso") {
-      setGraphDateFormat(value);
-    }
+  const handleDateFormatChange = (value: DateFormatId) => {
+    setGraphDateFormat(value);
   };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground mb-1">General</h2>
-        <p className="text-xs text-muted-foreground">
-          Application-wide preferences.
-        </p>
-      </div>
+      <SettingsHeader title="General" description="Application-wide preferences." />
 
-      {/* Auto-fetch interval */}
-      <div className="space-y-2">
-        <label className="block text-xs font-medium text-foreground">
-          Auto-fetch interval
-        </label>
-        <p className="text-xs text-muted-foreground">
-          How often to automatically fetch from remotes in the background.
-        </p>
-        <div className="flex flex-wrap gap-1.5">
-          {FETCH_INTERVALS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => handleFetchIntervalChange(opt.value)}
-              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                fetchInterval === opt.value
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <SettingsGroup title="Behavior">
+        <SettingsRow
+          label="Auto-fetch interval"
+          description="How often to automatically fetch from remotes in the background."
+        >
+          <SettingsChoice
+            options={FETCH_INTERVALS}
+            value={fetchInterval}
+            onChange={handleFetchIntervalChange}
+          />
+        </SettingsRow>
 
-      {/* Reopen last repo */}
-      <div className="space-y-2">
-        <label className="block text-xs font-medium text-foreground">
-          Startup
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer">
+        <SettingsRow
+          label="Reopen last repository on startup"
+          description="Restores the repository you had open when the app launches."
+          asLabel
+        >
           <Checkbox
             checked={autoReopen}
             onCheckedChange={(v) => {
@@ -137,18 +130,20 @@ export function GeneralSection() {
               setUiState("auto_reopen_last_repo", checked ? "true" : "false").catch(() => {});
             }}
           />
-          <span className="text-xs text-foreground select-none">
-            Reopen last repository on startup
-          </span>
-        </label>
-      </div>
+        </SettingsRow>
 
-      {/* Conflict auto-resolve */}
-      <div className="space-y-2">
-        <label className="block text-xs font-medium text-foreground">
-          Conflicts
-        </label>
-        <label className="flex items-start gap-2 cursor-pointer">
+        <SettingsRow
+          label={
+            <span className="flex items-center gap-1.5">
+              Auto-resolve files with no real conflicts
+              <span className="text-caption font-semibold uppercase tracking-wider text-amber-500 border border-amber-500/30 rounded-md px-1 py-px leading-none">
+                Experimental
+              </span>
+            </span>
+          }
+          description="During rebase, automatically save files where all changes were made by only one side."
+          asLabel
+        >
           <Checkbox
             checked={conflictAutoResolve}
             onCheckedChange={(v) => {
@@ -156,75 +151,36 @@ export function GeneralSection() {
               setConflictAutoResolve(checked);
               setUiState("conflict_auto_resolve", checked ? "true" : "false").catch(() => {});
             }}
-            className="mt-0.5"
           />
-          <div className="select-none">
-            <span className="text-xs text-foreground flex items-center gap-1.5">
-              Auto-resolve files with no real conflicts
-              <span className="text-caption font-semibold uppercase tracking-wider text-amber-500 border border-amber-500/30 rounded-md px-1 py-px leading-none">
-                Experimental
-              </span>
-            </span>
-            <p className="text-label text-muted-foreground mt-0.5">
-              During rebase, automatically save files where all changes were made by only one side.
-            </p>
-          </div>
-        </label>
-      </div>
+        </SettingsRow>
+      </SettingsGroup>
 
-      {/* Updates */}
+      <SettingsGroup title="Repository views">
+        <SettingsRow
+          label="Default file view"
+          description="How changed files are displayed in the staging area."
+        >
+          <SettingsChoice
+            options={VIEW_MODES}
+            value={fileViewMode}
+            onChange={handleViewModeChange}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Date format"
+          description="How dates are displayed in the commit graph."
+          stack
+        >
+          <SettingsChoice
+            options={DATE_FORMAT_OPTIONS}
+            value={dateFormat}
+            onChange={handleDateFormatChange}
+          />
+        </SettingsRow>
+      </SettingsGroup>
+
       <UpdatesSection />
-
-      {/* Default file view */}
-      <div className="space-y-2">
-        <label className="block text-xs font-medium text-foreground">
-          Default file view
-        </label>
-        <p className="text-xs text-muted-foreground">
-          How changed files are displayed in the staging area.
-        </p>
-        <div className="flex gap-1.5">
-          {VIEW_MODES.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => handleViewModeChange(opt.value)}
-              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                fileViewMode === opt.value
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Date format */}
-      <div className="space-y-2">
-        <label className="block text-xs font-medium text-foreground">
-          Date format
-        </label>
-        <p className="text-xs text-muted-foreground">
-          How dates are displayed in the commit graph.
-        </p>
-        <div className="flex flex-wrap gap-1.5">
-          {DATE_FORMATS.map((opt) => (
-            <button
-              key={opt.id}
-              onClick={() => handleDateFormatChange(opt.id)}
-              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                dateFormat === opt.id
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-            >
-              {opt.label}
-              <span className="ml-1.5 text-muted-foreground">{opt.example}</span>
-            </button>
-          ))}
-        </div>
-      </div>
 
       <ResetLayoutSection />
     </div>
@@ -251,42 +207,40 @@ function ResetLayoutSection() {
   };
 
   return (
-    <div className="space-y-2">
-      <label className="block text-xs font-medium text-foreground">
-        Reset layout &amp; appearance
-      </label>
-      <p className="text-xs text-muted-foreground">
-        Clears column widths, panel sizes, theme, fonts, and diff view
-        preferences. Repos, profiles, and behavior settings are kept.
-      </p>
-      {confirmOpen ? (
-        <div className="flex items-center gap-2">
+    <SettingsGroup title="Maintenance">
+      <SettingsRow
+        label="Reset layout &amp; appearance"
+        description="Clears column widths, panel sizes, theme, fonts, and diff view preferences. Repos, profiles, and behavior settings are kept."
+      >
+        {confirmOpen ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleReset}
+              disabled={resetting}
+              className="flex items-center gap-1.5 rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-destructive/20 disabled:opacity-60"
+            >
+              {resetting && <Loader2 className="h-3 w-3 animate-spin" />}
+              Confirm &amp; reload
+            </button>
+            <button
+              onClick={() => setConfirmOpen(false)}
+              disabled={resetting}
+              className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-60"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
           <button
-            onClick={handleReset}
-            disabled={resetting}
-            className="flex items-center gap-1.5 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-destructive/20 disabled:opacity-60"
+            onClick={() => setConfirmOpen(true)}
+            className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
-            {resetting && <Loader2 className="h-3 w-3 animate-spin" />}
-            Confirm reset &amp; reload
+            <RotateCcw className="h-3 w-3" />
+            Reset to defaults
           </button>
-          <button
-            onClick={() => setConfirmOpen(false)}
-            disabled={resetting}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-60"
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <button
-          onClick={() => setConfirmOpen(true)}
-          className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-        >
-          <RotateCcw className="h-3 w-3" />
-          Reset to defaults
-        </button>
-      )}
-    </div>
+        )}
+      </SettingsRow>
+    </SettingsGroup>
   );
 }
 
@@ -353,42 +307,41 @@ function UpdatesSection() {
   }
 
   return (
-    <div className="space-y-2">
-      <label className="block text-xs font-medium text-foreground">
-        Updates
-      </label>
-      <p className="text-xs text-muted-foreground">
-        Current version: v{currentVersion ?? "…"}
-      </p>
-      <div className="flex items-center gap-3">
-        <button
-          onClick={buttonAction}
-          disabled={isBusy && !buttonHighlighted}
-          className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ${
-            isBusy && !buttonHighlighted
-              ? "border-border text-muted-foreground opacity-60"
-              : buttonHighlighted
-                ? "border-primary/50 bg-primary/10 text-foreground hover:bg-primary/20"
-                : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
-          }`}
-        >
-          {isChecking && <Loader2 className="h-3 w-3 animate-spin" />}
-          {buttonLabel}
-        </button>
-        {statusText && (
-          <span
-            className={`text-xs ${
-              status === "error"
-                ? "text-destructive"
-                : status === "available" || status === "ready"
-                  ? "text-primary"
-                  : "text-muted-foreground"
+    <SettingsGroup title="Updates">
+      <SettingsRow
+        label="Application updates"
+        description={`Current version: v${currentVersion ?? "…"}`}
+      >
+        <div className="flex items-center gap-3">
+          {statusText && (
+            <span
+              className={`text-xs ${
+                status === "error"
+                  ? "text-destructive"
+                  : status === "available" || status === "ready"
+                    ? "text-primary"
+                    : "text-muted-foreground"
+              }`}
+            >
+              {statusText}
+            </span>
+          )}
+          <button
+            onClick={buttonAction}
+            disabled={isBusy && !buttonHighlighted}
+            className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              isBusy && !buttonHighlighted
+                ? "border-border text-muted-foreground opacity-60"
+                : buttonHighlighted
+                  ? "border-primary/50 bg-primary/10 text-foreground hover:bg-primary/20"
+                  : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
             }`}
           >
-            {statusText}
-          </span>
-        )}
-      </div>
-    </div>
+            {isChecking && <Loader2 className="h-3 w-3 animate-spin" />}
+            {buttonLabel}
+          </button>
+        </div>
+      </SettingsRow>
+    </SettingsGroup>
   );
 }

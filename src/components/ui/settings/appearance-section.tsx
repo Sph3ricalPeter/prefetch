@@ -1,5 +1,6 @@
 import { useThemeStore, FONT_FAMILIES, MONO_FONTS, FONT_SCALES } from "@/stores/theme-store";
 import { APP_THEMES, CODE_THEMES, DEFAULT_CODE_THEME } from "@/lib/themes";
+import { SettingsHeader, SettingsGroup, SettingsRow } from "./settings-card";
 
 export function AppearanceSection() {
   const appThemeId = useThemeStore((s) => s.appThemeId);
@@ -23,27 +24,22 @@ export function AppearanceSection() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground mb-1">Appearance</h2>
-        <p className="text-xs text-muted-foreground">
-          Customize the look of the app and code views.
-        </p>
-      </div>
+      <SettingsHeader
+        title="Appearance"
+        description="Customize the look of the app and code views."
+      />
 
-      {/* Font settings */}
-      <div className="space-y-4">
-        <label className="block text-xs font-medium text-foreground">
-          Font
-        </label>
-
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground w-16 shrink-0">Family</span>
-          <div className="flex gap-1.5">
+      <SettingsGroup title="Fonts">
+        <SettingsRow
+          label="Interface font"
+          description="Used everywhere except code and diffs."
+        >
+          <div className="flex flex-wrap gap-1.5">
             {FONT_FAMILIES.map((f) => (
               <button
                 key={f.id}
                 onClick={() => setFontFamily(f.id)}
-                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
                   fontFamilyId === f.id
                     ? "border-primary bg-primary/10 text-foreground"
                     : "border-border text-muted-foreground hover:border-muted-foreground/30 hover:bg-secondary"
@@ -54,16 +50,18 @@ export function AppearanceSection() {
               </button>
             ))}
           </div>
-        </div>
+        </SettingsRow>
 
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground w-16 shrink-0">Code</span>
-          <div className="flex gap-1.5">
+        <SettingsRow
+          label="Code font"
+          description="Used in the diff viewer and code displays."
+        >
+          <div className="flex flex-wrap gap-1.5">
             {MONO_FONTS.map((f) => (
               <button
                 key={f.id}
                 onClick={() => setMonoFont(f.id)}
-                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
                   monoFontId === f.id
                     ? "border-primary bg-primary/10 text-foreground"
                     : "border-border text-muted-foreground hover:border-muted-foreground/30 hover:bg-secondary"
@@ -74,16 +72,18 @@ export function AppearanceSection() {
               </button>
             ))}
           </div>
-        </div>
+        </SettingsRow>
 
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground w-16 shrink-0">Scale</span>
-          <div className="flex gap-1.5">
+        <SettingsRow
+          label="Font size"
+          description="Scales every text size across the app."
+        >
+          <div className="flex flex-wrap gap-1.5">
             {FONT_SCALES.map((s) => (
               <button
                 key={s.value}
                 onClick={() => setFontScale(s.value)}
-                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
                   fontScale === s.value
                     ? "border-primary bg-primary/10 text-foreground"
                     : "border-border text-muted-foreground hover:border-muted-foreground/30 hover:bg-secondary"
@@ -93,64 +93,60 @@ export function AppearanceSection() {
               </button>
             ))}
           </div>
-        </div>
-      </div>
+        </SettingsRow>
+      </SettingsGroup>
 
-      {/* App theme */}
-      <div className="space-y-2">
-        <label className="block text-xs font-medium text-foreground">
-          App theme
-        </label>
-        <p className="text-xs text-muted-foreground">
-          Controls the overall UI chrome — sidebar, panels, borders, and commit graph.
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {APP_THEMES.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => handleAppTheme(t.id)}
-              className={`group relative rounded-lg border p-3 text-left transition-colors ${
-                appThemeId === t.id
-                  ? "border-primary bg-primary/10"
-                  : "border-border hover:border-muted-foreground/30 hover:bg-secondary"
-              }`}
-            >
-              <ThemePreview theme={t} />
-              <span className="mt-2 block text-xs font-medium text-foreground">
-                {t.label}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+      <SettingsGroup title="Themes">
+        <SettingsRow
+          label="App theme"
+          description="Controls the overall UI chrome — sidebar, panels, borders, and commit graph."
+          stack
+        >
+          <div className="grid grid-cols-2 gap-2">
+            {APP_THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => handleAppTheme(t.id)}
+                className={`group relative rounded-lg border p-3 text-left transition-colors ${
+                  appThemeId === t.id
+                    ? "border-primary bg-primary/10"
+                    : "border-border hover:border-muted-foreground/30 hover:bg-secondary"
+                }`}
+              >
+                <ThemePreview theme={t} />
+                <span className="mt-2 block text-xs font-medium text-foreground">
+                  {t.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
 
-      {/* Code theme */}
-      <div className="space-y-2">
-        <label className="block text-xs font-medium text-foreground">
-          Code theme
-        </label>
-        <p className="text-xs text-muted-foreground">
-          Controls syntax highlighting and diff colors in the code viewer.
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {CODE_THEMES.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setCodeTheme(t.id)}
-              className={`group relative rounded-lg border p-3 text-left transition-colors ${
-                codeThemeId === t.id
-                  ? "border-primary bg-primary/10"
-                  : "border-border hover:border-muted-foreground/30 hover:bg-secondary"
-              }`}
-            >
-              <CodeThemePreview theme={t} />
-              <span className="mt-2 block text-xs font-medium text-foreground">
-                {t.label}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+        <SettingsRow
+          label="Code theme"
+          description="Controls syntax highlighting and diff colors in the code viewer."
+          stack
+        >
+          <div className="grid grid-cols-2 gap-2">
+            {CODE_THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setCodeTheme(t.id)}
+                className={`group relative rounded-lg border p-3 text-left transition-colors ${
+                  codeThemeId === t.id
+                    ? "border-primary bg-primary/10"
+                    : "border-border hover:border-muted-foreground/30 hover:bg-secondary"
+                }`}
+              >
+                <CodeThemePreview theme={t} />
+                <span className="mt-2 block text-xs font-medium text-foreground">
+                  {t.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
+      </SettingsGroup>
     </div>
   );
 }

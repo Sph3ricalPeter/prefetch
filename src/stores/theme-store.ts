@@ -53,6 +53,8 @@ export const BASE_TEXT_SIZES = {
   xsLh: 18,
   sm: 16,
   smLh: 20,
+  heading: 22,
+  headingLh: 28,
 };
 
 function getFontOption(list: FontOption[], id: string): FontOption {
@@ -98,6 +100,8 @@ function applyFontScale(scale: number) {
   root.style.setProperty("--text-xs--line-height", s(BASE_TEXT_SIZES.xsLh));
   root.style.setProperty("--text-sm", s(BASE_TEXT_SIZES.sm));
   root.style.setProperty("--text-sm--line-height", s(BASE_TEXT_SIZES.smLh));
+  root.style.setProperty("--text-heading", s(BASE_TEXT_SIZES.heading));
+  root.style.setProperty("--text-heading--line-height", s(BASE_TEXT_SIZES.headingLh));
 }
 
 function applyAppTheme(theme: AppTheme) {

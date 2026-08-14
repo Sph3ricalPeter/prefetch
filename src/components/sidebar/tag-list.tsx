@@ -97,7 +97,7 @@ export function TagList() {
             onChange={(e) => setNewTagName(e.target.value)}
             onKeyDown={handleKeyDown}
             autoFocus
-            className="w-full rounded-md bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
           />
           <input
             type="text"
@@ -105,7 +105,7 @@ export function TagList() {
             value={newTagMessage}
             onChange={(e) => setNewTagMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="w-full rounded-md bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-faint outline-none focus:ring-1 focus:ring-ring"
           />
           <div className="flex gap-1">
             <button

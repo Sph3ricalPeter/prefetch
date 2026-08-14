@@ -5,16 +5,16 @@ import { SidebarPanel } from "./sidebar-panel";
 import { GraphPanel } from "./graph-panel";
 import { DetailPanel } from "./detail-panel";
 import { StatusBar } from "./status-bar";
-import { SettingsPage, type SettingsTarget } from "@/components/ui/settings-page";
+import { SettingsNav, SettingsContent, type SettingsTarget } from "@/components/ui/settings-page";
 import { CloneDialog } from "@/components/ui/clone-dialog";
 import { getUiState, setUiState } from "@/lib/database";
 import { useRepoStore } from "@/stores/repo-store";
 const SIDEBAR_DEFAULT = 300;
 const DETAIL_DEFAULT = 400;
-const SIDEBAR_MIN = 140;
+const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 400;
-const DETAIL_MIN = 200;
-const DETAIL_MAX = 580;
+const DETAIL_MIN = 350;
+const DETAIL_MAX = 630;
 const CENTER_MIN = 120;
 
 /** Clamp a panel width to its valid range, with NaN/Infinity protection. */
@@ -147,10 +147,11 @@ export function AppLayout() {
   }, [applyWidths]);
 
   // ── Re-fit panels whenever the window (or container) resizes ───────
-  // `settingsTab` is a dep so the observer re-attaches when panels remount
-  // after leaving settings (the old container DOM element is gone).
+  // Both branches unmount the detail column while leaving `detailCollapsed`
+  // false, so `detailRef` reads null and the fit maths below would size the
+  // sidebar around a panel that isn't on screen.
   useEffect(() => {
-    if (settingsTarget) return;
+    if (settingsTarget || showCiLog) return;
     const container = containerRef.current;
     if (!container) return;
 
@@ -184,7 +185,7 @@ export function AppLayout() {
 
     observer.observe(container);
     return () => observer.disconnect();
-  }, [applyWidths, sidebarWidth, detailWidth, settingsTarget]);
+  }, [applyWidths, sidebarWidth, detailWidth, settingsTarget, showCiLog]);
 
   const saveSidebarWidth = useCallback((width: number) => {
     const clamped = clampWidth(width, SIDEBAR_MIN, SIDEBAR_MAX, SIDEBAR_DEFAULT);
@@ -203,35 +204,48 @@ export function AppLayout() {
       {/* Custom titlebar — replaces native window chrome */}
       <Titlebar settingsOpen={!!settingsTarget} onOpenClone={() => setCloneOpen(true)} onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />
 
-      {/* Settings fullpage view OR three-panel repo view */}
-      {settingsTarget ? (
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <SettingsPage onClose={() => setSettingsTarget(null)} initialTab={settingsTarget.tab} focusProfileId={settingsTarget.profileId} sidebarWidth={sidebarWidth} onSidebarResize={saveSidebarWidth} />
-        </div>
-      ) : (
-        <>
-          <div ref={containerRef} className="flex flex-1 min-h-0 overflow-hidden pt-1 pr-2 pl-2 pb-1 bg-shell">
-            {/* Left sidebar — blended into the shell, no divider (flex-shrink default: shrinks when window narrows) */}
-            <div ref={sidebarRef} className="mr-1" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN }}>
-              <SidebarPanel />
-            </div>
-
-            <ResizeHandle
-              side="left"
-              ghost
-              panelRef={sidebarRef}
-              minWidth={SIDEBAR_MIN}
-              maxWidth={SIDEBAR_MAX}
-              onResizeEnd={saveSidebarWidth}
+      {/* The shell (padded container, sidebar column, handle, floating card,
+          status bar) is permanent. Settings is not a separate page — it swaps
+          the *content* of the sidebar and card slots, so panel widths survive
+          the trip and both views share one set of surfaces. */}
+      <div ref={containerRef} className="flex flex-1 min-h-0 overflow-hidden pt-1 pr-2 pl-2 pb-1 bg-shell">
+        {/* Left sidebar — blended into the shell, no divider (flex-shrink default: shrinks when window narrows) */}
+        <div ref={sidebarRef} className="mr-1" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN }}>
+          {settingsTarget ? (
+            <SettingsNav
+              activeTab={settingsTarget.tab}
+              onSelectTab={(tab) => setSettingsTarget({ tab })}
+              onClose={() => setSettingsTarget(null)}
             />
+          ) : (
+            <SidebarPanel />
+          )}
+        </div>
 
-            {/* Floating card — commit graph (center) + detail (right) as two full-height columns.
-                `basis-0` is load-bearing: without it the card's preferred width is its
-                max-content, which balloons in the side-by-side diff (two columns of
-                unwrapped code) and overflows the outer flex, squeezing the sidebar. With
-                basis-0 the card grows purely from free space, so center content can't
-                push the side panels around. */}
-            <div className="ml-px flex grow basis-0 min-w-0 overflow-hidden rounded-xl border border-border bg-background">
+        <ResizeHandle
+          side="left"
+          ghost
+          panelRef={sidebarRef}
+          minWidth={SIDEBAR_MIN}
+          maxWidth={SIDEBAR_MAX}
+          onResizeEnd={saveSidebarWidth}
+        />
+
+        {/* Floating card — commit graph (center) + detail (right) as two full-height columns.
+            `basis-0` is load-bearing: without it the card's preferred width is its
+            max-content, which balloons in the side-by-side diff (two columns of
+            unwrapped code) and overflows the outer flex, squeezing the sidebar. With
+            basis-0 the card grows purely from free space, so center content can't
+            push the side panels around. */}
+        <div className="ml-1 flex grow basis-0 min-w-0 overflow-hidden rounded-xl border border-border bg-background">
+          {settingsTarget ? (
+            <SettingsContent
+              tab={settingsTarget.tab}
+              focusProfileId={settingsTarget.profileId}
+              onClose={() => setSettingsTarget(null)}
+            />
+          ) : (
+            <>
               {/* Center — commit graph, diff viewer, or CI log viewer */}
               <div className="grow shrink-0 basis-0 min-w-[120px]">
                 <GraphPanel />
@@ -247,6 +261,7 @@ export function AppLayout() {
                     <ResizeHandle
                       side="right"
                       ghost
+                      className="ml-1"
                       panelRef={detailRef}
                       minWidth={DETAIL_MIN}
                       maxWidth={DETAIL_MAX}
@@ -266,11 +281,11 @@ export function AppLayout() {
                   </div>
                 </>
               )}
-            </div>
-          </div>
-          <StatusBar onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />
-        </>
-      )}
+            </>
+          )}
+        </div>
+      </div>
+      <StatusBar onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />
 
       {cloneOpen && (
         <CloneDialog

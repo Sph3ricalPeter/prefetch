@@ -15,6 +15,8 @@ interface ResizeHandleProps {
   /** Render with no resting line (transparent until hover). Used for the
    *  sidebar handle in the mat so the sidebar blends into the shell. */
   ghost?: boolean;
+  /** Extra classes on the handle (e.g. margins to space it off neighbours) */
+  className?: string;
 }
 
 export function ResizeHandle({
@@ -24,6 +26,7 @@ export function ResizeHandle({
   maxWidth = 480,
   onResizeEnd,
   ghost = false,
+  className,
 }: ResizeHandleProps) {
   const [isDragging, setIsDragging] = useState(false);
   const startX = useRef(0);
@@ -97,6 +100,7 @@ export function ResizeHandle({
           : ghost
             ? "bg-transparent hover:bg-accent"
             : "bg-border hover:bg-accent",
+        className,
       )}
     >
       {/* Grip: a thicker rounded bar centered vertically that signals the

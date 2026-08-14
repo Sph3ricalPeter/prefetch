@@ -27,6 +27,7 @@ import { listForgeRepos, cloneRepo, checkProfileToken } from "@/lib/commands";
 import { getUiState, setUiState } from "@/lib/database";
 import { ForgeIcon } from "@/components/ui/forge-icons";
 import { ProfileAvatar } from "@/components/ui/avatar";
+import { DropdownPanel } from "@/components/ui/dropdown-panel";
 import {
   Tooltip,
   TooltipTrigger,
@@ -120,7 +121,7 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
             {profileDropdownOpen && (
               <>
                 <div className="fixed inset-0 z-[9]" onClick={() => setProfileDropdownOpen(false)} />
-                <div className="absolute z-10 mt-1 w-full rounded-md border border-border bg-popover shadow-[0_8px_30px_rgba(0,0,0,0.5)] py-1">
+                <DropdownPanel className="z-10 w-full shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
                   <button
                     onClick={() => handleProfileChange(null)}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
@@ -154,7 +155,7 @@ export function CloneDialog({ onClose, onOpenSettings }: CloneDialogProps) {
                       {selectedProfile?.id === p.id && <Check className="h-3 w-3 shrink-0 text-primary" />}
                     </button>
                   ))}
-                </div>
+                </DropdownPanel>
               </>
             )}
           </div>

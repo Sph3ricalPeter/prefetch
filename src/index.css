@@ -221,9 +221,11 @@ body::before {
   --noise-opacity: 0.025;
 }
 
-/* Type scale — 4 levels (caption, label, body=text-xs, title=text-sm).
+/* Type scale — 5 levels (caption, label, body=text-xs, title=text-sm,
+   heading=text-heading).
    caption = small section headers, badges & uppercase tracked text;
-   label = min readable size (form labels).
+   label = min readable size (form labels);
+   heading = page titles (settings tabs) — the only level above title.
    MUST be a NON-inline @theme: that compiles .text-caption / .text-label to
    `font-size: var(--text-caption)` so applyFontScale()'s runtime override
    (theme-store.ts) scales them. An `inline` @theme would bake the px literal
@@ -236,6 +238,8 @@ body::before {
   --text-caption--line-height: 16px;
   --text-label: 14px;
   --text-label--line-height: 18px;
+  --text-heading: 22px;
+  --text-heading--line-height: 28px;
 }
 
 @keyframes fade-in {
@@ -263,11 +267,6 @@ body::before {
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-@keyframes skeleton-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
 
 /* Cross-pane hover highlight in the conflict editor. Lines that correspond

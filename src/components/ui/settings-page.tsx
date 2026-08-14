@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   Settings2,
@@ -6,7 +6,7 @@ import {
   Database,
   Palette,
 } from "lucide-react";
-import { ResizeHandle } from "@/components/ui/resize-handle";
+import { SectionHeader } from "@/components/ui/section-header";
 import { GeneralSection } from "./settings/general-section";
 import { AppearanceSection } from "./settings/appearance-section";
 import { ProfilesSection } from "./settings/profiles-section";
@@ -26,18 +26,76 @@ const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: "lfs", label: "LFS", icon: <Database className="h-3.5 w-3.5" /> },
 ];
 
-interface SettingsPageProps {
+/**
+ * Settings tab list — fills the sidebar slot in AppLayout, replacing SidebarPanel.
+ * The slot owns the width, background and resize handle, so this renders
+ * transparent on the shell just like the repo sidebar does.
+ */
+export function SettingsNav({
+  activeTab,
+  onSelectTab,
+  onClose,
+}: {
+  activeTab: SettingsTab;
+  onSelectTab: (tab: SettingsTab) => void;
   onClose: () => void;
-  initialTab?: SettingsTab;
-  focusProfileId?: string;
-  sidebarWidth?: number;
-  onSidebarResize?: (width: number) => void;
+}) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <div className="flex h-full flex-col bg-shell">
+      <button
+        onClick={onClose}
+        className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back to repo
+      </button>
+
+      <div className="my-1 mr-2 border-t border-border" />
+
+      {/* Same collapsible header the repo sidebar uses for Branches / Stash / Tags */}
+      <SectionHeader
+        label="Settings"
+        isOpen={open}
+        onToggle={() => setOpen(!open)}
+      />
+
+      {open && (
+        <nav className="pr-2 space-y-0.5">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => onSelectTab(tab.id)}
+              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors ${
+                activeTab === tab.id
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      )}
+    </div>
+  );
 }
 
-export function SettingsPage({ onClose, initialTab = "general", focusProfileId, sidebarWidth = 256, onSidebarResize }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
-  const navRef = useRef<HTMLDivElement>(null);
-
+/**
+ * Settings body — fills the center card slot in AppLayout, spanning the whole
+ * card (the detail column is dropped while settings is open, same as the CI log).
+ */
+export function SettingsContent({
+  tab,
+  focusProfileId,
+  onClose,
+}: {
+  tab: SettingsTab;
+  focusProfileId?: string;
+  onClose: () => void;
+}) {
   // Mouse back button (button 3) closes settings
   useEffect(() => {
     const handleMouseUp = (e: MouseEvent) => {
@@ -51,61 +109,16 @@ export function SettingsPage({ onClose, initialTab = "general", focusProfileId, 
   }, [onClose]);
 
   return (
-    <div className="flex h-full">
-      {/* Left nav — resizable, shares width with main sidebar */}
-      <div ref={navRef} className="shrink-0 bg-sidebar-background flex flex-col" style={{ width: sidebarWidth }}>
-        {/* Back button */}
-        <button
-          onClick={onClose}
-          className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground hover:text-foreground transition-colors border-b border-border"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back to repo
-        </button>
-
-        {/* Nav header */}
-        <div className="px-4 pt-4 pb-2">
-          <h2 className="text-label font-semibold text-muted-foreground uppercase tracking-wider">
-            Settings
-          </h2>
-        </div>
-
-        {/* Nav items */}
-        <nav className="flex-1 px-2 space-y-0.5">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors ${
-                activeTab === tab.id
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-
-      </div>
-
-      <ResizeHandle
-        side="left"
-        panelRef={navRef}
-        minWidth={192}
-        maxWidth={320}
-        onResizeEnd={onSidebarResize}
-      />
-
-      {/* Right content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-8 py-6">
-          {activeTab === "general" && <GeneralSection />}
-          {activeTab === "appearance" && <AppearanceSection />}
-          {activeTab === "profiles" && <ProfilesSection focusProfileId={focusProfileId} />}
-          {activeTab === "lfs" && <LfsSection />}
-        </div>
+    // `scrollbar-gutter: stable both-edges` reserves the 6px scrollbar track on
+    // both sides whether or not this tab scrolls. Without it the centered column
+    // shifts 3px left the moment a scrollbar appears, so it visibly jumps between
+    // tabs (General/Appearance scroll, LFS/Profiles don't).
+    <div className="grow basis-0 min-w-0 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
+      <div className="max-w-3xl mx-auto px-8 py-6">
+        {tab === "general" && <GeneralSection />}
+        {tab === "appearance" && <AppearanceSection />}
+        {tab === "profiles" && <ProfilesSection focusProfileId={focusProfileId} />}
+        {tab === "lfs" && <LfsSection />}
       </div>
     </div>
   );

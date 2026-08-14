@@ -3,6 +3,7 @@ import { Settings, Check } from "lucide-react";
 import { SCROLLBAR_PAD_RIGHT } from "./commit-graph-canvas";
 import type { GraphColumnWidths, GraphColumnVisibility } from "./commit-graph-canvas";
 import { GRAPH_DENSITY_OPTIONS, type GraphDensity } from "@/lib/graph-density";
+import { DropdownPanel } from "@/components/ui/dropdown-panel";
 
 const HEADER_HEIGHT = 24;
 const HANDLE_HIT = 6;
@@ -246,7 +247,7 @@ export function GraphHeader({
           <Settings className="h-3 w-3" />
         </button>
         {settingsOpen && (
-          <div className="absolute right-0 top-full mt-1 min-w-[160px] rounded-md border border-border bg-card shadow-lg py-1 animate-enter-down">
+          <DropdownPanel align="right" className="min-w-[160px]">
             <div className="px-3 pb-1 pt-0.5 text-caption uppercase tracking-widest text-faint select-none">
               Columns
             </div>
@@ -270,7 +271,7 @@ export function GraphHeader({
               Nodes
             </div>
             <SettingsToggle label="Dots" checked={dotNodes} onChange={() => onDotNodesChange(!dotNodes)} />
-          </div>
+          </DropdownPanel>
         )}
       </div>
     </div>

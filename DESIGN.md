@@ -85,7 +85,7 @@ The app uses shadcn HSL variables. These align to the same Zinc scale:
 
 ### Type Scale (App)
 
-Four levels. Custom tokens defined in `src/index.css` via `@theme inline` using `--text-*` naming (NOT `--font-size-*`).
+Five levels. Custom tokens defined in `src/index.css` via `@theme inline` using `--text-*` naming (NOT `--font-size-*`).
 
 | Token | Size | Tailwind class | Line-height | Role |
 |-------|------|---------------|-------------|------|
@@ -93,13 +93,14 @@ Four levels. Custom tokens defined in `src/index.css` via `@theme inline` using 
 | label | 11px | `text-label` | 16px | Smallest readable size — lowercase form labels, hints, emails, **and standalone UPPERCASE field/group labels** (e.g. "Authors", "Profile", "Changes") |
 | body | 12px | `text-xs` (built-in) | 16px | Default everything — lists, buttons, inputs |
 | title | 14px | `text-sm` (built-in) | 20px | Commit messages, dialog headings |
+| heading | 22px | `text-heading` | 28px | Page titles only — the `SettingsHeader` at the top of each settings tab. Nothing else earns this size. |
 
 Canvas (`commit-graph-canvas.tsx`) uses matching named constants: `SIZE_LABEL`, `SIZE_BODY` and font constant `FONT_SANS`.
 
 Use `font-mono` (JetBrains Mono) **only** for: diff viewer, code/config displays, and code input fields. All other text (commit hashes, file paths, directory paths, repo paths, branch names, commit graph) uses Inter (`font-sans`).
 
 **Rules:**
-- Never use arbitrary font sizes (`text-[Npx]`). Pick from the four levels above.
+- Never use arbitrary font sizes (`text-[Npx]`). Pick from the five levels above.
 - **UPPERCASE tracked labels split by density, not just by case:**
   - `text-caption` (9px) — the collapsible `SectionHeader` component, short keyword badges (e.g. "LFS", "default"), counters, and dense dropdown sub-headers. Never use it for readable lowercase text.
   - `text-label` (11px) — standalone uppercase field/group labels living in body content (e.g. "Authors" in the commit detail card, "Profile"/"Providers", "Changes", settings `h2`/`h3` group titles). This is also the minimum readable size for lowercase labels, hints, and emails.

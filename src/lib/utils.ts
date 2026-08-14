@@ -2,14 +2,14 @@ import { clsx, type ClassValue } from "clsx";
 import { extendTailwindMerge } from "tailwind-merge";
 
 // Register the project's custom font-size tokens (see index.css @theme) so
-// tailwind-merge classifies `text-caption` / `text-label` as font sizes rather
-// than text colors. Without this it groups them with `text-dim`/`text-faint`
-// and silently drops the size whenever both appear in one cn() call — which is
-// what was nuking the size on the Kbd badge.
+// tailwind-merge classifies `text-caption` / `text-label` / `text-heading` as
+// font sizes rather than text colors. Without this it groups them with
+// `text-dim`/`text-faint` and silently drops the size whenever both appear in
+// one cn() call — which is what was nuking the size on the Kbd badge.
 const twMerge = extendTailwindMerge({
   extend: {
     classGroups: {
-      "font-size": [{ text: ["caption", "label"] }],
+      "font-size": [{ text: ["caption", "label", "heading"] }],
     },
   },
 });

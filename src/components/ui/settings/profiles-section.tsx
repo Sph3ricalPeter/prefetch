@@ -13,6 +13,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { IconButton, iconButtonVariants } from "@/components/ui/icon-button";
+import { SettingsHeader } from "./settings-card";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
@@ -951,12 +952,10 @@ export function ProfilesSection({ focusProfileId }: { focusProfileId?: string })
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground mb-1">Profiles</h2>
-        <p className="text-xs text-muted-foreground">
-          Manage git identities and SSH keys.
-        </p>
-      </div>
+      <SettingsHeader
+        title="Profiles"
+        description="Manage git identities and SSH keys."
+      />
 
       {editingProfile === null ? (
         <ProfileList

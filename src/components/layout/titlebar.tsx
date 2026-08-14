@@ -23,8 +23,10 @@ import {
   Download,
   Check,
   ExternalLink,
+  Settings,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
+import { DropdownPanel } from "@/components/ui/dropdown-panel";
 
 /** Detect macOS — synchronous, safe to call at module level */
 const IS_MAC = (() => {
@@ -107,9 +109,9 @@ export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: 
         </span>
       </div>
 
-      {/* Repo switcher — left-aligned after brand, hidden in settings */}
+      {/* Repo switcher — left-aligned after brand */}
       <div className="flex items-center min-w-0" data-tauri-drag-region>
-        {!settingsOpen && <TitlebarRepoSwitcher onOpenClone={onOpenClone} />}
+        <TitlebarRepoSwitcher onOpenClone={onOpenClone} />
       </div>
 
       {/* Spacer — pushes window controls to the right */}
@@ -118,7 +120,13 @@ export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: 
       {/* Action buttons — renders in one of three modes:
            1. Centered (absolute) when there's room
            2. Right-aligned (in flow) when centered would overlap left content
-           3. Collapsed dropdown when right-aligned doesn't fit either */}
+           3. Collapsed dropdown when right-aligned doesn't fit either
+
+           Hidden in settings: these centre on the window, while the settings
+           content centres inside the card, so the two axes visibly disagree.
+           Aligning them would mean shrinking the settings column by roughly the
+           sidebar's width, which is the worse trade. The repo switcher stays —
+           it's left-aligned, so it has no axis to clash with. */}
       {!settingsOpen && <TitlebarActionsGroup />}
 
       {/* Right: Profile switcher + Update indicator + Window controls */}
@@ -127,6 +135,19 @@ export function Titlebar({ settingsOpen = false, onOpenClone, onOpenSettings }: 
           <ProfileSwitcher onManageProfiles={() => onOpenSettings?.({ tab: "profiles" })} />
         </div>
         <UpdateIndicator />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => onOpenSettings?.()}
+              aria-label="Settings"
+              className="ml-0.5 flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Settings</TooltipContent>
+        </Tooltip>
         {/* Window controls — Windows/Linux only (macOS uses native traffic lights) */}
         {!IS_MAC && (
           <>
@@ -268,7 +289,7 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-72 rounded-md border border-border bg-popover shadow-lg animate-enter-down">
+        <DropdownPanel className="w-72">
           <button
             onClick={handleOpenRepo}
             className="flex w-full items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
@@ -348,7 +369,7 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
               })}
             </>
           )}
-        </div>
+        </DropdownPanel>
       )}
     </div>
   );
@@ -602,7 +623,7 @@ function CollapsedActionsDropdown() {
       </Tooltip>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-1 z-50 min-w-44 rounded-md border border-border bg-popover shadow-lg py-1">
+        <DropdownPanel align="right" className="min-w-44">
           {/* Undo */}
           {undoInfo?.can_undo && (
             <>
@@ -685,7 +706,7 @@ function CollapsedActionsDropdown() {
               onClick={() => setShowBranchInput(true)}
             />
           )}
-        </div>
+        </DropdownPanel>
       )}
     </div>
   );
