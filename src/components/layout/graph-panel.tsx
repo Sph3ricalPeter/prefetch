@@ -22,6 +22,7 @@ import {
   ArchiveRestore,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
+import { AbortButton } from "@/components/ui/abort-button";
 import { getUiState, setUiState } from "@/lib/database";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRepoStore } from "@/stores/repo-store";
@@ -590,23 +591,28 @@ export function GraphPanel() {
         const conflictedFiles = fileStatuses.filter((f) => f.is_conflicted);
         const unresolvedCount = conflictedFiles.length;
         return (
-          <div className="flex items-center gap-2 border-b border-yellow-500/30 bg-yellow-500/10 px-4 py-2">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
-            <span className="flex-1 text-xs text-yellow-200">
+          <div className="flex items-center gap-1 border-b border-orange-500/30 bg-orange-500/15 px-3 py-1">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-orange-400 animate-pulse" />
+            <span className="flex-1 text-xs text-orange-200">
               {conflictState.operation.charAt(0).toUpperCase() + conflictState.operation.slice(1)} in progress
             </span>
             {unresolvedCount > 0 && (
-              <button
-                onClick={() => {
-                  const first = conflictedFiles[0];
-                  if (first) selectFile(first.path, false);
-                }}
-                title="Go to first conflict"
-                className="rounded-md border border-yellow-500/30 px-3 py-1 text-xs font-medium text-yellow-100 transition-colors hover:bg-yellow-500/10 hover:border-yellow-500/40"
-              >
-                {unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""} to resolve
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => {
+                      const first = conflictedFiles[0];
+                      if (first) selectFile(first.path, false);
+                    }}
+                    className="rounded-md border border-orange-500/30 px-3 py-1 text-xs font-medium text-orange-100 transition-colors hover:bg-orange-500/20 hover:border-orange-500/40"
+                  >
+                    {unresolvedCount} conflict{unresolvedCount !== 1 ? "s" : ""} to resolve
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Go to first conflict</TooltipContent>
+              </Tooltip>
             )}
+            <AbortButton className="px-3" />
           </div>
         );
       })()}
@@ -778,11 +784,13 @@ export function GraphPanel() {
             {
               label: "Apply (keep in stash list)",
               onClick: () => applyStash(stashContextMenu.index),
+              writesRepo: true,
               icon: ArrowDownToLine,
             },
             {
               label: "Pop (apply & remove)",
               onClick: () => popStash(stashContextMenu.index),
+              writesRepo: true,
               icon: ArchiveRestore,
             },
             {
@@ -1177,6 +1185,7 @@ function buildCommitContextMenuItems(
       items.push({
         label: `Checkout ${branch.name}`,
         onClick: () => checkoutBranch(branch.name),
+        writesRepo: true,
         icon: Check,
       });
       items.push({
@@ -1191,6 +1200,7 @@ function buildCommitContextMenuItems(
         items.push({
           label: `Delete ${branch.name} from ${remote}…`,
           onClick: () => confirmDeleteBranch(remoteBranch, false, true, remote),
+          writesRepo: true,
           destructive: true,
           icon: Trash2,
         });
@@ -1202,6 +1212,7 @@ function buildCommitContextMenuItems(
         items.push({
           label: `Checkout ${branch.name}`,
           onClick: () => checkoutBranch(branch.name),
+          writesRepo: true,
           icon: Check,
         });
       }
@@ -1210,6 +1221,7 @@ function buildCommitContextMenuItems(
         items.push({
           label: `Merge ${branch.name} into ${currentBranch}`,
           onClick: () => mergeInto(branch.name),
+          writesRepo: true,
           icon: GitMerge,
         });
         items.push({
@@ -1217,14 +1229,15 @@ function buildCommitContextMenuItems(
             ? `Fast-forward ${currentBranch} to ${branch.name}`
             : `Rebase ${currentBranch} onto ${branch.name}`,
           onClick: () => rebaseOnto(branch.name),
+          writesRepo: true,
           icon: FastForward,
         });
       }
 
-      items.push({ label: "Pull", onClick: () => pull(), icon: ArrowDownToLine });
-      items.push({ label: "Push", onClick: () => push(), icon: ArrowUpFromLine });
+      items.push({ label: "Pull", onClick: () => pull(), icon: ArrowDownToLine, writesRepo: true });
+      items.push({ label: "Push", onClick: () => push(), icon: ArrowUpFromLine, writesRepo: true });
       items.push({ label: "Set upstream…", onClick: () => setUpstream(branch.name), icon: Link });
-      items.push({ label: "Rename branch…", onClick: () => renameBranch(branch.name), icon: Pencil });
+      items.push({ label: "Rename branch…", onClick: () => renameBranch(branch.name), icon: Pencil, writesRepo: true });
       items.push({
         label: `Copy branch name: ${branch.name}`,
         onClick: () => navigator.clipboard.writeText(branch.name),
@@ -1236,6 +1249,7 @@ function buildCommitContextMenuItems(
         items.push({
           label: `Delete ${branch.name}…`,
           onClick: () => confirmDeleteBranch(branch.name, true, false, "origin"),
+          writesRepo: true,
           destructive: true,
           icon: Trash2,
         });
@@ -1243,6 +1257,7 @@ function buildCommitContextMenuItems(
           items.push({
             label: `Delete ${branch.name} (local + remote)…`,
             onClick: () => confirmDeleteBranch(branch.name, true, true, "origin"),
+            writesRepo: true,
             destructive: true,
             icon: Trash2,
           });
@@ -1260,6 +1275,7 @@ function buildCommitContextMenuItems(
   items.push({
     label: `Cherry-pick onto ${currentBranch ?? "HEAD"}`,
     onClick: () => cherryPick(commitId),
+    writesRepo: true,
     icon: Cherry,
   });
 
@@ -1269,11 +1285,13 @@ function buildCommitContextMenuItems(
     items.push({
       label: `Merge ${shortSha} into ${currentBranch}`,
       onClick: () => mergeInto(commitId),
+      writesRepo: true,
       icon: GitMerge,
     });
     items.push({
       label: `Rebase ${currentBranch} onto ${shortSha}`,
       onClick: () => rebaseOnto(commitId),
+      writesRepo: true,
       icon: FastForward,
     });
   }
@@ -1284,6 +1302,7 @@ function buildCommitContextMenuItems(
   items.push({
     label: `Checkout ${shortSha} (detached HEAD)`,
     onClick: () => checkoutDetached(commitId),
+    writesRepo: true,
     icon: Check,
   });
   items.push({
@@ -1324,22 +1343,26 @@ function buildCommitContextMenuItems(
     items.push({
       label: "Edit commit message…",
       onClick: () => openRewordDialog(commitId),
+      writesRepo: true,
       icon: Pencil,
     });
   }
   items.push({
     label: `Revert ${shortSha}`,
     onClick: () => revertCommit(commitId),
+    writesRepo: true,
     icon: Undo2,
   });
   items.push({
     label: `Reset soft to ${shortSha} (keep changes)`,
     onClick: () => resetTo(commitId, "soft"),
+    writesRepo: true,
     icon: RotateCcw,
   });
   items.push({
     label: `Reset hard to ${shortSha}`,
     onClick: () => resetTo(commitId, "hard"),
+    writesRepo: true,
     destructive: true,
     icon: RotateCcw,
   });

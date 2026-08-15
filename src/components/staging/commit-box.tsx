@@ -14,6 +14,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { ProfileAvatar } from "@/components/ui/avatar";
 import { ResizableTextarea, type ResizableTextareaApi } from "@/components/ui/resizable-textarea";
 import { RowDragHandle } from "@/components/ui/row-drag-handle";
+import { AbortButton } from "@/components/ui/abort-button";
 
 const SOURCE_LABELS: Record<string, string> = {
   local: "Local repo config",
@@ -42,7 +43,6 @@ export function CommitBox() {
   const conflictState = useRepoStore((s) => s.conflictState);
   const rebaseProgress = useRepoStore((s) => s.rebaseProgress);
   const continueOperation = useRepoStore((s) => s.continueOperation);
-  const abortOperation = useRepoStore((s) => s.abortOperation);
   const amendMode = useRepoStore((s) => s.amendMode);
   const setAmendMode = useRepoStore((s) => s.setAmendMode);
   const headCommitId = useRepoStore((s) => s.headCommitId);
@@ -210,8 +210,8 @@ export function CommitBox() {
       {/* Operation progress header */}
       {isOperationInProgress && (
         <div className="flex items-center gap-2">
-          <div className="h-1.5 w-1.5 rounded-full bg-yellow-400 animate-pulse" />
-          <span className="text-xs font-medium text-yellow-200">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-orange-400 animate-pulse" />
+          <span className="text-xs font-medium text-orange-200">
             {progressLabel ?? `${operationLabel} in progress`}
           </span>
         </div>
@@ -267,7 +267,7 @@ export function CommitBox() {
             : commitMessage.length > 50
               ? "border-yellow-500/40"
               : isOperationInProgress
-                ? "border-yellow-500/30"
+                ? "border-orange-500/30"
                 : "border-border"
         }`}
       >
@@ -370,13 +370,7 @@ export function CommitBox() {
             </span>
             {canContinue && !isLoading && <Kbd>Ctrl+Enter</Kbd>}
           </button>
-          <button
-            onClick={abortOperation}
-            disabled={isLoading}
-            className="flex min-h-8 items-center justify-center rounded-md bg-red-500/20 px-3 text-xs font-semibold text-red-400 transition-all hover:bg-red-500/30 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
-          >
-            Abort
-          </button>
+          <AbortButton disabled={isLoading} className="min-h-8 px-3" />
         </div>
       ) : (
         <button

@@ -1793,6 +1793,16 @@ pub fn get_binary_blob_base64(
 
 /// Get the last undoable action from the reflog.
 pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
+    // Mid-operation the top reflog entry is the operation's own start marker
+    // ("rebase (start): checkout main"), which classifies as undoable and would
+    // reset HEAD out from under the sequencer. Abort is the only correct exit.
+    if let Some(op) = sequencer_in_progress(path) {
+        return Ok(UndoAction {
+            description: format!("Cannot undo during {op} — abort it instead"),
+            can_undo: false,
+        });
+    }
+
     let text = capture(path, &["reflog", "--format=%H %gs", "-n", "1"], &[]).unwrap_or_default();
     let line = text.trim();
 
@@ -1849,6 +1859,14 @@ fn classify_reflog_action(action: &str) -> (bool, String) {
 
 /// Execute an undo by reading the reflog and performing the inverse operation.
 pub fn undo_last(path: &str, extra_env: &[(String, String)]) -> Result<String, AppError> {
+    // See get_undo_action: a reset here silently strands the sequencer, and the
+    // subsequent `--continue` reports success while leaving the branch unrebased.
+    if let Some(op) = sequencer_in_progress(path) {
+        return Err(AppError::Other(format!(
+            "Cannot undo while a {op} is in progress — resolve and continue, or abort it first"
+        )));
+    }
+
     let text = capture(path, &["reflog", "--format=%H %gs", "-n", "2"], &[]).unwrap_or_default();
     let lines: Vec<&str> = text.trim().lines().collect();
 
@@ -2201,43 +2219,49 @@ pub fn get_rebase_progress(path: &str) -> Result<RebaseProgress, AppError> {
     })
 }
 
-/// Detect if a merge, rebase, or cherry-pick is in progress.
-pub fn get_conflict_state(path: &str) -> Result<ConflictState, AppError> {
+/// Name of the multi-step git operation currently paused in `path`, if any.
+///
+/// These are the states where `.git` holds sequencer/merge metadata and HEAD is
+/// mid-flight: moving HEAD, rewriting the index, or touching the worktree from
+/// under them corrupts the operation, and git will happily let you do it.
+/// Single source of truth for every "is an operation in progress" check.
+pub fn sequencer_in_progress(path: &str) -> Option<&'static str> {
     let git_dir = Path::new(path).join(".git");
 
     if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-        return Ok(ConflictState {
-            in_progress: true,
-            operation: "rebase".to_string(),
-        });
+        Some("rebase")
+    } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        Some("cherry-pick")
+    } else if git_dir.join("REVERT_HEAD").exists() {
+        Some("revert")
+    } else if git_dir.join("MERGE_HEAD").exists() {
+        Some("merge")
+    } else {
+        None
     }
+}
 
-    if git_dir.join("CHERRY_PICK_HEAD").exists() {
-        return Ok(ConflictState {
+/// Detect if a merge, rebase, cherry-pick, or revert is in progress.
+pub fn get_conflict_state(path: &str) -> Result<ConflictState, AppError> {
+    Ok(match sequencer_in_progress(path) {
+        Some(op) => ConflictState {
             in_progress: true,
-            operation: "cherry-pick".to_string(),
-        });
-    }
-
-    if git_dir.join("MERGE_HEAD").exists() {
-        return Ok(ConflictState {
-            in_progress: true,
-            operation: "merge".to_string(),
-        });
-    }
-
-    Ok(ConflictState {
-        in_progress: false,
-        operation: String::new(),
+            operation: op.to_string(),
+        },
+        None => ConflictState {
+            in_progress: false,
+            operation: String::new(),
+        },
     })
 }
 
-/// Abort the current in-progress operation (rebase, cherry-pick, or merge).
+/// Abort the current in-progress operation (rebase, cherry-pick, revert, or merge).
 pub fn abort_operation(path: &str) -> Result<String, AppError> {
     let state = get_conflict_state(path)?;
     match state.operation.as_str() {
         "rebase" => run_git(path, &["rebase", "--abort"], &[]),
         "cherry-pick" => run_git(path, &["cherry-pick", "--abort"], &[]),
+        "revert" => run_git(path, &["revert", "--abort"], &[]),
         "merge" => run_git(path, &["merge", "--abort"], &[]),
         _ => Err(AppError::Other("No operation in progress".to_string())),
     }
@@ -2270,7 +2294,7 @@ pub fn continue_operation(
                 std::fs::write(rebase_dir.join("message"), msg)
                     .map_err(|e| AppError::Other(format!("Failed to write rebase message: {e}")))?;
             }
-            "cherry-pick" | "merge" => {
+            "cherry-pick" | "revert" | "merge" => {
                 std::fs::write(git_dir.join("MERGE_MSG"), msg)
                     .map_err(|e| AppError::Other(format!("Failed to write merge message: {e}")))?;
             }
@@ -2287,6 +2311,7 @@ pub fn continue_operation(
     match state.operation.as_str() {
         "rebase" => run_git(path, &["rebase", "--continue"], &env),
         "cherry-pick" => run_git(path, &["cherry-pick", "--continue"], &env),
+        "revert" => run_git(path, &["revert", "--continue"], &env),
         "merge" => run_git(path, &["merge", "--continue"], &env),
         _ => Err(AppError::Other("No operation in progress".to_string())),
     }
@@ -2606,5 +2631,102 @@ mod tests {
         let third = create_stash_backup(p, &[]);
         store_stash_backup(p, &[], third.as_deref(), None);
         assert_eq!(list_stashes(p).unwrap().len(), 2);
+    }
+
+    /// A paused rebase must be inert to undo: the top reflog entry is the
+    /// rebase's own start marker, and resetting onto it strands the sequencer —
+    /// the following `--continue` then reports success on an unrebased branch.
+    #[test]
+    fn undo_is_refused_while_a_rebase_is_in_progress() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let main = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        run_git(p, &["checkout", "-b", "feature"], &[]).unwrap();
+        std::fs::write(
+            dir.path().join("f.txt"),
+            "feature
+",
+        )
+        .unwrap();
+        run_git(p, &["add", "f.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "feat"], &[]).unwrap();
+
+        run_git(p, &["checkout", &main], &[]).unwrap();
+        std::fs::write(
+            dir.path().join("f.txt"),
+            "main
+",
+        )
+        .unwrap();
+        run_git(p, &["add", "f.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "main change"], &[]).unwrap();
+
+        run_git(p, &["checkout", "feature"], &[]).unwrap();
+        let _ = run_git(p, &["rebase", &main], &[]); // expected to fail (conflict)
+
+        assert_eq!(sequencer_in_progress(p), Some("rebase"));
+        assert_eq!(get_conflict_state(p).unwrap().operation, "rebase");
+
+        let action = get_undo_action(p).unwrap();
+        assert!(
+            !action.can_undo,
+            "undo must be unavailable mid-rebase, got: {}",
+            action.description
+        );
+        assert!(
+            undo_last(p, &[]).is_err(),
+            "undo_last must refuse mid-rebase"
+        );
+
+        // The rebase is still intact and can be aborted normally.
+        abort_operation(p).unwrap();
+        assert_eq!(sequencer_in_progress(p), None);
+        assert!(get_undo_action(p).unwrap().can_undo);
+    }
+
+    /// A conflicted `git revert` sets REVERT_HEAD (alongside MERGE_HEAD) and must
+    /// be reported as a revert, not a merge — abort/continue dispatch on it.
+    #[test]
+    fn revert_conflict_is_detected_as_revert_not_merge() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        std::fs::write(
+            dir.path().join("f.txt"),
+            "one
+",
+        )
+        .unwrap();
+        run_git(p, &["add", "f.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "add one"], &[]).unwrap();
+
+        let target = run_git(p, &["rev-parse", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        std::fs::write(
+            dir.path().join("f.txt"),
+            "two
+",
+        )
+        .unwrap();
+        run_git(p, &["add", "f.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "change to two"], &[]).unwrap();
+
+        // Reverting the older commit conflicts with the newer edit to the same line.
+        let _ = run_git(p, &["revert", "--no-edit", &target], &[]);
+
+        assert_eq!(sequencer_in_progress(p), Some("revert"));
+        assert_eq!(get_conflict_state(p).unwrap().operation, "revert");
+        assert!(!get_undo_action(p).unwrap().can_undo);
+
+        abort_operation(p).unwrap();
+        assert_eq!(sequencer_in_progress(p), None);
     }
 }

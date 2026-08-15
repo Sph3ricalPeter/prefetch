@@ -6,6 +6,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
+import { usePausedOperation } from "@/hooks/use-paused-operation";
 import {
   Tooltip,
   TooltipTrigger,
@@ -27,6 +28,7 @@ export function StashList() {
   const applyStash = useRepoStore((s) => s.applyStash);
   const popStash = useRepoStore((s) => s.popStash);
   const dropStash = useRepoStore((s) => s.dropStash);
+  const pausedOperation = usePausedOperation();
   const isLoading = useRepoStore((s) => s.isLoading);
   const isOpen = useRepoStore((s) => s.sidebarSections.stashes);
   const setSidebarSection = useRepoStore((s) => s.setSidebarSection);
@@ -84,7 +86,7 @@ export function StashList() {
                       e.stopPropagation();
                       popStash(stash.index);
                     }}
-                    disabled={isLoading}
+                    disabled={isLoading || pausedOperation !== null}
                     className="shrink-0 hover:bg-accent"
                   >
                     <ArchiveRestore className="h-3 w-3" />
@@ -161,11 +163,13 @@ function buildStashContextMenuItems(
     {
       label: "Apply (keep in stash list)",
       onClick: () => applyStash(index),
+      writesRepo: true,
       icon: ArrowDownToLine,
     },
     {
       label: "Pop (apply & remove)",
       onClick: () => popStash(index),
+      writesRepo: true,
       icon: ArchiveRestore,
     },
     {

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import { DropdownPanel } from "@/components/ui/dropdown-panel";
+import { usePausedOperation } from "@/hooks/use-paused-operation";
 
 /** Detect macOS — synchronous, safe to call at module level */
 const IS_MAC = (() => {
@@ -384,6 +385,7 @@ type ActionLayout = "center" | "right" | "dropdown";
 function TitlebarActionsGroup() {
   const repoPath = useRepoStore((s) => s.repoPath);
   const isLoading = useRepoStore((s) => s.isLoading);
+  const activeOperation = usePausedOperation();
   const undoInfo = useRepoStore((s) => s.undoInfo);
   const undoAction = useRepoStore((s) => s.undo);
   const pushStash = useRepoStore((s) => s.pushStash);
@@ -462,6 +464,11 @@ function TitlebarActionsGroup() {
 
   if (!repoPath) return null;
 
+  // A paused rebase/merge/cherry-pick/revert blocks everything that moves HEAD
+  // or rewrites the tree. Fetch stays live — it only updates remote-tracking
+  // refs, which is useful while deciding how to finish the operation.
+  const blocked = activeOperation !== null;
+
   const actionButtons = (
     <div data-action-buttons className="flex items-center gap-0.5">
       {/* Undo */}
@@ -472,7 +479,7 @@ function TitlebarActionsGroup() {
             label="Undo"
             tooltip={undoInfo.description}
             onClick={undoAction}
-            disabled={isLoading}
+            disabled={isLoading || blocked}
           />
           <div className="mx-1.5 h-4 w-px bg-border" />
         </>
@@ -483,13 +490,13 @@ function TitlebarActionsGroup() {
         icon={<Archive className="h-3.5 w-3.5" />}
         label="Stash"
         onClick={() => pushStash()}
-        disabled={isLoading || fileStatuses.length === 0}
+        disabled={isLoading || blocked || fileStatuses.length === 0}
       />
       <TitlebarActionButton
         icon={<ArchiveRestore className="h-3.5 w-3.5" />}
         label="Pop"
         onClick={() => popStash(0)}
-        disabled={isLoading || stashes.length === 0}
+        disabled={isLoading || blocked || stashes.length === 0}
       />
 
       <div className="mx-1.5 h-4 w-px bg-border" />
@@ -505,13 +512,13 @@ function TitlebarActionsGroup() {
         icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
         label="Pull"
         onClick={pullAction}
-        disabled={isLoading}
+        disabled={isLoading || blocked}
       />
       <TitlebarActionButton
         icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
         label="Push"
         onClick={pushAction}
-        disabled={isLoading}
+        disabled={isLoading || blocked}
       />
 
       <div className="mx-1.5 h-4 w-px bg-border" />
@@ -541,8 +548,8 @@ function TitlebarActionsGroup() {
         <TitlebarActionButton
           icon={<GitBranchPlus className="h-3.5 w-3.5" />}
           label="Branch"
-          onClick={() => setShowBranchInput(true)}
-          disabled={isLoading}
+            onClick={() => setShowBranchInput(true)}
+          disabled={isLoading || blocked}
         />
       )}
     </div>
@@ -582,6 +589,7 @@ function CollapsedActionsDropdown() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const isLoading = useRepoStore((s) => s.isLoading);
+  const activeOperation = usePausedOperation();
   const undoInfo = useRepoStore((s) => s.undoInfo);
   const undoAction = useRepoStore((s) => s.undo);
   const pushStash = useRepoStore((s) => s.pushStash);
@@ -595,6 +603,9 @@ function CollapsedActionsDropdown() {
 
   const [showBranchInput, setShowBranchInput] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
+
+  const blocked = activeOperation !== null;
+  const blockedTip = activeOperation ? `${activeOperation} in progress` : undefined;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -630,8 +641,8 @@ function CollapsedActionsDropdown() {
               <DropdownActionItem
                 icon={<Undo2 className="h-3.5 w-3.5" />}
                 label="Undo"
-                sublabel={undoInfo.description}
-                disabled={isLoading}
+                sublabel={blockedTip ?? undoInfo.description}
+                disabled={isLoading || blocked}
                 onClick={() => { undoAction(); setIsOpen(false); }}
               />
               <div className="mx-2 my-1 border-t border-border" />
@@ -642,13 +653,15 @@ function CollapsedActionsDropdown() {
           <DropdownActionItem
             icon={<Archive className="h-3.5 w-3.5" />}
             label="Stash"
-            disabled={isLoading || fileStatuses.length === 0}
+            sublabel={blockedTip}
+            disabled={isLoading || blocked || fileStatuses.length === 0}
             onClick={() => { pushStash(); setIsOpen(false); }}
           />
           <DropdownActionItem
             icon={<ArchiveRestore className="h-3.5 w-3.5" />}
             label="Pop"
-            disabled={isLoading || stashes.length === 0}
+            sublabel={blockedTip}
+            disabled={isLoading || blocked || stashes.length === 0}
             onClick={() => { popStash(0); setIsOpen(false); }}
           />
           <div className="mx-2 my-1 border-t border-border" />
@@ -663,13 +676,15 @@ function CollapsedActionsDropdown() {
           <DropdownActionItem
             icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
             label="Pull"
-            disabled={isLoading}
+            sublabel={blockedTip}
+            disabled={isLoading || blocked}
             onClick={() => { pullAction(); setIsOpen(false); }}
           />
           <DropdownActionItem
             icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
             label="Push"
-            disabled={isLoading}
+            sublabel={blockedTip}
+            disabled={isLoading || blocked}
             onClick={() => { pushAction(); setIsOpen(false); }}
           />
           <div className="mx-2 my-1 border-t border-border" />
@@ -702,7 +717,8 @@ function CollapsedActionsDropdown() {
             <DropdownActionItem
               icon={<GitBranchPlus className="h-3.5 w-3.5" />}
               label="Branch"
-              disabled={isLoading}
+              sublabel={blockedTip}
+              disabled={isLoading || blocked}
               onClick={() => setShowBranchInput(true)}
             />
           )}

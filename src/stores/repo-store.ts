@@ -228,6 +228,28 @@ async function analyzeConflictFiles(
 }
 
 /**
+ * Refuse an action that would move HEAD, rewrite the index, or touch the
+ * working tree while a rebase / merge / cherry-pick / revert sits paused.
+ *
+ * Git permits most of these mid-operation and they corrupt it silently: a
+ * `stash` after staging a resolution drops the commit and `--continue` still
+ * reports success; `checkout -b` leaves a stray branch at the rebase output.
+ * Guarding here rather than in the components covers every entry point —
+ * titlebar, graph context menus, branch list, keyboard — including ones added
+ * later. Conflict resolution itself (stage / unstage / discard / commit /
+ * continue / abort) is deliberately not guarded, and neither are read-only or
+ * ref-only actions like fetch.
+ */
+function blockedByOperation(get: () => RepoState, label: string): boolean {
+  const conflict = get().conflictState;
+  if (!conflict?.in_progress) return false;
+  toast.error(`Can't ${label} — ${conflict.operation} in progress`, {
+    description: "Resolve the conflicts and continue, or abort the operation first.",
+  });
+  return true;
+}
+
+/**
  * Handle a git operation that may result in conflicts (cherry-pick, rebase, merge, revert).
  * On error, checks for conflict state and refreshes the UI accordingly.
  */
@@ -414,6 +436,8 @@ interface RepoState {
   diffWrapLines: boolean;
   /** Whether unchanged context between hunks starts expanded */
   diffExpandContext: boolean;
+  /** Whether the base (merge ancestor) section of conflict regions starts expanded */
+  conflictShowBase: boolean;
 
   /** Which optional graph columns are visible (global) */
   graphColumnVisibility: GraphColumnVisibility;
@@ -531,6 +555,7 @@ interface RepoState {
   setImageDiffViewMode: (mode: "unified" | "side-by-side" | "swipe") => void;
   setDiffWrapLines: (on: boolean) => void;
   setDiffExpandContext: (on: boolean) => void;
+  setConflictShowBase: (on: boolean) => void;
   loadDiffPreferences: () => Promise<void>;
   setGraphColumnVisibility: (v: GraphColumnVisibility) => void;
   setGraphDateFormat: (f: DateFormatId) => void;
@@ -658,6 +683,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   imageDiffViewMode: "side-by-side",
   diffWrapLines: true,
   diffExpandContext: false,
+  conflictShowBase: false,
   graphColumnVisibility: { sha: false, author: false, date: false },
   graphDateFormat: "short",
   graphDensity: "comfortable",
@@ -852,6 +878,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   checkout: async (name: string) => {
+    if (blockedByOperation(get, "switch branches")) return;
     const { currentBranch, branches, fileStatuses } = get();
     if (name === currentBranch) return;
 
@@ -1021,6 +1048,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   cancelRemoteCheckout: () => set({ remoteCheckoutPending: null }),
 
   createBranch: async (name: string) => {
+    if (blockedByOperation(get, "create a branch")) return;
     try {
       await createBranchCmd(name);
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
@@ -1052,6 +1080,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   pull: async () => {
+    if (blockedByOperation(get, "pull")) return;
     const { fileStatuses } = get();
     if (fileStatuses.length > 0) {
       set({ dirtyActionPending: { operation: "pull", targetName: "", changesCount: fileStatuses.length } });
@@ -1082,6 +1111,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   push: async () => {
+    if (blockedByOperation(get, "push")) return;
     set({ isLoading: true });
     const ms = new MultiStepAction("Push", ["git push", "Sync remote refs"]);
     try {
@@ -1114,6 +1144,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   forcePush: async () => {
+    if (blockedByOperation(get, "force push")) return;
     set({ forcePushPending: false, isLoading: true });
     // Mirror push(): force push, then fetch to sync remote tracking refs.
     const ms = new MultiStepAction("Force push", ["git push --force", "Sync remote refs"]);
@@ -1477,6 +1508,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   rewordHeadCommit: async (message) => {
+    if (blockedByOperation(get, "edit the commit message")) return;
     if (!message.trim()) {
       toast.error("Commit message cannot be empty");
       return;
@@ -1571,6 +1603,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   pushStash: async (message?) => {
+    if (blockedByOperation(get, "stash")) return;
     set({ isLoading: true });
     try {
       await stashPushCmd(message);
@@ -1597,6 +1630,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   applyStash: async (index) => {
+    if (blockedByOperation(get, "apply a stash")) return;
     set({ isLoading: true });
     try {
       await stashApplyCmd(index);
@@ -1610,6 +1644,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   popStash: async (index) => {
+    if (blockedByOperation(get, "pop a stash")) return;
     set({ isLoading: true });
     try {
       await stashPopCmd(index);
@@ -1679,6 +1714,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   resetTo: async (commitId, mode) => {
+    if (blockedByOperation(get, "reset")) return;
     set({ isLoading: true });
     try {
       await resetToCommitCmd(commitId, `--${mode}`);
@@ -1709,6 +1745,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   cherryPick: async (commitId) => {
+    if (blockedByOperation(get, "cherry-pick")) return;
     const { fileStatuses } = get();
     if (fileStatuses.length > 0) {
       set({ dirtyActionPending: { operation: "cherry-pick", targetName: commitId, changesCount: fileStatuses.length } });
@@ -1729,6 +1766,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   rebaseOnto: async (targetBranch) => {
+    if (blockedByOperation(get, "rebase")) return;
     set({ isLoading: true });
     try {
       await rebaseOntoCmd(targetBranch);
@@ -1754,6 +1792,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   mergeInto: async (target) => {
+    if (blockedByOperation(get, "merge")) return;
     const { fileStatuses } = get();
     if (fileStatuses.length > 0) {
       set({ dirtyActionPending: { operation: "merge", targetName: target, changesCount: fileStatuses.length } });
@@ -1780,6 +1819,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   deleteBranch: async (name, force = false) => {
+    if (blockedByOperation(get, "delete a branch")) return;
     set({ isLoading: true });
     try {
       await deleteBranchCmd(name, force);
@@ -1806,6 +1846,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   revertCommit: async (commitId) => {
+    if (blockedByOperation(get, "revert")) return;
     const { fileStatuses } = get();
     if (fileStatuses.length > 0) {
       set({ dirtyActionPending: { operation: "revert", targetName: commitId, changesCount: fileStatuses.length } });
@@ -1826,6 +1867,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   checkoutDetached: async (commitId) => {
+    if (blockedByOperation(get, "check out a commit")) return;
     const { fileStatuses } = get();
     if (fileStatuses.length > 0) {
       set({ dirtyActionPending: { operation: "checkout-detached", targetName: commitId, changesCount: fileStatuses.length } });
@@ -1857,6 +1899,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   renameBranch: async (oldName, newName, renameRemote) => {
+    if (blockedByOperation(get, "rename a branch")) return;
     set({ isLoading: true });
     try {
       if (renameRemote) {
@@ -1908,6 +1951,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   stashFiles: async (paths, message) => {
+    if (blockedByOperation(get, "stash files")) return;
     set({ isLoading: true });
     try {
       await stashPushFilesCmd(paths, message);
@@ -2051,6 +2095,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   undo: async () => {
+    if (blockedByOperation(get, "undo")) return;
     const info = get().undoInfo;
     if (!info?.can_undo) return;
     // Disable undo immediately and record timestamp — the undo itself creates
@@ -2250,13 +2295,19 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     setUiState("diff_expand_context", on ? "true" : "false").catch(() => {});
   },
 
+  setConflictShowBase: (on) => {
+    set({ conflictShowBase: on });
+    setUiState("conflict_show_base", on ? "true" : "false").catch(() => {});
+  },
+
   loadDiffPreferences: async () => {
     try {
-      const [viewMode, imageViewMode, wrapLines, expandContext] = await Promise.all([
+      const [viewMode, imageViewMode, wrapLines, expandContext, showBase] = await Promise.all([
         getUiState("diff_view_mode"),
         getUiState("image_diff_view_mode"),
         getUiState("diff_wrap_lines"),
         getUiState("diff_expand_context"),
+        getUiState("conflict_show_base"),
       ]);
       const update: Partial<RepoState> = {};
       if (viewMode === "unified" || viewMode === "side-by-side") {
@@ -2270,6 +2321,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       if (expandContext === "true" || expandContext === "false") {
         update.diffExpandContext = expandContext === "true";
+      }
+      if (showBase === "true" || showBase === "false") {
+        update.conflictShowBase = showBase === "true";
       }
       if (Object.keys(update).length > 0) set(update);
     } catch {

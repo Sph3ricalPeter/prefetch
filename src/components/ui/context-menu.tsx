@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { usePausedOperation } from "@/hooks/use-paused-operation";
 
 export type ContextMenuItem =
   | {
@@ -8,6 +10,13 @@ export type ContextMenuItem =
       destructive?: boolean;
       disabled?: boolean;
       icon?: LucideIcon;
+      /** Overrides the icon's default muted styling (e.g. ours/theirs colors). */
+      iconClassName?: string;
+      /** Moves HEAD, rewrites the index, or touches the working tree. Such items
+       *  are disabled automatically while a rebase/merge/cherry-pick/revert is
+       *  paused, so builders only have to tag them — no `blocked` parameter has
+       *  to be threaded through their (already long) signatures. */
+      writesRepo?: boolean;
     }
   | { separator: true };
 
@@ -21,6 +30,11 @@ interface ContextMenuProps {
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
+  // A paused operation disables every repo-writing item. Read-only entries
+  // (copy, open in browser) stay live so the menu keeps its useful half.
+  const pausedOperation = usePausedOperation();
+  const suppressedByOperation =
+    pausedOperation !== null && items.some((i) => !("separator" in i) && i.writesRepo);
 
   useEffect(() => {
     const el = ref.current;
@@ -75,8 +89,8 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               item.onClick();
               onClose();
             }}
-            disabled={item.disabled}
-            className={`flex w-full items-center gap-3 px-3 py-1.5 text-xs transition-colors disabled:opacity-40 ${
+            disabled={item.disabled || (pausedOperation !== null && item.writesRepo)}
+            className={`flex w-full items-center gap-3 px-3 py-1.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-40 ${
               item.destructive
                 ? "text-red-400 hover:bg-destructive/20"
                 : "text-foreground hover:bg-secondary"
@@ -84,10 +98,18 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           >
             <span className="flex-1 text-left">{item.label}</span>
             {item.icon && (
-              <item.icon className="h-3.5 w-3.5 shrink-0 opacity-70" />
+              <item.icon className={cn("h-3.5 w-3.5 shrink-0 opacity-70", item.iconClassName)} />
             )}
           </button>
         ),
+      )}
+      {suppressedByOperation && (
+        <>
+          <div className="mx-2 my-1 border-t border-border" />
+          <p className="px-3 py-1 text-label text-faint">
+            {pausedOperation} in progress — some actions disabled
+          </p>
+        </>
       )}
     </div>
   );

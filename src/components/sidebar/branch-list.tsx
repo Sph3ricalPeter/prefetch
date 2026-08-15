@@ -124,17 +124,18 @@ export function BranchList() {
       <div>
         {/* Detached HEAD indicator */}
         {!currentBranch && headCommitId && (
-          <div className="flex items-center gap-2 rounded-md px-2 py-1 text-xs bg-accent/60">
-            <GitCommitHorizontal className="h-3 w-3 shrink-0 text-muted-foreground" />
-            <span className="text-muted-foreground">~HEAD</span>
+          <div className="flex w-full items-center gap-2 rounded-md px-2 py-1 my-1 text-left text-xs bg-orange-500/15 text-orange-200">
+            <GitCommitHorizontal className="h-3 w-3 shrink-0" />
+            <span className="truncate">~HEAD</span>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-label text-faint font-mono">
+                <span className="ml-auto rounded-md px-1.5 text-label text-orange-300 font-mono">
                   {headCommitId.slice(0, 7)}
                 </span>
               </TooltipTrigger>
               <TooltipContent>Detached HEAD at {headCommitId.slice(0, 7)}</TooltipContent>
             </Tooltip>
+            <Check className="h-3 w-3 shrink-0 text-orange-400" />
           </div>
         )}
 
@@ -317,6 +318,7 @@ function buildBranchContextMenuItems(
     items.push({
       label: `Checkout ${branch.name}`,
       onClick: () => checkout(branch.name),
+      writesRepo: true,
       icon: Check,
     });
     items.push({ separator: true });
@@ -327,6 +329,7 @@ function buildBranchContextMenuItems(
     items.push({
       label: `Merge ${branch.name} into ${currentBranch}`,
       onClick: () => mergeInto(branch.name),
+      writesRepo: true,
       icon: GitMerge,
     });
     items.push({
@@ -334,6 +337,7 @@ function buildBranchContextMenuItems(
         ? `Fast-forward ${currentBranch} to ${branch.name}`
         : `Rebase ${currentBranch} onto ${branch.name}`,
       onClick: () => rebaseOnto(branch.name),
+      writesRepo: true,
       icon: FastForward,
     });
     items.push({ separator: true });
@@ -343,11 +347,13 @@ function buildBranchContextMenuItems(
   items.push({
     label: "Pull",
     onClick: () => pull(),
+    writesRepo: true,
     icon: ArrowDownToLine,
   });
   items.push({
     label: "Push",
     onClick: () => push(),
+    writesRepo: true,
     icon: ArrowUpFromLine,
   });
   if (!hasRemote) {
@@ -364,6 +370,7 @@ function buildBranchContextMenuItems(
   items.push({
     label: "Rename branch…",
     onClick: () => renameBranch(branch.name, hasRemote),
+    writesRepo: true,
     icon: Pencil,
   });
   items.push({
@@ -384,6 +391,7 @@ function buildBranchContextMenuItems(
     items.push({
       label: "Delete local…",
       onClick: () => confirmDeleteBranch(branch.name, true, false, remoteName),
+      writesRepo: true,
       destructive: true,
       icon: Trash2,
     });
@@ -391,12 +399,14 @@ function buildBranchContextMenuItems(
       items.push({
         label: `Delete from ${remoteName}…`,
         onClick: () => confirmDeleteBranch(branch.name, false, true, remoteName),
+        writesRepo: true,
         destructive: true,
         icon: Trash2,
       });
       items.push({
         label: "Delete local + remote…",
         onClick: () => confirmDeleteBranch(branch.name, true, true, remoteName),
+        writesRepo: true,
         destructive: true,
         icon: Trash2,
       });

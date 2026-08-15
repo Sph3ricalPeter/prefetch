@@ -150,7 +150,7 @@ export interface HunkLineSelection {
   lineIndex: number;
 }
 
-export type ConflictOperation = "rebase" | "cherry-pick" | "merge" | "";
+export type ConflictOperation = "rebase" | "cherry-pick" | "revert" | "merge" | "";
 
 export interface ConflictState {
   in_progress: boolean;

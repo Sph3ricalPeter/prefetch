@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   Plus,
   Minus,
   Trash2,
@@ -46,7 +47,7 @@ import { DiffStat } from "@/components/ui/diff-stat";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { RowDragHandle } from "@/components/ui/row-drag-handle";
-import { useSplitRatio, splitGrowStyle } from "@/hooks/use-split-ratio";
+import { useSplitRatio, splitGrowStyle, useDragHeight } from "@/hooks/use-split-ratio";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
 function matchesLfsPattern(filePath: string, pattern: string): boolean {
@@ -135,6 +136,14 @@ export function FileList() {
   // staged card gets the rest. Resets to an even split when the view remounts.
   const { ratio: splitRatio, containerRef: splitRef, onDragStart: onSplitDragStart } =
     useSplitRatio();
+
+  // ── Conflicts height (drag handle below the card) ─────────────────────────
+  // Conflicts sits outside the unstaged/staged split — it's a third sibling, not
+  // a second side — so it resizes by capping its own height rather than by
+  // trading a ratio. The cap is a max, so a one-file card still shrinks to fit
+  // instead of holding dead space.
+  const { elRef: conflictsRef, height: conflictsHeight, onDragStart: onConflictsDragStart } =
+    useDragHeight();
 
   // ── Multi-select state ────────────────────────────────────────────────────
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
@@ -252,10 +261,12 @@ export function FileList() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Conflicts section */}
       {conflicted.length > 0 && (
+        <>
         <FileSection
+          ref={conflictsRef}
           label="Conflicts"
           count={conflicted.length}
           isOpen={conflictsOpen}
@@ -264,7 +275,11 @@ export function FileList() {
           actionDisabled={true}
           labelClassName="text-red-400 hover:text-red-300"
           className="shrink-0"
-          bodyClassName="max-h-48"
+          // Percentage arm keeps the card from squeezing unstaged/staged out
+          // when dragged tall; it resolves against the flex column above. The
+          // floor keeps header + one row reachable — the cap is a max, so a
+          // short list still shrinks past it.
+          style={{ maxHeight: conflictsHeight != null ? `min(${Math.max(conflictsHeight, 72)}px, 60%)` : "50%" }}
         >
           {viewMode === "tree" ? (
             <ConflictTreeView
@@ -309,6 +324,14 @@ export function FileList() {
             ))
           )}
         </FileSection>
+
+        {/* Collapsed, there is only a header — nothing a drag could reveal. */}
+        {conflictsOpen ? (
+          <RowDragHandle onMouseDown={onConflictsDragStart} label="Resize conflicts" />
+        ) : (
+          <div className="h-2 shrink-0" aria-hidden="true" />
+        )}
+        </>
       )}
 
       {/* Resizable unstaged / staged split — each card scrolls independently */}
@@ -537,6 +560,7 @@ export function FileList() {
 }
 
 function FileSection({
+  ref,
   label,
   count,
   isOpen,
@@ -552,6 +576,8 @@ function FileSection({
   bodyClassName,
   children,
 }: {
+  /** Measured at drag start by callers that resize the card. */
+  ref?: React.Ref<HTMLDivElement>;
   label: string;
   count: number;
   isOpen: boolean;
@@ -573,6 +599,7 @@ function FileSection({
 }) {
   return (
     <div
+      ref={ref}
       className={cn(
         "flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-card animate-fade-in",
         className,
@@ -841,7 +868,7 @@ function ConflictTreeNodeView({
             <button
               onClick={(e) => { e.stopPropagation(); onSave(file.path); }}
               disabled={disabled}
-              className="shrink-0 rounded-md border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
+              className="shrink-0 rounded-md ring-1 ring-inset ring-[rgba(var(--conflict-theirs),0.3)] px-1.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:ring-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
             >
               Save
             </button>
@@ -855,7 +882,7 @@ function ConflictTreeNodeView({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveOurs(file.path); }}
                 disabled={disabled}
-                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-ours-text)] hover:bg-[rgba(var(--conflict-ours),0.2)] transition-all disabled:opacity-40"
               >
                 Ours
               </button>
@@ -867,7 +894,7 @@ function ConflictTreeNodeView({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveTheirs(file.path); }}
                 disabled={disabled}
-                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.2)] transition-all disabled:opacity-40"
               >
                 Theirs
               </button>
@@ -1283,7 +1310,7 @@ function ConflictRow({
             <button
               onClick={(e) => { e.stopPropagation(); onSave(); }}
               disabled={disabled}
-              className="shrink-0 rounded-md border border-[rgba(var(--conflict-theirs),0.3)] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
+              className="shrink-0 rounded-md ring-1 ring-inset ring-[rgba(var(--conflict-theirs),0.3)] px-1.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:ring-[rgba(var(--conflict-theirs),0.4)] transition-all disabled:opacity-40"
             >
               Save
             </button>
@@ -1297,7 +1324,7 @@ function ConflictRow({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveOurs(); }}
                 disabled={disabled}
-                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-ours-text)] hover:bg-[rgba(var(--conflict-ours),0.2)] transition-all disabled:opacity-40"
               >
                 Ours
               </button>
@@ -1309,7 +1336,7 @@ function ConflictRow({
               <button
                 onClick={(e) => { e.stopPropagation(); onResolveTheirs(); }}
                 disabled={disabled}
-                className="shrink-0 rounded-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-all disabled:opacity-40"
+                className="shrink-0 rounded-md px-1.5 opacity-0 group-hover:opacity-100 text-xs font-medium text-[var(--conflict-theirs-text)] hover:bg-[rgba(var(--conflict-theirs),0.2)] transition-all disabled:opacity-40"
               >
                 Theirs
               </button>
@@ -1379,7 +1406,7 @@ function buildFileContextMenuItems(
   // Stash (only for unstaged files)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: "Stash this file", onClick: () => stashFiles([file.path]), icon: Archive });
+    items.push({ label: "Stash this file", onClick: () => stashFiles([file.path]), icon: Archive, writesRepo: true });
   }
 
   items.push({ separator: true });
@@ -1439,7 +1466,7 @@ function buildFolderContextMenuItems(
   // Stash (only for unstaged)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: "Stash folder", onClick: () => stashFiles(paths), icon: Archive });
+    items.push({ label: "Stash folder", onClick: () => stashFiles(paths), icon: Archive, writesRepo: true });
   }
 
   items.push({ separator: true });
@@ -1481,7 +1508,7 @@ function buildBatchContextMenuItems(
   // Stash (only for unstaged)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: `Stash ${count} files`, onClick: () => stashFiles(paths), icon: Archive });
+    items.push({ label: `Stash ${count} files`, onClick: () => stashFiles(paths), icon: Archive, writesRepo: true });
   }
 
   items.push({ separator: true });
@@ -1508,8 +1535,18 @@ function buildConflictContextMenuItems(
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
-  items.push({ label: "Accept Ours", onClick: () => resolveOurs(file.path), icon: Check });
-  items.push({ label: "Accept Theirs", onClick: () => resolveTheirs(file.path), icon: Check });
+  items.push({
+    label: "Accept Ours",
+    onClick: () => resolveOurs(file.path),
+    icon: ChevronRight,
+    iconClassName: "opacity-100 text-[var(--conflict-ours-text)]",
+  });
+  items.push({
+    label: "Accept Theirs",
+    onClick: () => resolveTheirs(file.path),
+    icon: ChevronLeft,
+    iconClassName: "opacity-100 text-[var(--conflict-theirs-text)]",
+  });
 
   if (resolveManual && outputText != null) {
     items.push({
