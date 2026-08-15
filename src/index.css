@@ -204,12 +204,12 @@ body::before {
   /* Conflict colors — overridden by code theme at runtime */
   --conflict-ours: 59, 130, 246;
   --conflict-theirs: 20, 184, 166;
-  --conflict-auto: 168, 85, 247;
+  --conflict-auto: 245, 158, 11;
   --conflict-suspicious: 244, 63, 94;
   --conflict-output: 34, 197, 94;
   --conflict-ours-text: #60a5fa;
   --conflict-theirs-text: #2dd4bf;
-  --conflict-auto-text: #a78bfa;
+  --conflict-auto-text: #fbbf24;
   --conflict-suspicious-text: #fb7185;
   --conflict-output-text: #34d399;
 
@@ -275,8 +275,11 @@ body::before {
    hovered. Outline rather than background tint so it doesn't fight with the
    per-side coloring already on those lines. */
 .conflict-line-hover {
-  outline: 1px solid rgba(160, 160, 170, 0.35);
-  outline-offset: -1px;
+  /* Inset shadow rather than a border/outline: top+bottom only, no layout
+     shift, and box-shadow is outside transition-colors so it snaps on. */
+  box-shadow:
+    inset 0 1px 0 rgba(160, 160, 170, 0.35),
+    inset 0 -1px 0 rgba(160, 160, 170, 0.35);
 }
 
 /* file-icons-js: scale + align icon font */

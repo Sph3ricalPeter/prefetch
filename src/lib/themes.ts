@@ -806,12 +806,12 @@ const diffLight: CodeThemeDiff = {
 const DARK_CONFLICT: CodeThemeConflict = {
   ours: "59, 130, 246",
   theirs: "20, 184, 166",
-  auto: "168, 85, 247",
+  auto: "245, 158, 11",
   suspicious: "244, 63, 94",
   output: "34, 197, 94",
   oursText: "#60a5fa",
   theirsText: "#2dd4bf",
-  autoText: "#a78bfa",
+  autoText: "#fbbf24",
   suspiciousText: "#fb7185",
   outputText: "#34d399",
 };
@@ -819,12 +819,12 @@ const DARK_CONFLICT: CodeThemeConflict = {
 const LIGHT_CONFLICT: CodeThemeConflict = {
   ours: "37, 99, 235",
   theirs: "13, 148, 136",
-  auto: "124, 58, 237",
+  auto: "217, 119, 6",
   suspicious: "225, 29, 72",
   output: "22, 163, 74",
   oursText: "#2563eb",
   theirsText: "#0d9488",
-  autoText: "#7c3aed",
+  autoText: "#b45309",
   suspiciousText: "#e11d48",
   outputText: "#16a34a",
 };
@@ -1192,12 +1192,12 @@ const diffCarbon: CodeThemeDiff = {
 const CARBON_CONFLICT: CodeThemeConflict = {
   ours: "94, 106, 210",
   theirs: "87, 149, 176",
-  auto: "160, 125, 200",
+  auto: "196, 120, 50",
   suspicious: "235, 87, 87",
   output: "59, 215, 93",
   oursText: "#7b86e0",
   theirsText: "#7fb4cc",
-  autoText: "#b49ad6",
+  autoText: "#d99a5e",
   suspiciousText: "#f08585",
   outputText: "#6fe08a",
 };

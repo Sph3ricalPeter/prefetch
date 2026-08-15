@@ -1,4 +1,6 @@
-import { FileWarning, Save } from "lucide-react";
+import { ArrowLeft, FileWarning, Save } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { isImageFile } from "@/lib/utils";
 import type { ConflictContents } from "@/types/git";
@@ -48,15 +50,22 @@ function SidePanel({ label, hash, imageUri, tone, onAccept, disabled }: SidePane
             <span className="ml-1.5 font-mono text-caption text-muted-foreground/50">{hash}</span>
           )}
         </div>
-        <button
-          onClick={onAccept}
-          disabled={disabled}
-          className="flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-40"
-          style={{ borderColor: `rgba(var(${v}), 0.3)`, color: `var(${textVar})` }}
-        >
-          <Save className="h-3 w-3" />
-          Accept {tone === "ours" ? "Ours" : "Theirs"}
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={onAccept}
+              disabled={disabled}
+              className="flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-40"
+              style={{ borderColor: `rgba(var(${v}), 0.3)`, color: `var(${textVar})` }}
+            >
+              <Save className="h-3 w-3" />
+              Accept {tone === "ours" ? "Ours" : "Theirs"}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Keep the {tone === "ours" ? "ours" : "theirs"} version of this file and resolve the conflict
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className={`flex flex-1 items-center justify-center overflow-auto p-4 ${CHECKER_BG}`}>
         {imageUri ? (
@@ -90,6 +99,7 @@ export function BinaryConflictResolver({ filePath, contents }: BinaryConflictRes
   const resolveOurs = useRepoStore((s) => s.resolveOurs);
   const resolveTheirs = useRepoStore((s) => s.resolveTheirs);
   const isLoading = useRepoStore((s) => s.isLoading);
+  const clearDiff = useRepoStore((s) => s.clearDiff);
 
   const isImage = isImageFile(filePath);
   const mime = mimeFor(filePath);
@@ -101,6 +111,18 @@ export function BinaryConflictResolver({ filePath, contents }: BinaryConflictRes
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-1.5">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <IconButton onClick={clearDiff} className="shrink-0">
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </IconButton>
+          </TooltipTrigger>
+          <TooltipContent>Back to graph</TooltipContent>
+        </Tooltip>
+        <span className="truncate text-xs font-medium text-foreground min-w-0" title={filePath}>
+          {filePath}
+        </span>
+        <span className="w-px h-4 bg-border shrink-0" />
         <FileWarning className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
         <span className="text-xs text-muted-foreground">
           Binary file conflict — choose which version to keep

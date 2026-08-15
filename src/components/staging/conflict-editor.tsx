@@ -14,7 +14,10 @@ import { useRepoStore } from "@/stores/repo-store";
 import { BinaryConflictResolver } from "@/components/staging/binary-conflict-resolver";
 import { getUiState } from "@/lib/database";
 import { getDataAttrFromEvent } from "@/lib/utils";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Eye, EyeOff, FoldVertical, GitCompare, Minus, Plus, RotateCcw, Save, UnfoldVertical } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, ExternalLink, Eye, EyeOff, FoldVertical, GitCompare, Minus, Plus, RotateCcw, Save, UnfoldVertical } from "lucide-react";
+import { AbortButton } from "@/components/ui/abort-button";
+import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { ThemedToken } from "shiki";
 import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 
@@ -75,12 +78,18 @@ export function ConflictEditor({ filePath }: ConflictEditorProps) {
 
 function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const conflictContents = useRepoStore((s) => s.conflictContents);
+  const openInEditor = useRepoStore((s) => s.openInEditor);
   const resolveConflictManual = useRepoStore((s) => s.resolveConflictManual);
   const loadConflictContents = useRepoStore((s) => s.loadConflictContents);
   const rebaseProgress = useRepoStore((s) => s.rebaseProgress);
+  const clearDiff = useRepoStore((s) => s.clearDiff);
   const conflictState = useRepoStore((s) => s.conflictState);
   const diffExpandContext = useRepoStore((s) => s.diffExpandContext);
   const setDiffExpandContext = useRepoStore((s) => s.setDiffExpandContext);
+  const conflictShowBase = useRepoStore((s) => s.conflictShowBase);
+  const setConflictShowBase = useRepoStore((s) => s.setConflictShowBase);
+  const fileStatuses = useRepoStore((s) => s.fileStatuses);
+  const selectFile = useRepoStore((s) => s.selectFile);
   const codeTheme = useThemeStore((s) => s.codeTheme);
   const shikiThemeId = codeTheme.shikiTheme.name;
 
@@ -259,6 +268,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     text: outputText,
     lines: outputLines,
     sources: outputSources,
+    mappings: outputMappings,
   } = useMemo(
     () => buildOutputWithSources(regions, effectiveSelections),
     [regions, effectiveSelections],
@@ -762,8 +772,8 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     [expandedRegionsState, diffExpandContext, unchangedExpandKeys],
   );
   const expandedBases = useMemo(
-    () => expandedBasesState ?? new Set(diffExpandContext ? baseRegionIndices : []),
-    [expandedBasesState, diffExpandContext, baseRegionIndices],
+    () => expandedBasesState ?? new Set(conflictShowBase ? baseRegionIndices : []),
+    [expandedBasesState, conflictShowBase, baseRegionIndices],
   );
 
   const toggleRegionExpanded = useCallback((regionIndex: number) => {
@@ -780,23 +790,26 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     setExpandedBases(next);
   }, [expandedBases]);
 
-  const allExpanded = useMemo(() => {
-    const hasExpandable = baseRegionIndices.length > 0 || unchangedExpandKeys.length > 0;
-    if (!hasExpandable) return false;
-    return baseRegionIndices.every((i) => expandedBases.has(i))
-      && unchangedExpandKeys.every((k) => expandedRegions.has(k));
-  }, [baseRegionIndices, unchangedExpandKeys, expandedBases, expandedRegions]);
+  // Two independent toggles: unchanged context (shared with the diff pane) and
+  // the per-conflict base sections. Toggling one must never move the other.
+  const allContextExpanded = useMemo(
+    () => unchangedExpandKeys.length > 0 && unchangedExpandKeys.every((k) => expandedRegions.has(k)),
+    [unchangedExpandKeys, expandedRegions],
+  );
+  const allBasesExpanded = useMemo(
+    () => baseRegionIndices.length > 0 && baseRegionIndices.every((i) => expandedBases.has(i)),
+    [baseRegionIndices, expandedBases],
+  );
 
   const toggleExpandAll = useCallback(() => {
-    setDiffExpandContext(!allExpanded);
-    if (allExpanded) {
-      setExpandedBases(new Set());
-      setExpandedRegions(new Set());
-    } else {
-      setExpandedBases(new Set(baseRegionIndices));
-      setExpandedRegions(new Set(unchangedExpandKeys));
-    }
-  }, [allExpanded, baseRegionIndices, unchangedExpandKeys, setDiffExpandContext]);
+    setDiffExpandContext(!allContextExpanded);
+    setExpandedRegions(allContextExpanded ? new Set() : new Set(unchangedExpandKeys));
+  }, [allContextExpanded, unchangedExpandKeys, setDiffExpandContext]);
+
+  const toggleAllBases = useCallback(() => {
+    setConflictShowBase(!allBasesExpanded);
+    setExpandedBases(allBasesExpanded ? new Set() : new Set(baseRegionIndices));
+  }, [allBasesExpanded, baseRegionIndices, setConflictShowBase]);
 
   const conflictNumberMap = useMemo(() => {
     const map = new Map<number, number>();
@@ -895,35 +908,45 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   // (including the corresponding line in the other panes). Done with direct
   // DOM mutation rather than React state so hovering doesn't re-render the
   // hundreds of memoized line components in the viewport.
+  const hoverKeyRef = useRef<string | null>(null);
+  const highlightedRef = useRef<Element[]>([]);
+  const applyHover = useCallback((key: string | null) => {
+    for (const el of highlightedRef.current) {
+      el.classList.remove("conflict-line-hover");
+    }
+    highlightedRef.current = [];
+    hoverKeyRef.current = key;
+    const root = contentRef.current;
+    if (!key || !root) return;
+    const escaped = (window.CSS && CSS.escape) ? CSS.escape(key) : key.replace(/"/g, '\\"');
+    const nodes = root.querySelectorAll(`[data-hover-key="${escaped}"]`);
+    for (const el of nodes) el.classList.add("conflict-line-hover");
+    highlightedRef.current = Array.from(nodes);
+  }, []);
+
   useEffect(() => {
     const root = contentRef.current;
     if (!root) return;
-    let highlighted: Element[] = [];
-    let lastKey: string | null = null;
-    const clear = () => {
-      for (const el of highlighted) el.classList.remove("conflict-line-hover");
-      highlighted = [];
-      lastKey = null;
-    };
     const onOver = (e: MouseEvent) => {
       const key = getDataAttrFromEvent(e, "data-hover-key", root);
-      if (key === lastKey) return;
-      clear();
-      if (!key) return;
-      const escaped = (window.CSS && CSS.escape) ? CSS.escape(key) : key.replace(/"/g, '\\"');
-      const nodes = root.querySelectorAll(`[data-hover-key="${escaped}"]`);
-      for (const el of nodes) el.classList.add("conflict-line-hover");
-      highlighted = Array.from(nodes);
-      lastKey = key;
+      if (key !== hoverKeyRef.current) applyHover(key);
     };
+    const onLeave = () => applyHover(null);
     root.addEventListener("mouseover", onOver);
-    root.addEventListener("mouseleave", clear);
+    root.addEventListener("mouseleave", onLeave);
     return () => {
       root.removeEventListener("mouseover", onOver);
-      root.removeEventListener("mouseleave", clear);
-      clear();
+      root.removeEventListener("mouseleave", onLeave);
+      applyHover(null);
     };
-  }, []);
+  }, [applyHover]);
+
+  // Re-apply after the output pane rebuilds: toggling a chunk inserts new
+  // output rows that share the hovered key, and they'd stay unhighlighted
+  // until the next mouse move otherwise.
+  useEffect(() => {
+    if (hoverKeyRef.current) applyHover(hoverKeyRef.current);
+  }, [outputLines, applyHover]);
 
   // ── Render ─────────────────────────────────────────────────
 
@@ -950,7 +973,19 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-card shrink-0">
+      <div className="flex items-center gap-2 pl-2 pr-3 py-1 border-b border-border bg-background shrink-0">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <IconButton onClick={clearDiff} className="shrink-0">
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </IconButton>
+          </TooltipTrigger>
+          <TooltipContent>Back to graph</TooltipContent>
+        </Tooltip>
+        <span className="truncate text-xs font-medium text-foreground min-w-0" title={filePath}>
+          {filePath}
+        </span>
+        <span className="w-px h-4 bg-border shrink-0" />
         <GitCompare className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         <span className="text-xs text-muted-foreground shrink-0">
           {rebaseProgress && conflictState?.operation === "rebase" && (
@@ -960,63 +995,129 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           {changedChunkIndices.length !== 1 ? "s" : ""}
         </span>
         {rebaseProgress && conflictState?.operation === "rebase" && (rebaseProgress.commit_id || conflictContents?.rebase_commit_message) && (
-          <span className="text-xs text-muted-foreground/50 truncate min-w-0" title={conflictContents?.rebase_commit_message ?? undefined}>
-            {rebaseProgress.commit_id && (
-              <span className="font-mono">{rebaseProgress.commit_id}</span>
-            )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-xs text-muted-foreground/50 truncate min-w-0">
+                {rebaseProgress.commit_id && (
+                  <span className="font-mono">{rebaseProgress.commit_id}</span>
+                )}
+                {conflictContents?.rebase_commit_message && (
+                  <span className="ml-1 italic">{conflictContents.rebase_commit_message}</span>
+                )}
+              </span>
+            </TooltipTrigger>
             {conflictContents?.rebase_commit_message && (
-              <span className="ml-1 italic">{conflictContents.rebase_commit_message}</span>
+              <TooltipContent className="max-w-md">{conflictContents.rebase_commit_message}</TooltipContent>
             )}
-          </span>
+          </Tooltip>
         )}
         {autoResolvedCount > 0 && (
-          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1 shrink-0">
-            <button
-              onClick={() => setShowAutoResolved((v) => !v)}
-              title={showAutoResolved ? "Hide auto-resolved" : "Show auto-resolved"}
-              className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
-                showAutoResolved
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {showAutoResolved ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              <span>{autoResolvedCount} auto-resolved</span>
-            </button>
+          <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowAutoResolved((v) => !v)}
+                  className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
+                    showAutoResolved
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {showAutoResolved ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  <span>{autoResolvedCount} auto-resolved</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{showAutoResolved ? "Hide auto-resolved" : "Show auto-resolved"}</TooltipContent>
+            </Tooltip>
           </div>
         )}
-        {(baseRegionIndices.length > 0 || unchangedExpandKeys.length > 0) && (
-          <div className="flex items-center rounded-md bg-secondary p-0.5 ml-1 shrink-0">
-            <button
-              onClick={toggleExpandAll}
-              title={allExpanded ? "Collapse all context" : "Expand all context"}
-              className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
-                allExpanded
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {allExpanded ? <FoldVertical className="w-3.5 h-3.5" /> : <UnfoldVertical className="w-3.5 h-3.5" />}
-              <span>{allExpanded ? "Fold" : "Expand"}</span>
-            </button>
+        {baseRegionIndices.length > 0 && (
+          <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={toggleAllBases}
+                  className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
+                    allBasesExpanded
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {allBasesExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  <span>Base</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{allBasesExpanded ? "Hide all base sections" : "Show all base sections"}</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+        {unchangedExpandKeys.length > 0 && (
+          <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={toggleExpandAll}
+                  className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
+                    allContextExpanded
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {allContextExpanded ? <FoldVertical className="w-3.5 h-3.5" /> : <UnfoldVertical className="w-3.5 h-3.5" />}
+                  <span>{allContextExpanded ? "Fold" : "Expand"}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{allContextExpanded ? "Collapse all context" : "Expand all context"}</TooltipContent>
+            </Tooltip>
           </div>
         )}
         <div className="flex items-center gap-1 ml-auto shrink-0">
-          <button
-            onClick={resetSelections}
-            className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:border-border-hover"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reset
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-output),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-output-text)] transition-colors hover:bg-[rgba(var(--conflict-output),0.1)] hover:border-[rgba(var(--conflict-output),0.4)] disabled:opacity-40"
-          >
-            <Save className="w-3.5 h-3.5" />
-            {saving ? "Saving..." : "Save Resolution"}
-          </button>
+          {(() => {
+            const otherConflicts = fileStatuses.filter(
+              (f) => f.is_conflicted && f.path !== filePath,
+            );
+            if (otherConflicts.length === 0) return null;
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => selectFile(otherConflicts[0].path, false)}
+                    className="flex items-center gap-1 rounded-md border border-orange-500/30 px-2.5 py-1 text-xs font-medium text-orange-100 transition-colors hover:bg-orange-500/20 hover:border-orange-500/40"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
+                    {otherConflicts.length} more conflict{otherConflicts.length !== 1 ? "s" : ""}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Go to next conflict</TooltipContent>
+              </Tooltip>
+            );
+          })()}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={resetSelections}
+                className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:border-border-hover"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Reset
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Discard all choices and start over</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-output),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-output-text)] transition-colors hover:bg-[rgba(var(--conflict-output),0.1)] hover:border-[rgba(var(--conflict-output),0.4)] disabled:opacity-40"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {saving ? "Saving..." : "Save Resolution"}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Write the output file and mark the conflict resolved</TooltipContent>
+          </Tooltip>
+          <AbortButton />
         </div>
       </div>
 
@@ -1027,19 +1128,23 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           {/* Ours pane */}
           <div className="flex flex-col overflow-hidden" style={{ flex: hSplit }}>
             {/* Header with master checkbox + icon + accept-all button */}
-            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-[rgba(var(--conflict-ours),0.05)] flex items-center gap-1.5">
+            <div className="shrink-0 px-3 py-0.5 border-b border-border bg-[rgba(var(--conflict-ours),0.05)] flex items-center gap-1.5">
               {/* Master checkbox */}
-              <button
-                onClick={handleMasterOurs}
-                className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                  masterSide === "ours"
-                    ? "bg-[rgb(var(--conflict-ours))] text-white"
-                    : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-ours),0.5)]"
-                }`}
-                title="Accept all from ours"
-              >
-                {masterSide === "ours" && <Check className="w-2.5 h-2.5" />}
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleMasterOurs}
+                    className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-colors ${
+                      masterSide === "ours"
+                        ? "bg-[rgb(var(--conflict-ours))] text-white"
+                        : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-ours),0.5)]"
+                    }`}
+                  >
+                    {masterSide === "ours" && <Check className="w-2.5 h-2.5" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Accept all from ours</TooltipContent>
+              </Tooltip>
               <OursIcon />
               <div className="flex-1 min-w-0 flex items-center">
                 <span className="text-xs font-medium text-[var(--conflict-ours-text)]">
@@ -1051,14 +1156,19 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                   </span>
                 )}
               </div>
-              <button
-                onClick={handleAcceptOurs}
-                disabled={saving}
-                className="shrink-0 flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-ours),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-ours-text)] transition-colors hover:bg-[rgba(var(--conflict-ours),0.1)] hover:border-[rgba(var(--conflict-ours),0.4)] disabled:opacity-40"
-              >
-                <Save className="w-3 h-3" />
-                Accept Ours
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleAcceptOurs}
+                    disabled={saving}
+                    className="shrink-0 flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-ours),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-ours-text)] transition-colors hover:bg-[rgba(var(--conflict-ours),0.1)] hover:border-[rgba(var(--conflict-ours),0.4)] disabled:opacity-40"
+                  >
+                    <Save className="w-3 h-3" />
+                    Accept Ours
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Take every change from ours and resolve the file</TooltipContent>
+              </Tooltip>
             </div>
             <div className="relative flex-1 min-h-0">
               <div
@@ -1145,18 +1255,22 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
 
           {/* Theirs pane */}
           <div className="flex flex-col overflow-hidden" style={{ flex: 100 - hSplit }}>
-            <div className="shrink-0 px-3 py-1.5 border-b border-border bg-[rgba(var(--conflict-theirs),0.05)] flex items-center gap-1.5">
-              <button
-                onClick={handleMasterTheirs}
-                className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                  masterSide === "theirs"
-                    ? "bg-[rgb(var(--conflict-theirs))] text-white"
-                    : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-theirs),0.5)]"
-                }`}
-                title="Accept all from theirs"
-              >
-                {masterSide === "theirs" && <Check className="w-2.5 h-2.5" />}
-              </button>
+            <div className="shrink-0 px-3 py-0.5 border-b border-border bg-[rgba(var(--conflict-theirs),0.05)] flex items-center gap-1.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleMasterTheirs}
+                    className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-colors ${
+                      masterSide === "theirs"
+                        ? "bg-[rgb(var(--conflict-theirs))] text-white"
+                        : "border border-muted-foreground/30 hover:border-[rgba(var(--conflict-theirs),0.5)]"
+                    }`}
+                  >
+                    {masterSide === "theirs" && <Check className="w-2.5 h-2.5" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Accept all from theirs</TooltipContent>
+              </Tooltip>
               <TheirsIcon />
               <div className="flex-1 min-w-0 flex items-center">
                 <span className="text-xs font-medium text-[var(--conflict-theirs-text)]">
@@ -1168,14 +1282,19 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                   </span>
                 )}
               </div>
-              <button
-                onClick={handleAcceptTheirs}
-                disabled={saving}
-                className="shrink-0 flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-theirs),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-theirs-text)] transition-colors hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] disabled:opacity-40"
-              >
-                <Save className="w-3 h-3" />
-                Accept Theirs
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleAcceptTheirs}
+                    disabled={saving}
+                    className="shrink-0 flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-theirs),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-theirs-text)] transition-colors hover:bg-[rgba(var(--conflict-theirs),0.1)] hover:border-[rgba(var(--conflict-theirs),0.4)] disabled:opacity-40"
+                  >
+                    <Save className="w-3 h-3" />
+                    Accept Theirs
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Take every change from theirs and resolve the file</TooltipContent>
+              </Tooltip>
             </div>
             <div className="relative flex-1 min-h-0">
               <div
@@ -1263,7 +1382,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
           className="flex flex-col min-h-0"
           style={{ flex: 100 - vSplit }}
         >
-          <div className="shrink-0 px-3 py-1.5 text-xs font-medium text-[var(--conflict-output-text)] bg-[rgba(var(--conflict-output),0.05)] border-b border-border flex items-center gap-2">
+          <div className="shrink-0 px-3 py-0.5 text-xs font-medium text-[var(--conflict-output-text)] bg-[rgba(var(--conflict-output),0.05)] border-b border-border flex items-center gap-2">
             <span>Output</span>
             <div className="flex items-center gap-3 ml-auto">
               <span className="flex items-center gap-1 text-caption text-muted-foreground/60 font-normal">
@@ -1274,6 +1393,18 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                 <TheirsIcon size={10} />
                 theirs
               </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => openInEditor(filePath)}
+                    className="shrink-0 flex items-center gap-1.5 rounded-md border border-[rgba(var(--conflict-output),0.3)] px-3 py-1 text-xs font-medium text-[var(--conflict-output-text)] transition-colors hover:bg-[rgba(var(--conflict-output),0.1)] hover:border-[rgba(var(--conflict-output),0.4)]"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Open in Editor
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Edit the conflicted file in your external editor</TooltipContent>
+              </Tooltip>
             </div>
           </div>
           <div className="relative flex-1 min-h-0">
@@ -1306,8 +1437,16 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                 // Auto-resolved output lines come from the winner side in
                 // positional order, so `a:{regionIndex}:{j}` matches the same
                 // row in the winning pane. Changed items rearrange lines by
-                // user selection — no clean positional match, so no hover key.
-                const hoverPrefix = item.type === "auto-resolved" ? `a:${item.regionIndex}` : null;
+                // user selection, so use the origin recorded during output
+                // assembly to point back at the source row
+                // (`r:{ri}:{side}:{li}` — the side is part of the key because
+                // ours and theirs both number their lines from 0).
+                const autoPrefix = item.type === "auto-resolved" ? `a:${item.regionIndex}` : null;
+                const outputHoverKey = (j: number) => {
+                  if (autoPrefix) return `${autoPrefix}:${j}`;
+                  const m = outputMappings[startIdx + j];
+                  return m ? `r:${m.regionIndex}:${m.side}:${m.lineIndex}` : undefined;
+                };
                 return outputLines.slice(startIdx, startIdx + count).map((line, j) => (
                   <OutputLine
                     key={startIdx + j}
@@ -1315,7 +1454,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
                     lineNo={startIdx + j + 1}
                     source={outputSources[startIdx + j] === "auto-resolved" ? "auto-resolved" : outputSources[startIdx + j]}
                     tokens={outputTokens?.[startIdx + j]}
-                    hoverKey={hoverPrefix ? `${hoverPrefix}:${j}` : undefined}
+                    hoverKey={outputHoverKey(j)}
                   />
                 ));
               })}
@@ -1359,7 +1498,7 @@ function OutputLineImpl({
     ) : source === "theirs" ? (
       <TheirsIcon size={10} />
     ) : source === "auto-resolved" ? (
-      <Check className="w-2.5 h-2.5" style={{ color: "rgba(var(--conflict-auto), 0.4)" }} />
+      <Check className="w-2.5 h-2.5" style={{ color: "var(--conflict-auto-text)" }} />
     ) : null;
 
   return (
@@ -1420,7 +1559,7 @@ function UnchangedBlock({
   const toggleExpand = onToggleExpand ?? (() => setLocalExpanded((v) => !v));
   const shouldCollapse = lines.length > 8;
   const lineHoverKey = (idx: number) =>
-    hoverKeyPrefix ? `u:${hoverKeyPrefix}:${idx}` : undefined;
+    hoverKeyPrefix !== undefined ? `u:${hoverKeyPrefix}:${idx}` : undefined;
 
   if (shouldCollapse && !expanded) {
     const topLines = lines.slice(0, 3);
@@ -1646,14 +1785,15 @@ function ChangedBlock({
         </div>
       )}
 
-      <div className="flex">
-        {/* Side column: checkbox centered vertically */}
+      <div className="relative">
+        {/* Side column: checkbox centered vertically. Overlaid rather than a
+            flex sibling so each line's background and hover outline run the
+            full width underneath it. */}
         {(() => {
           const cv = side === "ours" ? "--conflict-ours" : "--conflict-theirs";
           return lines.length > 0 ? (
           <div
-            className="shrink-0 w-7 flex flex-col items-center justify-center cursor-pointer select-none transition-colors"
-            style={{ backgroundColor: `rgba(var(${cv}), 0.06)` }}
+            className="absolute inset-y-0 left-0 z-10 w-7 flex flex-col items-center justify-center cursor-pointer select-none"
             onClick={onToggleChunk}
             title={`${isChunkSelected ? "Deselect" : "Select"} all ${side} lines`}
           >
@@ -1666,13 +1806,11 @@ function ChangedBlock({
               {isChunkSelected && <Check className="w-2.5 h-2.5" />}
             </span>
           </div>
-        ) : (
-          <div className="shrink-0 w-7" />
-        );
+        ) : null;
         })()}
 
         {/* Lines or deleted label */}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0">
           {lines.length > 0 ? (
             lines.map((line, li) => {
               const isSelected = selectedLines.has(li);
@@ -1680,10 +1818,10 @@ function ChangedBlock({
               return (
                 <div
                   key={li}
-                  className="flex group/cline cursor-pointer transition-colors"
+                  className="flex pl-7 group/cline cursor-pointer transition-colors"
                   style={{ backgroundColor: `rgba(var(${cv}), ${isSelected ? 0.1 : 0.06})`, contain: "content" }}
                   data-conflict-key={`${regionIndex}:${side}:${li}`}
-                  data-hover-key={`r:${regionIndex}:${li}`}
+                  data-hover-key={`r:${regionIndex}:${side}:${li}`}
                 >
                   <span className="w-5 shrink-0 flex items-center justify-center select-none">
                     <span
@@ -1719,7 +1857,7 @@ function ChangedBlock({
               );
             })
           ) : (
-            <div className="px-2 py-0.5">
+            <div className="pl-9 pr-2 py-0.5">
               <span
                 className="text-caption italic"
                 style={{ color: `rgba(var(${side === "ours" ? "--conflict-ours" : "--conflict-theirs"}), 0.3)` }}
@@ -1766,7 +1904,7 @@ function AutoResolvedBlock({
             data-hover-key={`a:${hoverKeyPrefix}:${li}`}
           >
             <span className="shrink-0 w-12 flex items-center justify-center">
-              <Check className="w-2.5 h-2.5" style={{ color: "rgba(var(--conflict-auto), 0.4)" }} />
+              <Check className="w-2.5 h-2.5" style={{ color: "var(--conflict-auto-text)" }} />
             </span>
             <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
               {winStartLine + li}
@@ -1794,7 +1932,7 @@ function AutoResolvedBlock({
         <div className="flex items-center" style={{ backgroundColor: "rgba(var(--conflict-auto), 0.03)" }}>
           <span className="shrink-0 w-12" />
           <span className="w-9 shrink-0" />
-          <span className="flex-1 px-2 text-caption italic leading-5" style={{ color: "rgba(var(--conflict-auto), 0.3)" }}>
+          <span className="flex-1 px-2 text-caption italic leading-5 text-muted-foreground">
             — no changes —
           </span>
         </div>
