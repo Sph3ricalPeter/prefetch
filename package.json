@@ -1,7 +1,7 @@
 {
   "name": "prefetch",
   "private": true,
-  "version": "0.25.13",
+  "version": "0.25.14",
   "type": "module",
   "scripts": {
     "dev": "vite",
