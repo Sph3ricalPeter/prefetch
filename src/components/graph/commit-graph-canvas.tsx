@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, Monitor, Cloud, Tag, Archive, Calendar, Hash } from "lucide-react";
+import { Check, Monitor, Cloud, Tag, Archive, Calendar, Hash, ArrowUp } from "lucide-react";
 import type {
   BranchInfo,
   CommitInfo,
@@ -875,6 +875,14 @@ interface CommitGraphCanvasProps {
   refMru: Map<string, number>;
 }
 
+/**
+ * Graph scroll offset, kept outside React because opening a diff unmounts this
+ * component (graph-panel swaps the canvas for the diff viewer) and a fresh
+ * scroll container starts at 0. Keyed by repo so switching repos starts at the
+ * top instead of a stale offset from the previous one.
+ */
+const savedScroll = { repoPath: "", top: 0 };
+
 export function CommitGraphCanvas({
   commits,
   edges,
@@ -907,7 +915,9 @@ export function CommitGraphCanvas({
   const fontScale = useThemeStore((s) => s.fontScale);
   const activeProfile = useProfileStore((s) => s.activeProfile);
   const filterQuery = useRepoStore((s) => s.filterQuery);
+  const repoPath = useRepoStore((s) => s.repoPath) ?? "";
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredRowRef = useRef<number | null>(null);
   const hoveredBadgeRowRef = useRef<number | null>(null);
@@ -1971,6 +1981,9 @@ export function CommitGraphCanvas({
 
   const handleScroll = useCallback(() => {
     requestDraw();
+    const top = scrollRef.current?.scrollTop ?? 0;
+    savedScroll.top = top;
+    setShowScrollTop(top > 400);
     // Close the hover dropdown — its anchor is in canvas coords which scroll away.
     if (openHoverTimer.current) {
       clearTimeout(openHoverTimer.current);
@@ -2213,6 +2226,20 @@ export function CommitGraphCanvas({
     [commits, rowOffset, onCommitContextMenu, onStashContextMenu, dm],
   );
 
+  // Restore the scroll offset the last mount left behind (see `savedScroll`).
+  // Runs before paint and after the spacer div is sized, so the graph comes
+  // back exactly where the diff view left it.
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    // Switching repos also lands here (the panel may keep the canvas mounted),
+    // so an unmatched repo explicitly scrolls back to the top.
+    scroll.scrollTop = savedScroll.repoPath === repoPath ? savedScroll.top : 0;
+    savedScroll.repoPath = repoPath;
+    savedScroll.top = scroll.scrollTop; // read back: clamped if the list shrank
+    setShowScrollTop(scroll.scrollTop > 400);
+  }, [repoPath]);
+
   useEffect(() => {
     requestDraw();
 
@@ -2304,6 +2331,16 @@ export function CommitGraphCanvas({
         ref={canvasRef}
         className="pointer-events-none absolute inset-0"
       />
+
+      {showScrollTop && (
+        <button
+          onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+          className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-md border border-border bg-card/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <ArrowUp className="h-3.5 w-3.5" />
+          Scroll to top
+        </button>
+      )}
 
       {/* Unified commit-row tooltip — truncated subject, body, and any column
           not visible in the row (toggled off, collapsed, or clipped). */}
