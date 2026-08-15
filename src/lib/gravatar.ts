@@ -88,11 +88,25 @@ function md5(input: string): string {
 
 // ---------- Gravatar ----------
 
+const GRAVATAR_PREFIX = "https://www.gravatar.com/avatar/";
+
 /**
  * Build a Gravatar URL for an email address.
  * Uses `d=404` so we can detect missing avatars and fall back to initials.
  */
 export function gravatarUrl(email: string, size = 64): string {
   const hash = md5(email.trim().toLowerCase());
-  return `https://www.gravatar.com/avatar/${hash}?s=${size}&d=404`;
+  return `${GRAVATAR_PREFIX}${hash}?s=${size}&d=404`;
+}
+
+/** True only for URLs *we* built above — they carry the caller's requested
+ *  pixel size, so they are derived from (email, size) rather than being an
+ *  identity worth caching.
+ *
+ *  The `d=404` marker is the discriminator, not the host: a forge can hand back
+ *  a gravatar URL of its own (GitLab's avatar API does exactly that for users
+ *  with no custom avatar, with `d=identicon`), and that one IS worth caching —
+ *  it is the result of a round-trip, not something we can rebuild locally. */
+export function isDerivedGravatarUrl(url: string): boolean {
+  return url.startsWith(GRAVATAR_PREFIX) && url.includes("d=404");
 }

@@ -7,6 +7,7 @@ import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { initDatabase, getUiState } from "@/lib/database";
+import { loadRememberedAvatarUrls } from "@/lib/avatar-cache";
 import { setFetchInterval as setFetchIntervalCmd } from "@/lib/commands";
 import { UpdateChecker } from "@/components/update-checker";
 
@@ -42,6 +43,7 @@ function DatabaseInit() {
           loadGraphPreferences(),
           loadSidebarPreferences(),
           loadThemePreferences(),
+          loadRememberedAvatarUrls(),
           loadProfiles().then(() => restoreActiveProfile()),
           // Restore saved auto-fetch interval so the Rust fetcher uses
           // the user's preference from the first tick, not just the default.

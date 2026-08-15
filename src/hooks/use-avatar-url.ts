@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { gravatarUrl } from "@/lib/gravatar";
 import { searchUserAvatar } from "@/lib/commands";
+import { rememberAvatarUrl, rememberedAvatarUrl } from "@/lib/avatar-cache";
 
 /**
  * Resolves an avatar image URL for an email address.
- * Tries gravatar (d=404) first, then the forge API as fallback.
+ * Retries the remembered URL first, then gravatar (d=404), then the forge API.
  * Returns the loaded URL or null.
  */
 export function useAvatarUrl(
@@ -16,28 +17,34 @@ export function useAvatarUrl(
   useEffect(() => {
     if (!email || skip) return;
     let cancelled = false;
-    const src = gravatarUrl(email, 80);
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      if (!cancelled) setResult({ email, url: src });
+
+    // No crossOrigin: these only ever render into an <img>, never have their
+    // pixels read back, and requiring CORS breaks forge avatars (e.g.
+    // self-hosted GitLab) whose host sends no Access-Control-Allow-Origin.
+    const probe = (url: string, onFail: () => void) => {
+      const img = new Image();
+      img.onload = () => {
+        if (cancelled) return;
+        rememberAvatarUrl(email, url);
+        setResult({ email, url });
+      };
+      img.onerror = onFail;
+      img.src = url;
     };
-    img.onerror = () => {
-      searchUserAvatar(email)
-        .then((forgeUrl) => {
-          if (!cancelled && forgeUrl) {
-            const forgeImg = new Image();
-            forgeImg.crossOrigin = "anonymous";
-            forgeImg.onload = () => {
-              if (!cancelled) setResult({ email, url: forgeUrl });
-            };
-            forgeImg.onerror = () => {};
-            forgeImg.src = forgeUrl;
-          }
-        })
-        .catch(() => {});
-    };
-    img.src = src;
+
+    const fromGravatar = () =>
+      probe(gravatarUrl(email, 80), () => {
+        searchUserAvatar(email)
+          .then((forgeUrl) => {
+            if (forgeUrl && !cancelled) probe(forgeUrl, () => {});
+          })
+          .catch(() => {});
+      });
+
+    const remembered = rememberedAvatarUrl(email);
+    if (remembered) probe(remembered, fromGravatar);
+    else fromGravatar();
+
     return () => { cancelled = true; };
   }, [email, skip]);
 

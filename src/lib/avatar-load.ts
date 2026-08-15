@@ -1,11 +1,18 @@
 import { gravatarUrl } from "@/lib/gravatar";
 import { searchUserAvatar } from "@/lib/commands";
-import { avatarImageCache, forgeAvatarAttempted } from "@/lib/avatar-cache";
+import {
+  avatarImageCache,
+  cacheAvatarImage,
+  forgeAvatarAttempted,
+  rememberAvatarUrl,
+  rememberedAvatarUrl,
+} from "@/lib/avatar-cache";
 
 /**
  * Kick off loading the avatar for `email` into the shared cache, unless it has
- * already been attempted. Tries gravatar first, then the forge API on a 404.
- * `onLoaded` fires when an image becomes available so the caller can redraw.
+ * already been attempted. A previously resolved URL is retried first; otherwise
+ * gravatar, then the forge API on a 404. `onLoaded` fires when an image becomes
+ * available so the caller can redraw.
  *
  * Keyed by email so a repo with many commits but few authors only loads each
  * avatar once. Intended to be called from a prefetch pass, NOT the draw loop —
@@ -20,25 +27,40 @@ export function loadAvatarForEmail(
   if (avatarImageCache.get(email) !== undefined) return;
   avatarImageCache.set(email, null);
 
-  const img = new Image();
-  img.src = gravatarUrl(email, sizePx);
-  img.onload = () => {
-    avatarImageCache.set(email, img);
+  const accept = (img: HTMLImageElement) => {
+    cacheAvatarImage(email, img);
+    rememberAvatarUrl(email, img.src);
     onLoaded();
   };
-  img.onerror = () => {
-    if (forgeAvatarAttempted.has(email)) return;
-    forgeAvatarAttempted.add(email);
-    searchUserAvatar(email)
-      .then((url) => {
-        if (!url) return;
-        const forgeImg = new Image();
-        forgeImg.src = url;
-        forgeImg.onload = () => {
-          avatarImageCache.set(email, forgeImg);
-          onLoaded();
-        };
-      })
-      .catch(() => {});
-  };
+
+  // A remembered URL is the fastest and most reliable path: no 404 probe, no
+  // forge round-trip. If it no longer loads we fall through to a fresh resolve,
+  // but keep the remembered URL until a new valid one replaces it.
+  const remembered = rememberedAvatarUrl(email);
+  if (remembered) {
+    const img = new Image();
+    img.onload = () => accept(img);
+    img.onerror = () => resolve();
+    img.src = remembered;
+    return;
+  }
+  resolve();
+
+  function resolve(): void {
+    const img = new Image();
+    img.onload = () => accept(img);
+    img.onerror = () => {
+      if (forgeAvatarAttempted.has(email)) return;
+      forgeAvatarAttempted.add(email);
+      searchUserAvatar(email)
+        .then((url) => {
+          if (!url) return;
+          const forgeImg = new Image();
+          forgeImg.onload = () => accept(forgeImg);
+          forgeImg.src = url;
+        })
+        .catch(() => {});
+    };
+    img.src = gravatarUrl(email, sizePx);
+  }
 }
