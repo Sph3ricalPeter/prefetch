@@ -89,12 +89,20 @@ export function ResizeHandle({
         // graph panel regardless of DOM order — otherwise the left handle's
         // strip, which sits before the graph in the DOM, gets covered by it.
         "group relative z-10 w-px shrink-0 cursor-col-resize transition-colors",
-        // Hit zone positioning: both handles extend OUTWARD into the center
-        // graph panel, never inward into the side panels — otherwise the grab
-        // area overlaps the side panel's vertical scrollbar.
+        // Hit zone: never extends into a panel's right edge, where its 6px
+        // vertical scrollbar lives (sidebar list left of the left handle,
+        // commit graph left of the right one). The two handles have different
+        // slack around them, so they can't share one zone:
+        //   left  — nothing to its left but the sidebar scrollbar, so the zone
+        //           runs right, over the card's ml-1 gap and border.
+        //   right — carries ml-1 itself, so 4px of dead gap sits to its left,
+        //           past the graph's scrollbar. Claim that plus the detail
+        //           column's own pl-1, and stop: the cards (and the RowDragHandle
+        //           between Unstaged and Staged) start at 4px, and this handle's
+        //           z-10 would otherwise win every press on their left edge.
         side === "left"
           ? "before:absolute before:inset-y-0 before:left-0 before:w-3 before:cursor-col-resize"
-          : "before:absolute before:inset-y-0 before:right-0 before:w-3 before:cursor-col-resize",
+          : "before:absolute before:inset-y-0 before:-left-1 before:w-[9px] before:cursor-col-resize",
         isDragging
           ? "bg-accent"
           : ghost

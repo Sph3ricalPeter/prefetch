@@ -78,7 +78,9 @@ export function UpdateIndicator() {
           )}
         </button>
       </TooltipTrigger>
-      <TooltipContent className="max-w-xs">
+      {/* pointer-events-auto: the release notes scroll, so this one tooltip has
+          to take the mouse back from the primitive's default. */}
+      <TooltipContent className="max-w-xs pointer-events-auto">
         <p>{label}</p>
         {status === "error" && error && (
           <p className="mt-1 text-muted-foreground">{error}</p>
