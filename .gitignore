@@ -40,3 +40,6 @@ tmp/
 
 # Orphaned build archives (killed tauri builds)
 *.7z
+
+# Local scratch repo used for manual stash/conflict testing
+stashtest/
