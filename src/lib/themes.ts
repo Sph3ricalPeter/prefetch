@@ -108,6 +108,7 @@ export const DEFAULT_CODE_THEME: Record<string, string> = {
   "dark-dimmed": "vs-dark-dimmed",
   "tokyo-night": "tokyo-night",
   carbon: "carbon",
+  blackout: "carbon",
   light: "light",
 };
 
@@ -402,11 +403,71 @@ const carbonAppTheme: AppTheme = {
   noiseOpacity: 0.015,
 };
 
+// Blackout — pure achromatic near-black; zero hue tint anywhere in the chrome,
+// cyan ring and a single red destructive. Sampled from the T3 Code screenshot.
+const blackoutAppTheme: AppTheme = {
+  id: "blackout",
+  label: "Blackout",
+  type: "dark",
+  cssVars: {
+    "--background": "0 0% 2%", // #050505
+    "--foreground": "0 0% 100%", // #ffffff
+    "--card": "0 0% 3.9%", // #0a0a0a
+    "--card-hover": "0 0% 9.4%",
+    "--field": "0 0% 3.1%", // #080808
+    "--card-foreground": "0 0% 100%",
+    "--popover": "0 0% 3.9%",
+    "--popover-foreground": "0 0% 100%",
+    "--primary": "0 0% 100%",
+    "--primary-foreground": "0 0% 2%",
+    "--secondary": "0 0% 7%", // #121212
+    "--secondary-foreground": "0 0% 100%",
+    "--muted": "0 0% 7%",
+    "--muted-foreground": "0 0% 58%", // #949494
+    "--accent": "0 0% 7%",
+    "--accent-foreground": "0 0% 100%",
+    "--destructive": "357 74% 56%", // #e43c45
+    "--destructive-foreground": "0 0% 100%",
+    "--border": "0 0% 8.2%", // #151515
+    "--input": "0 0% 8.2%",
+    "--ring": "196 100% 50%", // #00bcff
+    "--sidebar-background": "0 0% 0%", // #000000
+    "--sidebar-foreground": "0 0% 100%",
+    "--sidebar-primary": "0 0% 100%",
+    "--sidebar-primary-foreground": "0 0% 2%",
+    "--sidebar-accent": "0 0% 7%",
+    "--sidebar-accent-foreground": "0 0% 100%",
+    "--sidebar-border": "0 0% 8.2%",
+    "--sidebar-ring": "196 100% 50%",
+    "--shell": "0 0% 0%",
+  },
+  graph: {
+    fg: "hsl(0 0% 100%)",
+    muted: "hsl(0 0% 58%)",
+    dim: "hsl(0 0% 42%)",
+    faint: "hsl(0 0% 28%)",
+    bgPage: "hsl(0 0% 2%)",
+    bgHover: "hsl(0 0% 4.5%)",
+    bgSelected: "hsl(0 0% 7%)",
+  },
+  extended: {
+    dim: "hsl(0 0% 42%)",
+    faint: "hsl(0 0% 28%)",
+    brand: "#00bcff",
+    brandDim: "#0e8db8",
+    brandGlow: "rgba(0, 188, 255, 0.08)",
+    success: "#00bc7d",
+  },
+  scrollbar: { thumb: "hsl(0 0% 12%)", thumbHover: "hsl(0 0% 20%)" },
+  noiseOpacity: 0.012,
+};
+
 export const APP_THEMES: AppTheme[] = [
   darkAppTheme,
   darkDimmedAppTheme,
   tokyoNightAppTheme,
   carbonAppTheme,
+  blackoutAppTheme,
   lightAppTheme,
 ];
 
