@@ -24,6 +24,7 @@ import {
 import { IconButton } from "@/components/ui/icon-button";
 import { AbortButton } from "@/components/ui/abort-button";
 import { getUiState, setUiState } from "@/lib/database";
+import { rewordImpact } from "@/lib/commands";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRepoStore } from "@/stores/repo-store";
 import { useDelayedFlag } from "@/hooks/use-delayed-flag";
@@ -43,7 +44,7 @@ import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { CiLogViewer } from "@/components/ci/ci-log-viewer";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
-import type { BranchInfo, ForgeKind, ForgeStatus, TagInfo } from "@/types/git";
+import type { BranchInfo, ForgeKind, ForgeStatus, RewordImpact, TagInfo } from "@/types/git";
 import { ForgeIcon } from "@/components/ui/forge-icons";
 import {
   Tooltip,
@@ -306,7 +307,7 @@ export function GraphPanel() {
   const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
-  const rewordHeadCommit = useRepoStore((s) => s.rewordHeadCommit);
+  const rewordCommit = useRepoStore((s) => s.rewordCommit);
   const selectStash = useRepoStore((s) => s.selectStash);
   const applyStash = useRepoStore((s) => s.applyStash);
   const popStash = useRepoStore((s) => s.popStash);
@@ -339,7 +340,13 @@ export function GraphPanel() {
   const [renameDialog, setRenameDialog] = useState<{ branch: string } | null>(null);
   const [upstreamDialog, setUpstreamDialog] = useState<{ branch: string } | null>(null);
   const [dialogInput, setDialogInput] = useState("");
-  const [editMessageDialog, setEditMessageDialog] = useState<{ commitId: string } | null>(null);
+  const [editMessageDialog, setEditMessageDialog] = useState<{
+    commitId: string;
+    /** Preflight result; null until the check returns. */
+    impact: RewordImpact | null;
+    /** Why the preflight failed — never silently treated as "all clear". */
+    impactError: string | null;
+  } | null>(null);
   const [editMsgSubject, setEditMsgSubject] = useState("");
   const [editMsgBody, setEditMsgBody] = useState("");
 
@@ -759,13 +766,27 @@ export function GraphPanel() {
             },
             (name) => { setDialogInput(name); setRenameDialog({ branch: name }); },
             (name) => { setDialogInput(""); setUpstreamDialog({ branch: name }); },
-            headCommitId,
             (commitId) => {
               const c = commits.find((x) => x.id === commitId);
               if (!c) return;
               setEditMsgSubject(c.message);
               setEditMsgBody(c.body);
-              setEditMessageDialog({ commitId });
+              setEditMessageDialog({ commitId, impact: null, impactError: null });
+              // How much this rewrites, and whether it's even possible, comes
+              // from git — fetched async so opening the dialog stays instant.
+              rewordImpact(commitId)
+                .then((impact) =>
+                  setEditMessageDialog((d) =>
+                    d?.commitId === commitId ? { ...d, impact } : d,
+                  ),
+                )
+                .catch((e: unknown) =>
+                  setEditMessageDialog((d) =>
+                    d?.commitId === commitId
+                      ? { ...d, impactError: e instanceof Error ? e.message : String(e) }
+                      : d,
+                  ),
+                );
             },
             (tagName) => setConfirmDeleteTag(tagName),
             forgeStatus,
@@ -1005,25 +1026,46 @@ export function GraphPanel() {
         </ConfirmDialog>
       )}
 
-      {/* Edit (reword) HEAD commit message dialog */}
+      {/* Edit (reword) commit message dialog */}
       {editMessageDialog && (
         <ConfirmDialog
           open
           onClose={() => setEditMessageDialog(null)}
           className="w-full max-w-md"
           title="Edit commit message"
-          description={`Rewrites HEAD (${editMessageDialog.commitId.slice(0, 7)}). If already pushed, you'll need to force push.`}
+          description={rewordDescription(editMessageDialog.commitId, editMessageDialog.impact, currentBranch)}
           confirmLabel="Save"
-          confirmDisabled={!editMsgSubject.trim()}
+          confirmDisabled={!editMsgSubject.trim() || !!editMessageDialog.impact?.blocker}
           onConfirm={() => {
             const subject = editMsgSubject.trim();
             if (!subject) return;
             const body = editMsgBody.trim();
             const full = body ? `${subject}\n\n${body}` : subject;
-            rewordHeadCommit(full);
+            rewordCommit(editMessageDialog.commitId, full);
             setEditMessageDialog(null);
           }}
         >
+          {editMessageDialog.impact?.blocker && (
+            <p className="mb-3 text-xs text-destructive">{editMessageDialog.impact.blocker}</p>
+          )}
+          {editMessageDialog.impactError && (
+            <p className="mb-3 text-xs text-yellow-500">
+              Couldn't check what this would rewrite ({editMessageDialog.impactError}) — saving may
+              still fail.
+            </p>
+          )}
+          {!!editMessageDialog.impact?.pushed_to.length && (
+            <p className="mb-3 text-xs text-yellow-500">
+              Already pushed to {editMessageDialog.impact.pushed_to.join(", ")} — you'll need to
+              force push.
+            </p>
+          )}
+          {!!editMessageDialog.impact?.stranded_refs.length && (
+            <p className="mb-3 text-xs text-yellow-500">
+              {editMessageDialog.impact.stranded_refs.join(", ")} also contain this commit and will
+              keep the old version — move them too, or history forks.
+            </p>
+          )}
           <input
             autoFocus
             value={editMsgSubject}
@@ -1140,6 +1182,18 @@ export function GraphPanel() {
   );
 }
 
+/** Reword dialog subtitle — spells out the blast radius once the preflight lands. */
+function rewordDescription(
+  commitId: string,
+  impact: RewordImpact | null,
+  currentBranch: string | null,
+): string {
+  const sha = commitId.slice(0, 7);
+  const replayed = impact && !impact.blocker ? impact.commit_count - 1 : 0;
+  if (replayed <= 0) return `Rewrites ${sha}.`;
+  return `Rewrites ${sha} and the ${replayed} commit${replayed === 1 ? "" : "s"} after it on ${currentBranch ?? "HEAD"}.`;
+}
+
 function buildCommitContextMenuItems(
   commitId: string,
   currentBranch: string | null,
@@ -1159,7 +1213,6 @@ function buildCommitContextMenuItems(
   confirmDeleteBranch: (name: string, deleteLocal: boolean, deleteRemote: boolean, remoteName: string) => void,
   renameBranch: (name: string) => void,
   setUpstream: (name: string) => void,
-  headCommitId: string | null,
   openRewordDialog: (commitId: string) => void,
   confirmDeleteTag: (name: string) => void,
   forgeStatus: ForgeStatus | null,
@@ -1339,14 +1392,12 @@ function buildCommitContextMenuItems(
   items.push({ separator: true });
 
   // Modify
-  if (commitId === headCommitId) {
-    items.push({
-      label: "Edit commit message…",
-      onClick: () => openRewordDialog(commitId),
-      writesRepo: true,
-      icon: Pencil,
-    });
-  }
+  items.push({
+    label: "Edit commit message…",
+    onClick: () => openRewordDialog(commitId),
+    writesRepo: true,
+    icon: Pencil,
+  });
   items.push({
     label: `Revert ${shortSha}`,
     onClick: () => revertCommit(commitId),

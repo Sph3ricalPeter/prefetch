@@ -59,7 +59,7 @@ import {
   stageFiles as stageFilesCmd,
   unstageFiles as unstageFilesCmd,
   createCommit,
-  rewordHeadCommit as rewordHeadCommitCmd,
+  rewordCommit as rewordCommitCmd,
   getCommitFiles,
   getCommitFileDiff,
   getStashes,
@@ -489,7 +489,7 @@ interface RepoState {
   loadConflictContents: (filePath: string) => Promise<void>;
   resolveConflictManual: (filePath: string, content: string) => Promise<void>;
   commit: (message: string, amend?: boolean) => Promise<void>;
-  rewordHeadCommit: (message: string) => Promise<void>;
+  rewordCommit: (commitId: string, message: string) => Promise<void>;
   setFilterInput: (value: string) => void;
   setFilterQuery: (query: string) => void;
   /** Clear both the filter input and the debounced query immediately. */
@@ -1507,7 +1507,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
-  rewordHeadCommit: async (message) => {
+  rewordCommit: async (commitId, message) => {
     if (blockedByOperation(get, "edit the commit message")) return;
     if (!message.trim()) {
       toast.error("Commit message cannot be empty");
@@ -1515,9 +1515,18 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
     set({ isLoading: true });
     try {
-      await rewordHeadCommitCmd(message.trim());
+      const newSha = await rewordCommitCmd(commitId, message.trim());
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({ ...repoData, fileStatuses: statuses, isLoading: false });
+      // Every rewritten commit has a new SHA. Follow the reworded one to its
+      // replacement; any other stale selection just gets cleared, so the detail
+      // panel can't sit on a commit that no longer exists.
+      const selected = get().selectedCommitId;
+      if (selected === commitId) {
+        await get().selectCommit(newSha);
+      } else if (selected && !get().commits.some((c) => c.id === selected)) {
+        await get().selectCommit(null);
+      }
       toast.success("Commit message updated");
     } catch (e) {
       set({ isLoading: false });

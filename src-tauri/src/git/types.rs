@@ -143,6 +143,20 @@ pub struct RebaseProgress {
     pub commit_id: String,
 }
 
+/// What rewording a commit would rewrite — shown before the user confirms.
+#[derive(Debug, Clone, Serialize)]
+pub struct RewordImpact {
+    /// Why the commit can't be reworded, or `None` if it can.
+    pub blocker: Option<String>,
+    /// How many commits get rewritten (the target plus everything after it).
+    pub commit_count: u32,
+    /// Remote-tracking branches containing the commit — a force push is needed.
+    pub pushed_to: Vec<String>,
+    /// Other local branches and tags containing the commit. They keep pointing
+    /// at the old commits, so history forks unless they're moved too.
+    pub stranded_refs: Vec<String>,
+}
+
 /// The three versions of a conflicted file for merge resolution.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConflictContents {

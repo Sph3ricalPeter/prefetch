@@ -9,7 +9,7 @@ use crate::git::{
     forge, repository,
     types::{
         self, BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData,
-        RebaseProgress, StashInfo, TagInfo, UndoAction,
+        RebaseProgress, RewordImpact, StashInfo, TagInfo, UndoAction,
     },
 };
 use crate::watcher::RepoWatcher;
@@ -502,13 +502,23 @@ pub async fn create_commit(
 }
 
 #[tauri::command]
-pub async fn reword_head_commit(
+pub async fn reword_commit(
+    commit_id: String,
     message: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
-    offload(move || repository::reword_head_commit(&path, &message, &env)).await
+    offload(move || repository::reword_commit(&path, &commit_id, &message, &env)).await
+}
+
+#[tauri::command]
+pub async fn reword_impact(
+    commit_id: String,
+    state: State<'_, AppState>,
+) -> Result<RewordImpact, AppError> {
+    let path = repo_path(&state)?;
+    offload(move || repository::reword_impact(&path, &commit_id)).await
 }
 
 #[tauri::command]

@@ -173,6 +173,18 @@ export interface UndoAction {
   can_undo: boolean;
 }
 
+/** What rewording a commit would rewrite — shown before the user confirms. */
+export interface RewordImpact {
+  /** Why the commit can't be reworded, or null if it can. */
+  blocker: string | null;
+  /** How many commits get rewritten (the target plus everything after it). */
+  commit_count: number;
+  /** Remote-tracking branches containing the commit — a force push is needed. */
+  pushed_to: string[];
+  /** Other local branches/tags containing it, which would keep the old commits. */
+  stranded_refs: string[];
+}
+
 // ── Forge (GitHub / GitLab) ───────────────────────────────────────────────────
 
 export type PrState = "open" | "closed" | "merged" | "opened";

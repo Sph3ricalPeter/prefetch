@@ -14,6 +14,7 @@ import type {
   Pipeline,
   PrInfo,
   RebaseProgress,
+  RewordImpact,
   StashInfo,
   TagInfo,
   UndoAction,
@@ -137,8 +138,16 @@ export async function createCommit(
   return tracedInvoke<string>("create_commit", { message, amend });
 }
 
-export async function rewordHeadCommit(message: string): Promise<string> {
-  return tracedInvoke<string>("reword_head_commit", { message });
+export async function rewordCommit(
+  commitId: string,
+  message: string,
+): Promise<string> {
+  return tracedInvoke<string>("reword_commit", { commitId, message });
+}
+
+/** Preflight for a reword: what gets rewritten, and what would block or fork. */
+export async function rewordImpact(commitId: string): Promise<RewordImpact> {
+  return tracedInvoke<RewordImpact>("reword_impact", { commitId });
 }
 
 export async function getCommitFiles(commitId: string): Promise<FileStatus[]> {

@@ -6,7 +6,7 @@ use crate::git::graph::assign_lanes;
 use crate::git::parse;
 use crate::git::types::{
     self as types, BranchInfo, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff, FileStatus,
-    GraphData, RebaseProgress, StashInfo, TagInfo, UndoAction,
+    GraphData, RebaseProgress, RewordImpact, StashInfo, TagInfo, UndoAction,
 };
 use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
@@ -1240,45 +1240,357 @@ pub fn create_commit(
     }
 }
 
-/// Reword the HEAD commit's message without touching the index.
+/// One commit's metadata, read in a single batched `git log` call.
+struct CommitMeta {
+    sha: String,
+    tree: String,
+    parents: Vec<String>,
+    author_name: String,
+    author_email: String,
+    author_date: String,
+    committer_name: String,
+    committer_email: String,
+    committer_date: String,
+    /// Raw message (`%B`) — subject and body, verbatim.
+    message: String,
+}
+
+/// Field-separated commit metadata, read with `git log -z`.
 ///
-/// Creates a new commit object via `git commit-tree` with HEAD's tree and
-/// parents but a new message, then moves HEAD via `update-ref`. Unlike
-/// `git commit --amend -m ...`, staged changes are NOT folded in.
-pub fn reword_head_commit(
+/// Unit separators (`%x1f`) delimit fields; `-z` delimits commits with NUL,
+/// which — unlike any printable separator — cannot appear in a commit message.
+/// The message is the last field so a stray unit separator inside it is
+/// harmless too.
+const META_FORMAT: &str = "--format=%H%x1f%T%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%B";
+
+/// `log.showSignature=true` prepends `Good "git" signature for …` to every
+/// record, which lands in the first field and quietly poisons the SHA.
+const NO_SIGNATURE: &str = "--no-show-signature";
+
+/// Read commit metadata, refusing anything that isn't valid UTF-8.
+///
+/// [`capture`] decodes lossily, which on legacy non-UTF-8 history (a Latin-1
+/// message with no `encoding` header) would swap bytes for U+FFFD and bake that
+/// into the rewritten commit. A history rewrite is byte-exact or it doesn't
+/// happen.
+fn capture_meta(path: &str, args: &[&str]) -> Result<String, AppError> {
+    String::from_utf8(capture_bytes(path, args, &[])?).map_err(|_| {
+        AppError::Other(
+            "This commit's history contains non-UTF-8 text — rewording it would corrupt the message"
+                .into(),
+        )
+    })
+}
+
+/// Parse `git log -z META_FORMAT` output.
+///
+/// Errors rather than skipping on a malformed record: this feeds a history
+/// rewrite, where a silently dropped commit would splice the new chain back
+/// onto the old one.
+fn parse_commit_meta(raw: &str) -> Result<Vec<CommitMeta>, AppError> {
+    raw.split('\0')
+        .filter(|record| !record.is_empty())
+        .map(|record| {
+            let f: Vec<&str> = record.splitn(10, '\u{1f}').collect();
+            if f.len() < 10 {
+                return Err(AppError::Git(format!(
+                    "Could not parse commit metadata: expected 10 fields, got {}",
+                    f.len()
+                )));
+            }
+            Ok(CommitMeta {
+                sha: f[0].to_string(),
+                tree: f[1].to_string(),
+                parents: f[2].split_whitespace().map(String::from).collect(),
+                author_name: f[3].to_string(),
+                author_email: f[4].to_string(),
+                author_date: f[5].to_string(),
+                committer_name: f[6].to_string(),
+                committer_email: f[7].to_string(),
+                committer_date: f[8].to_string(),
+                message: f[9].to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Env overrides pinning a rewritten commit's author to the original's.
+///
+/// `keep_committer` pins the committer too — used for the untouched descendants
+/// so replaying them doesn't restamp half the graph with today's date. The
+/// reworded commit itself takes the current identity as committer, which is what
+/// `git rebase` does.
+fn preserved_identity_env(
+    base: &[(String, String)],
+    m: &CommitMeta,
+    keep_committer: bool,
+) -> Vec<(String, String)> {
+    // Appended after `base` so these win over any profile identity in it.
+    let mut env = base.to_vec();
+    env.push(("GIT_AUTHOR_NAME".into(), m.author_name.clone()));
+    env.push(("GIT_AUTHOR_EMAIL".into(), m.author_email.clone()));
+    env.push(("GIT_AUTHOR_DATE".into(), m.author_date.clone()));
+    if keep_committer {
+        env.push(("GIT_COMMITTER_NAME".into(), m.committer_name.clone()));
+        env.push(("GIT_COMMITTER_EMAIL".into(), m.committer_email.clone()));
+        env.push(("GIT_COMMITTER_DATE".into(), m.committer_date.clone()));
+    }
+    env
+}
+
+/// Write a commit object with `git commit-tree` and return its SHA.
+///
+/// `commit-tree` is plumbing: unlike `git commit` it ignores `commit.gpgsign`,
+/// so signing has to be requested explicitly or every rewritten commit comes out
+/// unsigned. When `-S` is passed and signing fails, so does this — better to
+/// abort than to silently strip signatures off a whole run of commits.
+fn write_commit(
     path: &str,
+    tree: &str,
+    parents: &[String],
     message: &str,
-    extra_env: &[(String, String)],
+    sign: bool,
+    env: &[(String, String)],
 ) -> Result<String, AppError> {
-    let tree = run_git(path, &["rev-parse", "HEAD^{tree}"], &[])?;
-    let tree = tree.trim().to_string();
-
-    let parents_raw = run_git(path, &["rev-list", "--parents", "-n", "1", "HEAD"], &[])?;
-    let parents: Vec<String> = parents_raw
-        .split_whitespace()
-        .skip(1)
-        .map(|s| s.to_string())
-        .collect();
-
-    let mut args: Vec<String> = vec!["commit-tree".into(), tree];
-    for p in &parents {
+    let mut args: Vec<String> = vec!["commit-tree".into(), tree.into()];
+    for p in parents {
         args.push("-p".into());
         args.push(p.clone());
+    }
+    if sign {
+        args.push("-S".into());
     }
     args.push("-m".into());
     args.push(message.into());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let new_sha = capture(path, &arg_refs, extra_env)
+    let new_sha = capture(path, &arg_refs, env)
         .map_err(|e| AppError::Git(format!("commit-tree failed: {e}")))?;
     let new_sha = new_sha.trim().to_string();
     if new_sha.is_empty() {
         return Err(AppError::Git("commit-tree returned empty SHA".into()));
     }
-
-    run_git(path, &["update-ref", "HEAD", &new_sha], &[])?;
-
     Ok(new_sha)
+}
+
+/// Resolve a commit-ish to a full SHA.
+fn resolve_commit(path: &str, commit_id: &str) -> Result<String, AppError> {
+    Ok(capture(
+        path,
+        &["rev-parse", &format!("{commit_id}^{{commit}}")],
+        &[],
+    )
+    .map_err(|_| AppError::Other(format!("Not a commit: {commit_id}")))?
+    .trim()
+    .to_string())
+}
+
+/// Why `target` can't be reworded, or `None` if it can.
+///
+/// Shared by [`reword_impact`] and [`reword_commit`] so the dialog's precheck
+/// and the operation itself can never disagree.
+fn reword_blocker(path: &str, target: &str) -> Result<Option<String>, AppError> {
+    if let Some(op) = sequencer_in_progress(path) {
+        return Ok(Some(format!(
+            "Cannot reword while a {op} is in progress — finish or abort it first"
+        )));
+    }
+
+    // Everything from the target up to HEAD gets rewritten and HEAD is the only
+    // ref we move, so the target has to be an ancestor of it.
+    if capture(path, &["merge-base", "--is-ancestor", target, "HEAD"], &[]).is_err() {
+        return Ok(Some(
+            "That commit is not on the current branch — check out a branch that contains it first"
+                .into(),
+        ));
+    }
+
+    // No merges in the range means the commits to replay form a single chain,
+    // so each one's parent is simply the commit we rewrote before it.
+    if !capture(
+        path,
+        &["rev-list", "--merges", &format!("{target}..HEAD")],
+        &[],
+    )?
+    .trim()
+    .is_empty()
+    {
+        return Ok(Some(
+            "Can't reword this commit — a merge commit comes after it".into(),
+        ));
+    }
+
+    Ok(None)
+}
+
+/// What rewording a commit would cost, for the confirmation dialog.
+///
+/// Runs the same guards as [`reword_commit`], so a blocker shows up before the
+/// user types a message rather than after.
+pub fn reword_impact(path: &str, commit_id: &str) -> Result<RewordImpact, AppError> {
+    let target = resolve_commit(path, commit_id)?;
+    let blocker = reword_blocker(path, &target)?;
+
+    // Every ref whose history includes the target: the current branch is the one
+    // we move, and any other keeps pointing at the commits we're replacing.
+    let refs = capture(
+        path,
+        &[
+            "for-each-ref",
+            "--contains",
+            &target,
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/tags",
+            "refs/remotes",
+        ],
+        &[],
+    )?;
+    let head_ref = capture(path, &["symbolic-ref", "-q", "HEAD"], &[])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let mut pushed_to = Vec::new();
+    let mut stranded_refs = Vec::new();
+    for name in refs.lines().map(str::trim).filter(|n| !n.is_empty()) {
+        if let Some(short) = name.strip_prefix("refs/remotes/") {
+            if !short.ends_with("/HEAD") {
+                pushed_to.push(short.to_string());
+            }
+        } else if name != head_ref {
+            let short = name
+                .strip_prefix("refs/heads/")
+                .or_else(|| name.strip_prefix("refs/tags/"))
+                .unwrap_or(name);
+            stranded_refs.push(short.to_string());
+        }
+    }
+
+    // The target plus everything replayed on top of it.
+    let commit_count = if blocker.is_some() {
+        0
+    } else {
+        1 + capture(
+            path,
+            &["rev-list", "--count", &format!("{target}..HEAD")],
+            &[],
+        )?
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0)
+    };
+
+    Ok(RewordImpact {
+        blocker,
+        commit_count,
+        pushed_to,
+        stranded_refs,
+    })
+}
+
+/// Reword any commit on the current branch, without a rebase.
+///
+/// Rewrites the target with `git commit-tree` (same tree, new message), then
+/// replays every descendant up to HEAD with only its parent pointer changed —
+/// same trees, so nothing can conflict and the index and working tree are never
+/// touched. Finishes with one compare-and-swap `update-ref`.
+///
+/// Returns the reworded commit's new SHA (not the new branch tip), so callers
+/// can follow a selection to its replacement.
+pub fn reword_commit(
+    path: &str,
+    commit_id: &str,
+    message: &str,
+    extra_env: &[(String, String)],
+) -> Result<String, AppError> {
+    if message.trim().is_empty() {
+        return Err(AppError::Other("Commit message cannot be empty".into()));
+    }
+
+    let target = resolve_commit(path, commit_id)?;
+    if let Some(blocker) = reword_blocker(path, &target)? {
+        return Err(AppError::Other(blocker));
+    }
+    let old_tip = capture(path, &["rev-parse", "HEAD"], &[])?
+        .trim()
+        .to_string();
+
+    let range = format!("{target}..HEAD");
+    let target_meta = parse_commit_meta(&capture_meta(
+        path,
+        &["log", "-1", "-z", NO_SIGNATURE, META_FORMAT, &target],
+    )?)?
+    .into_iter()
+    .next()
+    .ok_or_else(|| AppError::Other("Could not read commit metadata".into()))?;
+    let descendants = parse_commit_meta(&capture_meta(
+        path,
+        &["log", "--reverse", "-z", NO_SIGNATURE, META_FORMAT, &range],
+    )?)?;
+
+    // `commit-tree` is plumbing and won't consult `commit.gpgsign` on its own.
+    let sign = capture(path, &["config", "--bool", "--get", "commit.gpgsign"], &[])
+        .unwrap_or_default()
+        .trim()
+        == "true";
+
+    let reworded_sha = write_commit(
+        path,
+        &target_meta.tree,
+        &target_meta.parents,
+        message,
+        sign,
+        &preserved_identity_env(extra_env, &target_meta, false),
+    )?;
+    let mut new_tip = reworded_sha.clone();
+    let mut rewritten: HashMap<String, String> = HashMap::new();
+    rewritten.insert(target, reworded_sha.clone());
+
+    // ponytail: one `commit-tree` subprocess per replayed commit (~18ms each).
+    // Fine for the usual handful; if rewording deep history gets common, build
+    // the commit objects and pipe them through a single `git hash-object`.
+    for m in &descendants {
+        let parents: Vec<String> = m
+            .parents
+            .iter()
+            .map(|p| {
+                // The range is merge-free, so every parent here is a commit we
+                // just rewrote. A miss would mean silently grafting the new
+                // chain back onto the old commits.
+                rewritten.get(p).cloned().ok_or_else(|| {
+                    AppError::Git(format!("Replay lost track of parent {p} of {}", m.sha))
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        new_tip = write_commit(
+            path,
+            &m.tree,
+            &parents,
+            &m.message,
+            sign,
+            &preserved_identity_env(extra_env, m, true),
+        )?;
+        rewritten.insert(m.sha.clone(), new_tip.clone());
+    }
+
+    // Passing the old tip makes this a compare-and-swap: it fails rather than
+    // clobbering if anything moved HEAD while we were rewriting.
+    let subject = message.lines().next().unwrap_or("").trim();
+    run_git(
+        path,
+        &[
+            "update-ref",
+            "-m",
+            &format!("reword: {subject}"),
+            "HEAD",
+            &new_tip,
+            &old_tip,
+        ],
+        &[],
+    )?;
+
+    Ok(reworded_sha)
 }
 
 /// Get the list of files changed in a specific commit.
@@ -1850,6 +2162,7 @@ fn classify_reflog_action(action: &str) -> (bool, String) {
         || action_lower.starts_with("rebase")
         || action_lower.starts_with("pull")
         || action_lower.starts_with("reset")
+        || action_lower.starts_with("reword")
     {
         (true, format!("Undo {action}"))
     } else {
@@ -1896,6 +2209,18 @@ pub fn undo_last(path: &str, extra_env: &[(String, String)]) -> Result<String, A
     } else if action_lower.starts_with("commit") && !action_lower.starts_with("commit (initial)") {
         // Soft reset keeps changes staged
         run_git(path, &["reset", "--soft", "HEAD~1"], extra_env)
+    } else if action_lower.starts_with("reword") {
+        // A reword leaves every tree identical, so a hard reset here would be
+        // wrong: it would discard uncommitted work for no reason.
+        let prev_sha = lines
+            .get(1)
+            .and_then(|l| l.split_once(' '))
+            .map(|(sha, _)| sha)
+            .filter(|sha| !sha.is_empty())
+            .ok_or_else(|| {
+                AppError::Other("Could not determine previous state from reflog".to_string())
+            })?;
+        run_git(path, &["reset", "--soft", prev_sha], extra_env)
     } else if action_lower.starts_with("merge")
         || action_lower.starts_with("rebase")
         || action_lower.starts_with("pull")
@@ -2435,6 +2760,354 @@ mod tests {
         assert_eq!(contents.theirs.trim(), "beta");
         assert!(contents.ours_image.is_none());
         assert!(contents.theirs_image.is_none());
+    }
+
+    /// Commit a file with a known message, returning the new commit's SHA.
+    fn commit_file(dir: &tempfile::TempDir, name: &str, body: &str, message: &str) -> String {
+        let p = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join(name), body).unwrap();
+        run_git(p, &["add", name], &[]).unwrap();
+        run_git(p, &["commit", "-m", message], &[]).unwrap();
+        capture(p, &["rev-parse", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    fn log_subjects(p: &str) -> Vec<String> {
+        capture(p, &["log", "--format=%s"], &[])
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn reword_rewrites_a_historical_commit_and_replays_the_rest() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let middle = commit_file(&dir, "a.txt", "a\n", "middle commit");
+        commit_file(&dir, "b.txt", "b\n", "tip commit");
+
+        let tip_tree_before = capture(p, &["rev-parse", "HEAD^{tree}"], &[]).unwrap();
+        let tip_committer_before = capture(p, &["log", "-1", "--format=%cI"], &[]).unwrap();
+        let middle_author_before =
+            capture(p, &["log", "-1", "--format=%an %ae %aI", &middle], &[]).unwrap();
+
+        reword_commit(p, &middle, "reworded middle", &[]).unwrap();
+
+        assert_eq!(
+            log_subjects(p),
+            vec!["tip commit", "reworded middle", "init"]
+        );
+        // Content is untouched: the tip still points at the same tree.
+        assert_eq!(
+            capture(p, &["rev-parse", "HEAD^{tree}"], &[]).unwrap(),
+            tip_tree_before
+        );
+        // Replayed descendants keep their original committer date, so rewording
+        // one commit doesn't restamp the graph with today's date.
+        assert_eq!(
+            capture(p, &["log", "-1", "--format=%cI"], &[]).unwrap(),
+            tip_committer_before
+        );
+        // The reworded commit keeps its original author.
+        assert_eq!(
+            capture(p, &["log", "-1", "--format=%an %ae %aI", "HEAD~1"], &[]).unwrap(),
+            middle_author_before
+        );
+    }
+
+    #[test]
+    fn reword_leaves_the_working_tree_and_index_alone() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let first = commit_file(&dir, "a.txt", "a\n", "first");
+        commit_file(&dir, "b.txt", "b\n", "second");
+
+        // One staged change and one unstaged change in flight.
+        std::fs::write(dir.path().join("a.txt"), "staged\n").unwrap();
+        run_git(p, &["add", "a.txt"], &[]).unwrap();
+        std::fs::write(dir.path().join("b.txt"), "unstaged\n").unwrap();
+
+        reword_commit(p, &first, "first, reworded", &[]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "staged\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+            "unstaged\n"
+        );
+        let staged = capture(p, &["diff", "--cached", "--name-only"], &[]).unwrap();
+        assert_eq!(staged.trim(), "a.txt", "staged change must stay staged");
+    }
+
+    #[test]
+    fn reword_of_head_and_of_the_root_commit_both_work() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        let root = capture(p, &["rev-parse", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Root commit: no parents to rewrite.
+        reword_commit(p, &root, "root, reworded", &[]).unwrap();
+        assert_eq!(log_subjects(p), vec!["root, reworded"]);
+
+        // HEAD is just the degenerate case of an empty replay range.
+        commit_file(&dir, "a.txt", "a\n", "second");
+        reword_commit(p, "HEAD", "second, reworded", &[]).unwrap();
+        assert_eq!(log_subjects(p), vec!["second, reworded", "root, reworded"]);
+    }
+
+    #[test]
+    fn reword_can_be_undone() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let first = commit_file(&dir, "a.txt", "a\n", "first");
+        let tip_before = commit_file(&dir, "b.txt", "b\n", "second");
+
+        reword_commit(p, &first, "first, reworded", &[]).unwrap();
+        assert!(get_undo_action(p).unwrap().can_undo);
+
+        undo_last(p, &[]).unwrap();
+        assert_eq!(
+            capture(p, &["rev-parse", "HEAD"], &[]).unwrap().trim(),
+            tip_before
+        );
+    }
+
+    #[test]
+    fn reword_refuses_merges_in_range_and_commits_off_the_branch() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let main = capture(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+        let base = commit_file(&dir, "a.txt", "a\n", "base");
+
+        // A commit that lives only on a side branch.
+        run_git(p, &["checkout", "-b", "side"], &[]).unwrap();
+        let side = commit_file(&dir, "side.txt", "s\n", "side work");
+
+        run_git(p, &["checkout", &main], &[]).unwrap();
+        commit_file(&dir, "main.txt", "m\n", "main work");
+
+        assert!(
+            reword_commit(p, &side, "nope", &[]).is_err(),
+            "a commit off the current branch must be refused"
+        );
+
+        run_git(p, &["merge", "--no-ff", "-m", "merge side", "side"], &[]).unwrap();
+        assert!(
+            reword_commit(p, &base, "nope", &[]).is_err(),
+            "a merge commit in the replay range must be refused"
+        );
+        // The merge commit itself is still the tip, so rewording it is fine.
+        assert!(reword_commit(p, "HEAD", "merge side, reworded", &[]).is_ok());
+        assert_eq!(
+            capture(p, &["rev-list", "--count", "--merges", "HEAD"], &[])
+                .unwrap()
+                .trim(),
+            "1",
+            "rewording a merge must preserve both parents"
+        );
+    }
+
+    #[test]
+    fn reword_preserves_messages_containing_separator_characters() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        // Record/unit separators in a message must survive the replay verbatim:
+        // a delimiter collision here would silently truncate history.
+        let gnarly = "tip \u{1e} subject \u{1f} too\n\nbody line\n";
+        let first = commit_file(&dir, "a.txt", "a\n", "first");
+        std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+        run_git(p, &["add", "b.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", gnarly], &[]).unwrap();
+
+        reword_commit(p, &first, "first, reworded", &[]).unwrap();
+
+        assert_eq!(
+            capture(p, &["log", "-1", "--format=%B"], &[])
+                .unwrap()
+                .trim(),
+            gnarly.trim(),
+            "replayed message must survive verbatim"
+        );
+    }
+
+    #[test]
+    fn reword_returns_the_reworded_commits_sha_not_the_new_tip() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let first = commit_file(&dir, "a.txt", "a\n", "first");
+        commit_file(&dir, "b.txt", "b\n", "second");
+
+        let returned = reword_commit(p, &first, "first, reworded", &[]).unwrap();
+
+        // Callers use this to follow a selection, so it has to name the commit
+        // that was reworded — not the branch tip the replay ended on.
+        assert_eq!(
+            capture(p, &["log", "-1", "--format=%s", &returned], &[])
+                .unwrap()
+                .trim(),
+            "first, reworded"
+        );
+        assert_ne!(
+            returned,
+            capture(p, &["rev-parse", "HEAD"], &[]).unwrap().trim()
+        );
+    }
+
+    #[test]
+    fn reword_survives_log_show_signature_being_on() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        // This config prepends signature lines to `git log` output, which would
+        // otherwise land in the first metadata field and poison every SHA.
+        run_git(p, &["config", "log.showSignature", "true"], &[]).unwrap();
+
+        let first = commit_file(&dir, "a.txt", "a\n", "first");
+        commit_file(&dir, "b.txt", "b\n", "second");
+        commit_file(&dir, "c.txt", "c\n", "third");
+
+        reword_commit(p, &first, "first, reworded", &[]).unwrap();
+        assert_eq!(
+            log_subjects(p),
+            vec!["third", "second", "first, reworded", "init"]
+        );
+    }
+
+    #[test]
+    fn reword_refuses_non_utf8_history_instead_of_mangling_it() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        let first = commit_file(&dir, "a.txt", "a\n", "first");
+
+        // A Latin-1 message with no encoding header: lossy decoding would swap
+        // the 0xE9 byte for U+FFFD and bake that into the replayed commit. Both
+        // `git commit` and `commit-tree` transcode the message to UTF-8, so the
+        // object has to be written raw to reproduce real legacy history.
+        use std::io::Write;
+        let tree = capture(p, &["rev-parse", "HEAD^{tree}"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+        let mut object = format!(
+            "tree {tree}\nparent {first}\n\
+             author T <t@t.com> 1700000000 +0000\n\
+             committer T <t@t.com> 1700000000 +0000\n\n"
+        )
+        .into_bytes();
+        object.extend_from_slice(&[b'c', b'a', b'f', 0xE9, b'\n']);
+
+        let mut child = git_cmd()
+            .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+            .current_dir(p)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&object).unwrap();
+        let raw = child.wait_with_output().unwrap();
+        let tip_before = String::from_utf8_lossy(&raw.stdout).trim().to_string();
+        run_git(p, &["update-ref", "HEAD", &tip_before], &[]).unwrap();
+
+        assert!(reword_commit(p, &first, "first, reworded", &[]).is_err());
+        assert_eq!(
+            capture(p, &["rev-parse", "HEAD"], &[]).unwrap().trim(),
+            tip_before,
+            "the branch must be left alone"
+        );
+    }
+
+    #[test]
+    fn reword_aborts_rather_than_dropping_signatures_when_signing_fails() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let first = commit_file(&dir, "a.txt", "a\n", "first");
+        commit_file(&dir, "b.txt", "b\n", "second");
+        let tip_before = capture(p, &["rev-parse", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Signing is on but can't work. Silently writing unsigned commits would
+        // strip verification off the whole replayed tail, so this must fail.
+        run_git(p, &["config", "commit.gpgsign", "true"], &[]).unwrap();
+        run_git(
+            p,
+            &["config", "gpg.program", "definitely-not-a-real-gpg"],
+            &[],
+        )
+        .unwrap();
+
+        assert!(reword_commit(p, &first, "first, reworded", &[]).is_err());
+        assert_eq!(
+            capture(p, &["rev-parse", "HEAD"], &[]).unwrap().trim(),
+            tip_before,
+            "a failed reword must leave the branch where it was"
+        );
+    }
+
+    #[test]
+    fn reword_impact_counts_commits_and_flags_refs_left_behind() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let main = capture(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+        let shared = commit_file(&dir, "a.txt", "a\n", "shared");
+        run_git(p, &["tag", "v1"], &[]).unwrap();
+        run_git(p, &["branch", "other"], &[]).unwrap();
+        commit_file(&dir, "b.txt", "b\n", "tip");
+
+        let impact = reword_impact(p, &shared).unwrap();
+        assert!(impact.blocker.is_none());
+        assert_eq!(impact.commit_count, 2, "the target plus one descendant");
+        assert!(impact.pushed_to.is_empty(), "nothing has been pushed");
+        // Both the sibling branch and the tag contain the commit and would be
+        // left pointing at the old chain — the current branch must not be listed.
+        assert!(impact.stranded_refs.contains(&"other".to_string()));
+        assert!(impact.stranded_refs.contains(&"v1".to_string()));
+        assert!(!impact.stranded_refs.contains(&main));
+    }
+
+    #[test]
+    fn reword_impact_reports_the_same_blockers_as_the_rewrite() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        let main = capture(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+        run_git(p, &["checkout", "-q", "-b", "side"], &[]).unwrap();
+        let side = commit_file(&dir, "s.txt", "s\n", "side work");
+        run_git(p, &["checkout", "-q", &main], &[]).unwrap();
+
+        let impact = reword_impact(p, &side).unwrap();
+        assert!(
+            impact.blocker.is_some(),
+            "off-branch commit must be blocked"
+        );
+        assert_eq!(impact.commit_count, 0);
+        assert!(reword_commit(p, &side, "nope", &[]).is_err());
     }
 
     #[test]
