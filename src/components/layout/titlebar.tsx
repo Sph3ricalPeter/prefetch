@@ -788,28 +788,47 @@ function TitlebarActionButton({
   );
 }
 
-/** Prefetch logo — "Pf" mark on dark rounded square */
+/** Prefetch logo — chrome cube mark. Matches assets/icon.svg (app icon) minus the tile. */
 function PrefetchLogo({ className }: { className?: string }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 48 48"
+      viewBox="247 250 530 530"
       fill="none"
       className={className}
     >
-      <rect width="48" height="48" rx="10" fill="#18181B" />
-      <text
-        x="24"
-        y="33.5"
-        textAnchor="middle"
-        fontFamily="Inter, system-ui, -apple-system, sans-serif"
-        fontWeight="800"
-        fontSize="26"
-        letterSpacing="-0.5"
-        fill="#FFFFFF"
-      >
-        Pf
-      </text>
+      <defs>
+        <linearGradient id="pf-top" x1="0" y1="0" x2="0.35" y2="1">
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="0.45" stopColor="#eef2f6" />
+          <stop offset="1" stopColor="#b9c1c9" />
+        </linearGradient>
+        <linearGradient id="pf-left" x1="0" y1="0" x2="0.2" y2="1">
+          <stop offset="0" stopColor="#6e757d" />
+          <stop offset="0.42" stopColor="#2b2f35" />
+          <stop offset="0.5" stopColor="#15181c" />
+          <stop offset="0.58" stopColor="#454c54" />
+          <stop offset="1" stopColor="#242830" />
+        </linearGradient>
+        <linearGradient id="pf-right" x1="0" y1="0" x2="0.2" y2="1">
+          <stop offset="0" stopColor="#d5dbe1" />
+          <stop offset="0.38" stopColor="#8d959d" />
+          <stop offset="0.47" stopColor="#454b52" />
+          <stop offset="0.54" stopColor="#a2aab2" />
+          <stop offset="0.76" stopColor="#eef2f6" />
+          <stop offset="1" stopColor="#7f868e" />
+        </linearGradient>
+      </defs>
+      <path d="M512 262 L734 390 L512 518 L290 390 Z" fill="url(#pf-top)" />
+      <path d="M290 390 L512 518 L512 768 L290 640 Z" fill="url(#pf-left)" />
+      <path d="M734 390 L512 518 L512 768 L734 640 Z" fill="url(#pf-right)" />
+      <path
+        d="M290 390 L512 262 L734 390"
+        stroke="#ffffff"
+        strokeOpacity="0.55"
+        strokeWidth="10"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
