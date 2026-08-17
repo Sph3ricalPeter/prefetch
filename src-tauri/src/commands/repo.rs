@@ -339,6 +339,7 @@ pub async fn fetch_repo(
             },
             &env,
             pid.as_deref(),
+            true, // user-triggered: mirror remote tags
         )
     })
     .await
@@ -790,4 +791,11 @@ pub fn set_fetch_interval(seconds: u64, state: State<'_, AppState>) {
     state
         .fetch_interval_secs
         .store(seconds, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Unix-millis timestamp of the last fetch (manual or background), or `None`
+/// if this repo has never been fetched.
+#[tauri::command]
+pub fn get_last_fetch(state: State<'_, AppState>) -> Result<Option<u64>, AppError> {
+    Ok(crate::background::last_fetch_ms(&repo_path(&state)?))
 }

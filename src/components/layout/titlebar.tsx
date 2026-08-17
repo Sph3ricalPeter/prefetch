@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { platform } from "@tauri-apps/plugin-os";
@@ -35,6 +36,8 @@ const IS_MAC = (() => {
 })();
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
+import { getLastFetch } from "@/lib/commands";
+import { formatTimeAgo } from "@/lib/utils";
 import {
   Tooltip,
   TooltipTrigger,
@@ -398,6 +401,7 @@ function TitlebarActionsGroup() {
   const fetchAction = useRepoStore((s) => s.fetch);
   const pullAction = useRepoStore((s) => s.pull);
   const pushAction = useRepoStore((s) => s.push);
+  const { lastFetch, refreshLastFetch } = useLastFetch();
 
   const buttonsRef = useRef<HTMLDivElement>(null);
   const buttonsWidthRef = useRef(0);
@@ -507,7 +511,8 @@ function TitlebarActionsGroup() {
       <TitlebarActionButton
         icon={<RefreshCw className="h-3.5 w-3.5" />}
         label="Fetch"
-        onClick={fetchAction}
+        tooltip={lastFetch ? `Last fetched ${formatTimeAgo(lastFetch)}` : "Never fetched"}
+        onClick={() => void fetchAction().finally(refreshLastFetch)}
         disabled={isLoading}
       />
       <TitlebarActionButton
@@ -580,13 +585,56 @@ function TitlebarActionsGroup() {
   // Dropdown mode
   return (
     <div ref={buttonsRef} className="shrink-0 mr-2">
-      <CollapsedActionsDropdown />
+      <CollapsedActionsDropdown lastFetch={lastFetch} refreshLastFetch={refreshLastFetch} />
     </div>
   );
 }
 
+/**
+ * Unix-millis of the last fetch (manual or background), or null if never, plus
+ * a refresh callback to call right after a manual fetch.
+ *
+ * A background fetch always touches `.git/FETCH_HEAD`, so the watcher's `Refs`
+ * event is the signal that one landed. The 30s tick is for the relative label
+ * itself — "4m ago" has to become "5m ago" with no event to prompt it — and
+ * stores a fresh object each time so that re-render actually happens.
+ *
+ * Called once by the titlebar and passed down; two callers would mean two
+ * pollers.
+ */
+function useLastFetch(): { lastFetch: number | null; refreshLastFetch: () => void } {
+  const repoPath = useRepoStore((s) => s.repoPath);
+  const [last, setLast] = useState<{ ts: number | null }>({ ts: null });
+
+  const refreshLastFetch = useCallback(
+    () => void getLastFetch().then((ts) => setLast({ ts })).catch(() => {}),
+    [],
+  );
+
+  useEffect(() => {
+    if (!repoPath) return;
+    refreshLastFetch();
+    const id = setInterval(refreshLastFetch, 30_000);
+    const unlisten = listen<string>("repo_changed", (e) => {
+      if (e.payload === "Refs") refreshLastFetch();
+    });
+    return () => {
+      clearInterval(id);
+      unlisten.then((off) => off());
+    };
+  }, [repoPath, refreshLastFetch]);
+
+  return { lastFetch: last.ts, refreshLastFetch };
+}
+
 /** Change 5: Collapsed dropdown for all actions when window is narrow */
-function CollapsedActionsDropdown() {
+function CollapsedActionsDropdown({
+  lastFetch,
+  refreshLastFetch,
+}: {
+  lastFetch: number | null;
+  refreshLastFetch: () => void;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -672,8 +720,9 @@ function CollapsedActionsDropdown() {
           <DropdownActionItem
             icon={<RefreshCw className="h-3.5 w-3.5" />}
             label="Fetch"
+            sublabel={lastFetch ? formatTimeAgo(lastFetch) : undefined}
             disabled={isLoading}
-            onClick={() => { fetchAction(); setIsOpen(false); }}
+            onClick={() => { void fetchAction().finally(refreshLastFetch); setIsOpen(false); }}
           />
           <DropdownActionItem
             icon={<ArrowDownToLine className="h-3.5 w-3.5" />}

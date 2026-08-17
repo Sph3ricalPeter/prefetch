@@ -167,6 +167,7 @@ pub fn run() {
             commands::lfs::lfs_untrack_pattern,
             commands::lfs::lfs_prune_objects,
             commands::repo::set_fetch_interval,
+            commands::repo::get_last_fetch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

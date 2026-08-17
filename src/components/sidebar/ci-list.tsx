@@ -30,7 +30,7 @@ import { useRepoStore } from "@/stores/repo-store";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { SectionHeader } from "@/components/ui/section-header";
-import { cn } from "@/lib/utils";
+import { cn, formatTimeAgo } from "@/lib/utils";
 import { IconButton, iconButtonVariants } from "@/components/ui/icon-button";
 import { openUrl } from "@/lib/commands";
 import { formatDuration, effectivePipelineStatus } from "@/lib/ci-utils";
@@ -72,18 +72,6 @@ function CiStatusIcon({ status, className = "h-3 w-3" }: { status: PipelineStatu
   }
 }
 
-
-function formatTimeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return "just now";
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
 
 /** Source icon + tooltip for pipeline trigger type. For scheduled pipelines the
  *  schedule's name is shown in the tooltip when known (GitLab, latest run). */

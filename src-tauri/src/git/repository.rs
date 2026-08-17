@@ -505,57 +505,72 @@ pub fn clone_repo<F: Fn(&str)>(
 /// When a forge token is stored for an HTTPS remote, credentials are
 /// injected automatically so the user doesn't need a separate credential
 /// helper. Profile env vars are applied for SSH key injection.
+///
+/// `sync_tags` makes local tags mirror the remote: an explicit tag refspec
+/// (which, combined with `--prune`, *deletes* local-only tags) plus
+/// `--tags --force` on the fallback path (which rewrites divergent ones).
+/// The user-triggered fetch passes true; the background fetcher passes false,
+/// because silently deleting a local tag every 5 minutes is not undoable.
 pub fn fetch_all<F: Fn(&str)>(
     path: &str,
     on_progress: F,
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
+    sync_tags: bool,
 ) -> Result<String, AppError> {
-    if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
-        let args = authed.build_args(&[
+    // Remote-name fetch used both as the no-token path and as the
+    // credential-helper retry when an embedded token is rejected.
+    let plain_args: &[&str] = if sync_tags {
+        &[
             "fetch",
-            &authed.url,
-            "+refs/heads/*:refs/remotes/origin/*",
-            "+refs/tags/*:refs/tags/*",
+            "--all",
             "--prune",
+            "--tags",
+            "--force",
             "--progress",
-        ]);
+        ]
+    } else {
+        &["fetch", "--all", "--prune", "--progress"]
+    };
+
+    // Only a successful run counts as "last fetched" — git truncates
+    // FETCH_HEAD before it dials the remote, so its mtime can't tell us.
+    let ok = |r: Result<String, AppError>| {
+        if r.is_ok() {
+            crate::background::mark_fetched(path);
+        }
+        r
+    };
+
+    if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
+        let mut refspecs = vec!["fetch", &authed.url, "+refs/heads/*:refs/remotes/origin/*"];
+        if sync_tags {
+            refspecs.push("+refs/tags/*:refs/tags/*");
+        }
+        refspecs.extend(["--prune", "--progress"]);
+        let args = authed.build_args(&refspecs);
         let env = authed.merge_env(extra_env);
         let r = run_git_with_progress(path, &args, &on_progress, &env);
         if r.is_ok() {
-            return r;
+            return ok(r);
         }
         if is_credential_error(r.as_ref().unwrap_err()) {
             warn!("fetch with embedded token failed (credential/access error); retrying via system credential helper");
-            return run_git_with_progress(
+            return ok(run_git_with_progress(
                 path,
-                &[
-                    "fetch",
-                    "--all",
-                    "--prune",
-                    "--tags",
-                    "--force",
-                    "--progress",
-                ],
+                plain_args,
                 &on_progress,
                 extra_env,
-            );
+            ));
         }
         r
     } else {
-        run_git_with_progress(
+        ok(run_git_with_progress(
             path,
-            &[
-                "fetch",
-                "--all",
-                "--prune",
-                "--tags",
-                "--force",
-                "--progress",
-            ],
+            plain_args,
             &on_progress,
             extra_env,
-        )
+        ))
     }
 }
 
@@ -712,20 +727,39 @@ pub fn pull<F: Fn(&str)>(
     extra_env: &[(String, String)],
     profile_id: Option<&str>,
 ) -> Result<String, AppError> {
+    // A pull talks to the remote too, so it counts as a fetch for the
+    // "last fetched" label and the startup-fetch guard.
+    let ok = |r: Result<String, AppError>| {
+        if r.is_ok() {
+            crate::background::mark_fetched(path);
+        }
+        r
+    };
+
     if let Some(authed) = forge::authenticated_remote_url(path, profile_id) {
         let args = authed.build_args(&["pull", &authed.url, "--progress"]);
         let env = authed.merge_env(extra_env);
         let r = run_git_with_progress(path, &args, &on_progress, &env);
         if r.is_ok() {
-            return r;
+            return ok(r);
         }
         if is_credential_error(r.as_ref().unwrap_err()) {
             warn!("pull with embedded token failed (credential/access error); retrying via system credential helper");
-            return run_git_with_progress(path, &["pull", "--progress"], &on_progress, extra_env);
+            return ok(run_git_with_progress(
+                path,
+                &["pull", "--progress"],
+                &on_progress,
+                extra_env,
+            ));
         }
         r
     } else {
-        run_git_with_progress(path, &["pull", "--progress"], &on_progress, extra_env)
+        ok(run_git_with_progress(
+            path,
+            &["pull", "--progress"],
+            &on_progress,
+            extra_env,
+        ))
     }
 }
 

@@ -107,8 +107,8 @@ export function GeneralSection() {
 
       <SettingsGroup title="Behavior">
         <SettingsRow
-          label="Auto-fetch interval"
-          description="How often to automatically fetch from remotes in the background."
+          label="Background fetch interval"
+          description="How often to fetch from remotes in the background. Opening a repository always fetches once, whatever this is set to."
         >
           <SettingsChoice
             options={FETCH_INTERVALS}

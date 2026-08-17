@@ -470,3 +470,8 @@ export async function getActiveProfileCmd(): Promise<ActiveProfileConfig | null>
 export async function setFetchInterval(seconds: number): Promise<void> {
   return tracedInvoke<void>("set_fetch_interval", { seconds });
 }
+
+/** Unix-millis of the last fetch (manual or background), null if never fetched. */
+export async function getLastFetch(): Promise<number | null> {
+  return tracedInvoke<number | null>("get_last_fetch");
+}
