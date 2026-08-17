@@ -2422,7 +2422,7 @@ export function CommitGraphCanvas({
       {/* Hover dropdown listing every ref on a multi-ref commit (#39). */}
       {hoverDropdown && (
         <div
-          className="absolute z-40 flex flex-col gap-px border border-border border-t-0 bg-card shadow-lg overflow-hidden"
+          className="absolute z-40 flex flex-col gap-px border border-foreground/15 border-t-0 bg-card shadow-xl overflow-hidden"
           style={{ borderRadius: `0 0 ${LABEL_RADIUS}px ${LABEL_RADIUS}px`, left: hoverDropdown.x, top: hoverDropdown.y, width: hoverDropdown.width }}
           onMouseEnter={() => {
             if (closeHoverTimer.current) {

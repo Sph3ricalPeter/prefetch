@@ -14,7 +14,7 @@ export function DropdownPanel({
   return (
     <div
       className={cn(
-        "absolute top-full z-50 mt-1 rounded-md border border-border bg-popover py-1 shadow-lg animate-enter-down",
+        "absolute top-full z-50 mt-1 rounded-md border border-foreground/15 bg-card py-1 shadow-xl animate-enter-down",
         align === "right" ? "right-0" : "left-0",
         className,
       )}
