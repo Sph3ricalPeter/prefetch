@@ -121,6 +121,7 @@ import {
 } from "@/lib/commands";
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
 import { computeDiffRegions, buildOutputWithSources } from "@/lib/conflict-regions";
+import { isHeavyConflict } from "@/lib/diff-size";
 import { MultiStepAction } from "@/lib/multi-step";
 import {
   addRecentRepo,
@@ -207,6 +208,9 @@ async function analyzeConflictFiles(
     conflicted.map(async (f): Promise<[string, string] | null> => {
       try {
         const contents = await getConflictContentsCmd(f.path);
+        // Same guard the editor uses: diffing a 4 MB file here would hang the
+        // app on rebase entry, before the user has clicked anything.
+        if (isHeavyConflict(contents)) return null;
         const regions = computeDiffRegions(contents.ours, contents.theirs, contents.base ?? undefined);
         const hasRealConflict = regions.some((r) => r.type === "changed");
         const hasAutoResolved = regions.some((r) => r.type === "auto-resolved");

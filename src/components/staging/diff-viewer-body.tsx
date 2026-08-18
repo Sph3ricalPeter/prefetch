@@ -80,6 +80,12 @@ export function DiffViewerBody({ diff, filePath, expandCtx, interactive = false,
   );
 }
 
+/** Scroll offset per file, so reopening a diff lands where you left it.
+ *  Keyed by source rather than content so the 5-second status poll — which
+ *  remounts this component whenever the file changes — doesn't jump to the top.
+ *  Session-only; a few dozen bytes per file viewed. */
+const scrollMemory = new Map<string, number>();
+
 function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, staged = false, commitSha, toolbarProps }: DiffViewerBodyProps) {
   const [tokensByHunk, setTokensByHunk] = useState<Map<number, ThemedToken[][]>>(new Map());
   const [fileTokens, setFileTokens] = useState<ThemedToken[][] | null>(null);
@@ -92,6 +98,33 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
     handleContainerMouseDown,
     handleContainerMouseMove,
   } = useDiffLineSelection(diff, scrollRef);
+  const scrollTopRef = useRef(0);
+  const scrollKey = `${filePath}|${commitSha ?? ""}|${staged}`;
+
+  // Land on the first change, not on line 1 — with context expanded the first
+  // hunk can sit thousands of lines down. Re-runs as the expansion settles
+  // (the blob arrives async), which is also when the target finally moves.
+  // A remembered position from an earlier visit wins.
+  useEffect(() => {
+    const c = scrollRef.current;
+    if (!c) return;
+    const remembered = scrollMemory.get(scrollKey);
+    if (remembered != null) {
+      c.scrollTop = remembered;
+      return;
+    }
+    const target = c.querySelector<HTMLElement>('[data-hunk-lines="0"]');
+    if (!target) return;
+    c.scrollTop +=
+      target.getBoundingClientRect().top - c.getBoundingClientRect().top - c.clientHeight / 2;
+  }, [scrollKey, expandCtx?.fileLines, expandCtx?.isExpanded]);
+
+  // Written on unmount only: mid-mount writes would let the effect above read
+  // back its own centering and never re-center once the gaps expand. Zero means
+  // the diff was closed before anything scrolled — leave it to centre next time.
+  useEffect(() => () => {
+    if (scrollTopRef.current > 0) scrollMemory.set(scrollKey, scrollTopRef.current);
+  }, [scrollKey]);
   const stageHunk = useRepoStore((s) => s.stageHunk);
   const unstageHunk = useRepoStore((s) => s.unstageHunk);
   const stageLines = useRepoStore((s) => s.stageLines);
@@ -370,6 +403,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
           ref={scrollRef}
           className={`overflow-auto flex-1 text-xs font-mono leading-5 select-none ${isLoading ? "pointer-events-none" : ""}`}
           style={SCROLL_CONTAINER_STYLE}
+          onScroll={(e) => { scrollTopRef.current = e.currentTarget.scrollTop; }}
           onMouseDown={handleContainerMouseDown}
           onMouseMove={handleContainerMouseMove}
           onContextMenu={handleContextMenu}
@@ -440,6 +474,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
 
                 {/* Lines */}
                 <div
+                  data-hunk-lines={hi}
                   style={{
                     contentVisibility: "auto",
                     containIntrinsicSize: `auto ${hunk.lines.length * 20}px`,

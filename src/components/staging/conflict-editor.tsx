@@ -14,6 +14,7 @@ import { useRepoStore } from "@/stores/repo-store";
 import { BinaryConflictResolver } from "@/components/staging/binary-conflict-resolver";
 import { getUiState } from "@/lib/database";
 import { getDataAttrFromEvent } from "@/lib/utils";
+import { isHeavyConflict } from "@/lib/diff-size";
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, ExternalLink, Eye, EyeOff, FoldVertical, GitCompare, Minus, Plus, RotateCcw, Save, UnfoldVertical } from "lucide-react";
 import { AbortButton } from "@/components/ui/abort-button";
 import { IconButton } from "@/components/ui/icon-button";
@@ -94,6 +95,15 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const shikiThemeId = codeTheme.shikiTheme.name;
 
   const [saving, setSaving] = useState(false);
+  const [loadHeavy, setLoadHeavy] = useState(false);
+  // Three panes of a 4 MB file with 2 MB lines lock the app up, and a rebase
+  // opens the first conflicted file on its own — so gate the work, not just
+  // the render: regions, highlighting and DOM all wait for "Load anyway".
+  const heavy = useMemo(
+    () => conflictContents != null && isHeavyConflict(conflictContents),
+    [conflictContents],
+  );
+  const oversized = heavy && !loadHeavy;
   const [selections, setSelections] = useState<Map<number, ChunkSelection>>(
     new Map(),
   );
@@ -160,13 +170,13 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   // ── Diff regions ───────────────────────────────────────────
 
   const regions = useMemo(() => {
-    if (!conflictContents) return [];
+    if (!conflictContents || oversized) return [];
     return computeDiffRegions(
       conflictContents.ours,
       conflictContents.theirs,
       conflictContents.base ?? undefined,
     );
-  }, [conflictContents]);
+  }, [conflictContents, oversized]);
 
   // Suspicious auto-resolves are treated as changed (editable) regions
   const suspiciousIndices = useMemo(
@@ -298,7 +308,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   const [baseTokens, setBaseTokens] = useState<ThemedToken[][] | null>(null);
 
   useEffect(() => {
-    if (!conflictContents) return;
+    if (!conflictContents || oversized) return;
     let cancelled = false;
     async function highlight() {
       try {
@@ -323,7 +333,7 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     return () => {
       cancelled = true;
     };
-  }, [conflictContents, lang, shikiThemeId, oursDisplayText, theirsDisplayText]);
+  }, [conflictContents, oversized, lang, shikiThemeId, oursDisplayText, theirsDisplayText]);
 
   const [outputTokens, setOutputTokens] = useState<ThemedToken[][] | null>(null);
   useEffect(() => {
@@ -902,6 +912,25 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
     };
   }, [regions, expandedRegions, expandedBases, showAutoResolved]);
 
+  // ── Open on the first conflict ─────────────────────────────
+  // With unchanged context expanded the first conflict can be thousands of
+  // lines down. Runs after the equalizer above, so the offset is final; the
+  // pane's own onScroll drags the other two along.
+  const didScrollToFirstConflict = useRef(false);
+  useEffect(() => {
+    if (didScrollToFirstConflict.current) return;
+    const pane = oursScrollRef.current;
+    const first = changedChunkIndices[0];
+    if (!pane || first == null) return;
+    const el = pane.querySelector<HTMLElement>(`[data-region-idx="${first}"]`);
+    if (!el) return;
+    didScrollToFirstConflict.current = true;
+    requestAnimationFrame(() => {
+      pane.scrollTop +=
+        el.getBoundingClientRect().top - pane.getBoundingClientRect().top - pane.clientHeight / 2;
+    });
+  }, [changedChunkIndices, expandedRegions, expandedBases, showAutoResolved]);
+
   // ── Cross-pane hover highlight ─────────────────────────────
   // Delegated mouseover on the panes container: read `data-hover-key` off the
   // hovered line and toggle a CSS class on every element with the same key
@@ -963,6 +992,30 @@ function ConflictEditorInner({ filePath }: ConflictEditorProps) {
   // choke on lossy-decoded binary content and hang the UI.
   if (conflictContents.is_binary) {
     return <BinaryConflictResolver filePath={filePath} contents={conflictContents} />;
+  }
+
+  if (oversized) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3">
+        <p className="text-sm text-muted-foreground">
+          Large file — rendering the conflict may freeze the app
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setLoadHeavy(true)}
+            className="rounded-md bg-secondary px-4 py-1.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent"
+          >
+            Load anyway
+          </button>
+          <button
+            onClick={() => openInEditor(filePath)}
+            className="rounded-md px-4 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            Open in editor
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const oursLabel = conflictContents.ours_branch || "current";
