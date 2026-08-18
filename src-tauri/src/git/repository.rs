@@ -938,6 +938,43 @@ fn parse_numstat(path: &str, args: &[&str]) -> HashMap<String, (u32, u32)> {
     parse::numstat(&capture(path, args, &[]).unwrap_or_default())
 }
 
+/// Fill in line counts for untracked files.
+///
+/// `git diff --numstat` only walks the index, so untracked files always come
+/// back with no counts — inconsistent with every other row in the changed-files
+/// list. Count them from disk instead: a new file is all additions, which is
+/// exactly what numstat reports once the file is staged. Binary files (NUL byte
+/// in the first 8000 bytes, git's own test) stay `None`, matching numstat's
+/// `-\t-`. Untracked *directories* from the `-unormal` fallback aren't files
+/// and are skipped.
+///
+/// ponytail: re-reads untracked files on every status poll; add a cache keyed
+/// on (mtime, len) if repos with many untracked files feel sluggish.
+fn fill_untracked_stats(repo_path: &str, files: &mut [FileStatus]) {
+    const MAX_BYTES: u64 = 8 * 1024 * 1024;
+    for file in files.iter_mut().filter(|f| f.status_type == "untracked") {
+        let full = std::path::Path::new(repo_path).join(&file.path);
+        let Ok(meta) = std::fs::metadata(&full) else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() > MAX_BYTES {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&full) else {
+            continue;
+        };
+        if bytes.iter().take(8000).any(|&b| b == 0) {
+            continue;
+        }
+        let mut lines = bytes.iter().filter(|&&b| b == b'\n').count();
+        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            lines += 1; // last line has no trailing newline, git counts it
+        }
+        file.additions = Some(lines as u32);
+        file.deletions = Some(0);
+    }
+}
+
 /// Get the working tree status (staged + unstaged + untracked files).
 ///
 /// Uses `git status --porcelain=v1` CLI instead of git2-rs to avoid
@@ -971,11 +1008,9 @@ pub fn get_status(path: &str) -> Result<Vec<FileStatus>, AppError> {
     let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
     let unstaged_stats = parse_numstat(path, &["diff", "--numstat"]);
 
-    Ok(parse::porcelain_status(
-        &text,
-        &staged_stats,
-        &unstaged_stats,
-    ))
+    let mut files = parse::porcelain_status(&text, &staged_stats, &unstaged_stats);
+    fill_untracked_stats(path, &mut files);
+    Ok(files)
 }
 
 /// Fallback when `-uall` output exceeds the size threshold.
@@ -985,11 +1020,9 @@ fn get_status_fallback(path: &str) -> Result<Vec<FileStatus>, AppError> {
         .map_err(|e| AppError::Other(format!("git status -unormal failed: {e}")))?;
     let staged_stats = parse_numstat(path, &["diff", "--cached", "--numstat"]);
     let unstaged_stats = parse_numstat(path, &["diff", "--numstat"]);
-    Ok(parse::porcelain_status(
-        &text,
-        &staged_stats,
-        &unstaged_stats,
-    ))
+    let mut files = parse::porcelain_status(&text, &staged_stats, &unstaged_stats);
+    fill_untracked_stats(path, &mut files);
+    Ok(files)
 }
 
 /// Get the diff for a specific file using git CLI (avoids git2-rs borrow issues).
@@ -3435,5 +3468,40 @@ mod tests {
 
         abort_operation(p).unwrap();
         assert_eq!(sequencer_in_progress(p), None);
+    }
+
+    #[test]
+    fn untracked_files_get_the_same_line_counts_as_once_staged() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        std::fs::write(dir.path().join("new.txt"), "a\nb\nc\n").unwrap();
+        std::fs::write(dir.path().join("no_eol.txt"), "a\nb").unwrap();
+        std::fs::write(dir.path().join("bin.dat"), [0x00u8, 0x01, 0x02]).unwrap();
+
+        fn pick(files: &[FileStatus], name: &str, staged: bool) -> (Option<u32>, Option<u32>) {
+            let f = files
+                .iter()
+                .find(|f| f.path == name && f.is_staged == staged)
+                .unwrap_or_else(|| panic!("{name} missing (staged={staged})"));
+            (f.additions, f.deletions)
+        }
+
+        let untracked = get_status(p).unwrap();
+        assert_eq!(pick(&untracked, "new.txt", false), (Some(3), Some(0)));
+        assert_eq!(pick(&untracked, "no_eol.txt", false), (Some(2), Some(0)));
+        // binary → no counts, same as numstat's `-\t-`
+        assert_eq!(pick(&untracked, "bin.dat", false), (None, None));
+
+        // Staging must not change the numbers — that consistency is the point.
+        git_cmd()
+            .args(["add", "-A"])
+            .current_dir(p)
+            .output()
+            .expect("add");
+        let staged = get_status(p).unwrap();
+        assert_eq!(pick(&staged, "new.txt", true), (Some(3), Some(0)));
+        assert_eq!(pick(&staged, "no_eol.txt", true), (Some(2), Some(0)));
+        assert_eq!(pick(&staged, "bin.dat", true), (None, None));
     }
 }
