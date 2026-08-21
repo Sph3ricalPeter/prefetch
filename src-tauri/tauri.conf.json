@@ -15,7 +15,7 @@
         "title": "Prefetch",
         "width": 1600,
         "height": 900,
-        "minWidth": 960,
+        "minWidth": 1280,
         "minHeight": 600,
         "decorations": true,
         "transparent": false,
