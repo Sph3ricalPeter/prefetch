@@ -60,6 +60,27 @@ pub struct BranchInfo {
     pub can_fast_forward: bool,
     /// Short name of the upstream tracking branch (e.g. "origin/main"). None for remote branches or locals without an upstream.
     pub upstream_name: Option<String>,
+    /// Path of the linked worktree this branch is checked out in, when that
+    /// worktree is *not* the one currently open. Set means git will refuse both
+    /// `checkout` and `branch -d` for this branch.
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorktreeInfo {
+    /// Path as git reports it (forward slashes, even on Windows).
+    pub path: String,
+    pub head: String,
+    /// Branch shorthand, or None when the worktree has a detached HEAD.
+    pub branch: Option<String>,
+    /// True for the worktree the app currently has open.
+    pub is_current: bool,
+    /// True for the repository's main worktree (git lists it first).
+    pub is_main: bool,
+    /// Lock reason when locked. `Some("")` means locked without a reason.
+    pub locked: Option<String>,
+    /// Prune reason when the worktree's directory has gone missing.
+    pub prunable: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -121,6 +121,13 @@ Errors surfaced via **toast notifications** (bottom-right). Auth failures, push 
 
 One repo at a time with recent-repos quick-switch. Tabbed multi-repo is a future consideration.
 
+### Shipping in v0.26.0
+
+24. **Worktree support** — worktree badge in the graph and branch list, create /
+    remove / prune from the sidebar (#17). Opening a worktree *as* the repo is
+    deferred: `watcher.rs`, `conflict.rs`, `lfs.rs`, and `exec.rs` each resolve
+    `<repo>/.git` as a directory, which is a file in a linked worktree.
+
 ### Next up (v1.0.0)
 
 25. **Interactive rebase editor** — commit reorder, squash, drop, edit via drag-and-drop (#18)
@@ -136,7 +143,6 @@ One repo at a time with recent-repos quick-switch. Tabbed multi-repo is a future
 32. **Command palette** (Cmd+K) — fuzzy-search all actions, keyboard-driven workflows (#3)
 33. **Remote management** — add, remove, rename remotes (#9)
 34. **Git config editor** — global and local, UI for user.name / user.email / default branch (#10)
-35. **Worktree support** (#17)
 
 ### Explicitly out of scope
 

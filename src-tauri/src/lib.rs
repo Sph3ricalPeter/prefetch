@@ -54,8 +54,14 @@ pub fn run() {
                 window.set_decorations(false)?;
                 // Re-enforce minimum size after disabling decorations — the
                 // config value alone is not always honoured on Windows without
-                // native chrome.
-                window.set_min_size(Some(tauri::LogicalSize::new(960.0, 600.0)))?;
+                // native chrome. Read it back from the config rather than
+                // repeating the numbers, which is how this silently pinned the
+                // window to the old 960x600 after tauri.conf.json moved on.
+                if let Some(cfg) = app.config().app.windows.first() {
+                    if let (Some(w), Some(h)) = (cfg.min_width, cfg.min_height) {
+                        window.set_min_size(Some(tauri::LogicalSize::new(w, h)))?;
+                    }
+                }
             }
             // Suppress unused variable warning on macOS
             let _ = app;
@@ -156,6 +162,13 @@ pub fn run() {
             commands::forge::start_oauth_flow,
             commands::forge::cancel_oauth_flow,
             commands::forge::open_url,
+            // Worktrees
+            commands::worktree::list_worktrees,
+            commands::worktree::suggest_worktree_path,
+            commands::worktree::add_worktree,
+            commands::worktree::remove_worktree,
+            commands::worktree::prune_worktrees,
+            commands::worktree::show_worktree_in_folder,
             // Profiles
             commands::profile::set_active_profile,
             commands::profile::get_active_profile,

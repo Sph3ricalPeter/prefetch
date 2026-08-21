@@ -1,11 +1,20 @@
 import { useState, useEffect, useMemo } from "react";
-import { GitBranch, GitPullRequest, GitCommitHorizontal, GitMerge, Check, Monitor, Cloud, FastForward, ArrowDownToLine, ArrowUpFromLine, Link, Pencil, Copy, Trash2 } from "lucide-react";
+import {
+  GitBranch,
+  GitPullRequest,
+  GitCommitHorizontal,
+  Check,
+  Monitor,
+  Cloud,
+  FolderGit2,
+} from "lucide-react";
 import type { BranchInfo, PipelineStatus, PrInfo } from "@/types/git";
 import { useRepoStore } from "@/stores/repo-store";
 import { effectivePipelineStatus } from "@/lib/ci-utils";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { ConfirmDialog } from "@/components/ui/modal";
+import { CreateWorktreeDialog, RemoveWorktreeDialog } from "@/components/ui/worktree-dialogs";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { SectionHeader } from "@/components/ui/section-header";
 import { cn } from "@/lib/utils";
@@ -15,6 +24,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { ACTION_ICONS } from "@/lib/action-icons";
 
 export function BranchList() {
   const branches = useRepoStore((s) => s.branches);
@@ -34,6 +44,7 @@ export function BranchList() {
   const renameBranch = useRepoStore((s) => s.renameBranch);
   const deleteRemoteBranch = useRepoStore((s) => s.deleteRemoteBranch);
   const setUpstream = useRepoStore((s) => s.setUpstream);
+  const revealWorktree = useRepoStore((s) => s.revealWorktree);
   const ciPipelines = useRepoStore((s) => s.ciPipelines);
   const ciJobsMap = useRepoStore((s) => s.ciJobsMap);
   const isOpen = useRepoStore((s) => s.sidebarSections.branches);
@@ -46,6 +57,8 @@ export function BranchList() {
   const [renameDialog, setRenameDialog] = useState<{ branch: string; hasRemote: boolean } | null>(null);
   const [renameInput, setRenameInput] = useState("");
   const [renameRemote, setRenameRemote] = useState(false);
+  const [worktreeDialogBranch, setWorktreeDialogBranch] = useState<string | null>(null);
+  const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<{ path: string; label: string } | null>(null);
   const [upstreamDialog, setUpstreamDialog] = useState<{ branch: string } | null>(null);
   const [upstreamInput, setUpstreamInput] = useState("");
   const [confirmDeleteBranch, setConfirmDeleteBranch] = useState<{
@@ -188,8 +201,28 @@ export function BranchList() {
             push,
             (name, hasRemote) => { setRenameInput(name); setRenameRemote(hasRemote); setRenameDialog({ branch: name, hasRemote }); },
             (name) => { setUpstreamInput(""); setUpstreamDialog({ branch: name }); },
+            setWorktreeDialogBranch,
+            revealWorktree,
+            setRemoveWorktreeTarget,
           )}
           onClose={() => setBranchContextMenu(null)}
+        />
+      )}
+
+      {/* Create worktree dialog */}
+      {worktreeDialogBranch && (
+        <CreateWorktreeDialog
+          branch={worktreeDialogBranch}
+          onClose={() => setWorktreeDialogBranch(null)}
+        />
+      )}
+
+      {/* Remove worktree confirmation */}
+      {removeWorktreeTarget && (
+        <RemoveWorktreeDialog
+          path={removeWorktreeTarget.path}
+          label={removeWorktreeTarget.label}
+          onClose={() => setRemoveWorktreeTarget(null)}
         />
       )}
 
@@ -308,19 +341,44 @@ function buildBranchContextMenuItems(
   push: () => void,
   renameBranch: (name: string, hasRemote: boolean) => void,
   setUpstream: (name: string) => void,
+  createWorktree: (name: string) => void,
+  revealWorktree: (path: string) => void,
+  removeWorktree: (target: { path: string; label: string }) => void,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
   const isCurrent = branch.name === currentBranch;
   const hasRemote = branch.upstream_name != null;
+  const heldByWorktree = branch.worktree_path;
 
   // Navigation (not for current branch)
   if (!isCurrent) {
-    items.push({
-      label: `Checkout ${branch.name}`,
-      onClick: () => checkout(branch.name),
-      writesRepo: true,
-      icon: Check,
-    });
+    if (heldByWorktree) {
+      // Git refuses to check this out here — offer the worktree instead.
+      items.push({
+        label: "Reveal worktree in file manager",
+        onClick: () => revealWorktree(heldByWorktree),
+        icon: ACTION_ICONS["Reveal Worktree"],
+      });
+      items.push({
+        label: "Copy worktree path",
+        onClick: () => navigator.clipboard.writeText(heldByWorktree),
+        icon: ACTION_ICONS.Copy,
+      });
+      items.push({
+        label: "Remove worktree…",
+        onClick: () => removeWorktree({ path: heldByWorktree, label: branch.name }),
+        writesRepo: true,
+        destructive: true,
+        icon: ACTION_ICONS["Remove Worktree"],
+      });
+    } else {
+      items.push({
+        label: `Checkout ${branch.name}`,
+        onClick: () => checkout(branch.name),
+        writesRepo: true,
+        icon: ACTION_ICONS.Checkout,
+      });
+    }
     items.push({ separator: true });
   }
 
@@ -330,7 +388,7 @@ function buildBranchContextMenuItems(
       label: `Merge ${branch.name} into ${currentBranch}`,
       onClick: () => mergeInto(branch.name),
       writesRepo: true,
-      icon: GitMerge,
+      icon: ACTION_ICONS.Merge,
     });
     items.push({
       label: branch.can_fast_forward
@@ -338,7 +396,7 @@ function buildBranchContextMenuItems(
         : `Rebase ${currentBranch} onto ${branch.name}`,
       onClick: () => rebaseOnto(branch.name),
       writesRepo: true,
-      icon: FastForward,
+      icon: ACTION_ICONS.Rebase,
     });
     items.push({ separator: true });
   }
@@ -348,19 +406,19 @@ function buildBranchContextMenuItems(
     label: "Pull",
     onClick: () => pull(),
     writesRepo: true,
-    icon: ArrowDownToLine,
+    icon: ACTION_ICONS.Pull,
   });
   items.push({
     label: "Push",
     onClick: () => push(),
     writesRepo: true,
-    icon: ArrowUpFromLine,
+    icon: ACTION_ICONS.Push,
   });
   if (!hasRemote) {
     items.push({
       label: "Set upstream…",
       onClick: () => setUpstream(branch.name),
-      icon: Link,
+      icon: ACTION_ICONS["Set Upstream"],
     });
   }
 
@@ -371,16 +429,27 @@ function buildBranchContextMenuItems(
     label: "Rename branch…",
     onClick: () => renameBranch(branch.name, hasRemote),
     writesRepo: true,
-    icon: Pencil,
+    icon: ACTION_ICONS["Rename Branch"],
   });
   items.push({
     label: "Copy branch name",
     onClick: () => navigator.clipboard.writeText(branch.name),
-    icon: Copy,
+    icon: ACTION_ICONS.Copy,
   });
+  // Not for the current branch: git refuses to put a branch in two worktrees,
+  // and HEAD's own worktree is deliberately absent from `worktree_path`.
+  if (!heldByWorktree && !isCurrent) {
+    items.push({
+      label: "Create worktree…",
+      onClick: () => createWorktree(branch.name),
+      writesRepo: true,
+      icon: ACTION_ICONS["Create Worktree"],
+    });
+  }
 
-  // Delete (not for current branch)
-  if (!isCurrent) {
+  // Delete — not for the current branch, and not while a worktree holds it
+  // (git refuses, and no force flag overrides that).
+  if (!isCurrent && !heldByWorktree) {
     items.push({ separator: true });
 
     // Parse remote name from upstream (e.g. "origin/main" → "origin")
@@ -393,7 +462,7 @@ function buildBranchContextMenuItems(
       onClick: () => confirmDeleteBranch(branch.name, true, false, remoteName),
       writesRepo: true,
       destructive: true,
-      icon: Trash2,
+      icon: ACTION_ICONS["Delete Branch"],
     });
     if (hasRemote) {
       items.push({
@@ -401,14 +470,14 @@ function buildBranchContextMenuItems(
         onClick: () => confirmDeleteBranch(branch.name, false, true, remoteName),
         writesRepo: true,
         destructive: true,
-        icon: Trash2,
+        icon: ACTION_ICONS["Delete Remote Branch"],
       });
       items.push({
         label: "Delete local + remote…",
         onClick: () => confirmDeleteBranch(branch.name, true, true, remoteName),
         writesRepo: true,
         destructive: true,
-        icon: Trash2,
+        icon: ACTION_ICONS["Delete Remote Branch"],
       });
     }
   }
@@ -495,6 +564,14 @@ function BranchRow({
 
       {/* Local/remote indicators */}
       <span className="flex items-center gap-0.5 shrink-0 text-faint">
+        {branch.worktree_path && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <FolderGit2 className="h-3 w-3" />
+            </TooltipTrigger>
+            <TooltipContent>Checked out in {branch.worktree_path}</TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Monitor className="h-3 w-3" />

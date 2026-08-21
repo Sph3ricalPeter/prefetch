@@ -18,6 +18,7 @@ import type {
   StashInfo,
   TagInfo,
   UndoAction,
+  WorktreeInfo,
 } from "@/types/git";
 import type { ActiveProfileConfig } from "@/types/profile";
 import { traceIpc } from "@/lib/tracing";
@@ -86,6 +87,33 @@ export async function pushRepo(): Promise<string> {
 
 export async function forcePushRepo(): Promise<string> {
   return tracedInvoke<string>("force_push_repo");
+}
+
+// ── Worktrees ────────────────────────────────────────────────────────────────
+
+export async function getWorktrees(): Promise<WorktreeInfo[]> {
+  return tracedInvoke<WorktreeInfo[]>("list_worktrees");
+}
+
+/** Sibling-of-the-repo path suggested for a new worktree tracking `branch`. */
+export async function suggestWorktreePath(branch: string): Promise<string> {
+  return tracedInvoke<string>("suggest_worktree_path", { branch });
+}
+
+export async function addWorktreeCmd(worktreePath: string, branch: string): Promise<void> {
+  return tracedInvoke<void>("add_worktree", { worktreePath, branch });
+}
+
+export async function removeWorktreeCmd(worktreePath: string, force: boolean): Promise<void> {
+  return tracedInvoke<void>("remove_worktree", { worktreePath, force });
+}
+
+export async function pruneWorktreesCmd(): Promise<string> {
+  return tracedInvoke<string>("prune_worktrees");
+}
+
+export async function showWorktreeInFolder(worktreePath: string): Promise<void> {
+  return tracedInvoke<void>("show_worktree_in_folder", { worktreePath });
 }
 
 export async function getFileStatus(): Promise<FileStatus[]> {

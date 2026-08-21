@@ -7,3 +7,4 @@ pub mod parse;
 pub mod profile;
 pub mod repository;
 pub mod types;
+pub mod worktree;

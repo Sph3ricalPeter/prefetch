@@ -287,6 +287,10 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
     // Batch-fetch ahead/behind + upstream for all local branches (single subprocess)
     let tracking = get_all_tracking(path);
 
+    // Branches held by another worktree (single subprocess). Filled here rather
+    // than fetched separately by the UI so the badge needs no extra IPC.
+    let worktrees = crate::git::worktree::branch_worktree_map(path);
+
     let mut branches = Vec::new();
 
     for branch_type in &[BranchType::Local, BranchType::Remote] {
@@ -339,6 +343,12 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
                 false
             };
 
+            let worktree_path = if is_remote {
+                None
+            } else {
+                worktrees.get(&name).cloned()
+            };
+
             branches.push(BranchInfo {
                 name,
                 is_remote,
@@ -349,6 +359,7 @@ pub fn list_branches(path: &str) -> Result<Vec<BranchInfo>, AppError> {
                 behind,
                 can_fast_forward,
                 upstream_name,
+                worktree_path,
             });
         }
     }

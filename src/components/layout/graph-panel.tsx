@@ -5,21 +5,6 @@ import {
   X,
   AlertTriangle,
   Loader2,
-  Check,
-  Copy,
-  Trash2,
-  GitMerge,
-  FastForward,
-  Link,
-  Pencil,
-  Cherry,
-  GitBranchPlus,
-  Tag,
-  Undo2,
-  RotateCcw,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  ArchiveRestore,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import { AbortButton } from "@/components/ui/abort-button";
@@ -30,6 +15,7 @@ import { useRepoStore } from "@/stores/repo-store";
 import { useDelayedFlag } from "@/hooks/use-delayed-flag";
 import { useProfileStore } from "@/stores/profile-store";
 import { Modal, ConfirmDialog } from "@/components/ui/modal";
+import { CreateWorktreeDialog, RemoveWorktreeDialog } from "@/components/ui/worktree-dialogs";
 import {
   CommitGraphCanvas,
   MESSAGE_INSET_LEFT,
@@ -51,6 +37,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { ACTION_ICONS } from "@/lib/action-icons";
 
 // ── Graph column layout (badge / graph / message / author / date / sha) ──────
 // Static columns (user-resizable pixels, or fixed constants):
@@ -304,6 +291,7 @@ export function GraphPanel() {
   const pull = useRepoStore((s) => s.pull);
   const push = useRepoStore((s) => s.push);
   const setUpstream = useRepoStore((s) => s.setUpstream);
+  const revealWorktree = useRepoStore((s) => s.revealWorktree);
   const selectFile = useRepoStore((s) => s.selectFile);
   const currentBranch = useRepoStore((s) => s.currentBranch);
   const forgeStatus = useRepoStore((s) => s.forgeStatus);
@@ -327,6 +315,8 @@ export function GraphPanel() {
     y: number;
   } | null>(null);
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
+  const [worktreeDialogBranch, setWorktreeDialogBranch] = useState<string | null>(null);
+  const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<{ path: string; label: string } | null>(null);
   const [confirmResetHard, setConfirmResetHard] = useState<string | null>(null);
   const [confirmDeleteBranch, setConfirmDeleteBranch] = useState<{
     branchName: string;
@@ -789,10 +779,30 @@ export function GraphPanel() {
                 );
             },
             (tagName) => setConfirmDeleteTag(tagName),
+            setWorktreeDialogBranch,
+            revealWorktree,
+            setRemoveWorktreeTarget,
             forgeStatus,
             commitContextMenu.focusRefName,
           )}
           onClose={() => setCommitContextMenu(null)}
+        />
+      )}
+
+      {/* Create worktree dialog */}
+      {worktreeDialogBranch && (
+        <CreateWorktreeDialog
+          branch={worktreeDialogBranch}
+          onClose={() => setWorktreeDialogBranch(null)}
+        />
+      )}
+
+      {/* Remove worktree confirmation */}
+      {removeWorktreeTarget && (
+        <RemoveWorktreeDialog
+          path={removeWorktreeTarget.path}
+          label={removeWorktreeTarget.label}
+          onClose={() => setRemoveWorktreeTarget(null)}
         />
       )}
 
@@ -806,19 +816,19 @@ export function GraphPanel() {
               label: "Apply (keep in stash list)",
               onClick: () => applyStash(stashContextMenu.index),
               writesRepo: true,
-              icon: ArrowDownToLine,
+              icon: ACTION_ICONS["Apply Stash"],
             },
             {
               label: "Pop (apply & remove)",
               onClick: () => popStash(stashContextMenu.index),
               writesRepo: true,
-              icon: ArchiveRestore,
+              icon: ACTION_ICONS["Pop Stash"],
             },
             {
               label: "Drop (discard)",
               onClick: () => setConfirmDropStash(stashContextMenu.index),
               destructive: true,
-              icon: Trash2,
+              icon: ACTION_ICONS["Drop Stash"],
             },
           ]}
           onClose={() => setStashContextMenu(null)}
@@ -1215,6 +1225,9 @@ function buildCommitContextMenuItems(
   setUpstream: (name: string) => void,
   openRewordDialog: (commitId: string) => void,
   confirmDeleteTag: (name: string) => void,
+  createWorktree: (name: string) => void,
+  revealWorktree: (path: string) => void,
+  removeWorktree: (target: { path: string; label: string }) => void,
   forgeStatus: ForgeStatus | null,
   /** When set, the branch and tag sections are filtered to this single ref so
    *  the menu reflects the specific item the user clicked (e.g. via the hover
@@ -1239,12 +1252,12 @@ function buildCommitContextMenuItems(
         label: `Checkout ${branch.name}`,
         onClick: () => checkoutBranch(branch.name),
         writesRepo: true,
-        icon: Check,
+        icon: ACTION_ICONS.Checkout,
       });
       items.push({
         label: `Copy branch name: ${branch.name}`,
         onClick: () => navigator.clipboard.writeText(branch.name),
-        icon: Copy,
+        icon: ACTION_ICONS.Copy,
       });
       const slashIdx = branch.name.indexOf("/");
       if (slashIdx > 0) {
@@ -1255,18 +1268,38 @@ function buildCommitContextMenuItems(
           onClick: () => confirmDeleteBranch(remoteBranch, false, true, remote),
           writesRepo: true,
           destructive: true,
-          icon: Trash2,
+          icon: ACTION_ICONS["Delete Remote Branch"],
         });
       }
       items.push({ separator: true });
     } else {
       // Local branch
-      if (!isCurrent) {
+      const heldByWorktree = branch.worktree_path;
+      if (!isCurrent && heldByWorktree) {
+        // Git refuses to check this out here — offer the worktree instead.
+        items.push({
+          label: "Reveal worktree in file manager",
+          onClick: () => revealWorktree(heldByWorktree),
+          icon: ACTION_ICONS["Reveal Worktree"],
+        });
+        items.push({
+          label: "Copy worktree path",
+          onClick: () => navigator.clipboard.writeText(heldByWorktree),
+          icon: ACTION_ICONS.Copy,
+        });
+        items.push({
+          label: "Remove worktree…",
+          onClick: () => removeWorktree({ path: heldByWorktree, label: branch.name }),
+          writesRepo: true,
+          destructive: true,
+          icon: ACTION_ICONS["Remove Worktree"],
+        });
+      } else if (!isCurrent) {
         items.push({
           label: `Checkout ${branch.name}`,
           onClick: () => checkoutBranch(branch.name),
           writesRepo: true,
-          icon: Check,
+          icon: ACTION_ICONS.Checkout,
         });
       }
 
@@ -1275,7 +1308,7 @@ function buildCommitContextMenuItems(
           label: `Merge ${branch.name} into ${currentBranch}`,
           onClick: () => mergeInto(branch.name),
           writesRepo: true,
-          icon: GitMerge,
+          icon: ACTION_ICONS.Merge,
         });
         items.push({
           label: branch.can_fast_forward
@@ -1283,28 +1316,41 @@ function buildCommitContextMenuItems(
             : `Rebase ${currentBranch} onto ${branch.name}`,
           onClick: () => rebaseOnto(branch.name),
           writesRepo: true,
-          icon: FastForward,
+          icon: ACTION_ICONS.Rebase,
         });
       }
 
-      items.push({ label: "Pull", onClick: () => pull(), icon: ArrowDownToLine, writesRepo: true });
-      items.push({ label: "Push", onClick: () => push(), icon: ArrowUpFromLine, writesRepo: true });
-      items.push({ label: "Set upstream…", onClick: () => setUpstream(branch.name), icon: Link });
-      items.push({ label: "Rename branch…", onClick: () => renameBranch(branch.name), icon: Pencil, writesRepo: true });
+      items.push({ label: "Pull", onClick: () => pull(), icon: ACTION_ICONS.Pull, writesRepo: true });
+      items.push({ label: "Push", onClick: () => push(), icon: ACTION_ICONS.Push, writesRepo: true });
+      items.push({ label: "Set upstream…", onClick: () => setUpstream(branch.name), icon: ACTION_ICONS["Set Upstream"] });
+      items.push({ label: "Rename branch…", onClick: () => renameBranch(branch.name), icon: ACTION_ICONS["Rename Branch"], writesRepo: true });
       items.push({
         label: `Copy branch name: ${branch.name}`,
         onClick: () => navigator.clipboard.writeText(branch.name),
-        icon: Copy,
+        icon: ACTION_ICONS.Copy,
       });
+      // Not for the current branch: git refuses to put a branch in two
+      // worktrees, and HEAD's own worktree is deliberately absent from
+      // `worktree_path`.
+      if (!heldByWorktree && !isCurrent) {
+        items.push({
+          label: "Create worktree…",
+          onClick: () => createWorktree(branch.name),
+          writesRepo: true,
+          icon: ACTION_ICONS["Create Worktree"],
+        });
+      }
 
-      if (!isCurrent) {
+      // Delete — git refuses while a worktree holds the branch, with no
+      // force flag that overrides it, so don't offer a dead action.
+      if (!isCurrent && !heldByWorktree) {
         const hasRemote = branch.ahead != null || branch.behind != null;
         items.push({
           label: `Delete ${branch.name}…`,
           onClick: () => confirmDeleteBranch(branch.name, true, false, "origin"),
           writesRepo: true,
           destructive: true,
-          icon: Trash2,
+          icon: ACTION_ICONS["Delete Branch"],
         });
         if (hasRemote) {
           items.push({
@@ -1312,7 +1358,7 @@ function buildCommitContextMenuItems(
             onClick: () => confirmDeleteBranch(branch.name, true, true, "origin"),
             writesRepo: true,
             destructive: true,
-            icon: Trash2,
+            icon: ACTION_ICONS["Delete Remote Branch"],
           });
         }
       }
@@ -1329,7 +1375,7 @@ function buildCommitContextMenuItems(
     label: `Cherry-pick onto ${currentBranch ?? "HEAD"}`,
     onClick: () => cherryPick(commitId),
     writesRepo: true,
-    icon: Cherry,
+    icon: ACTION_ICONS["Cherry-pick"],
   });
 
   // Only show commit-level merge/rebase when no local branch already
@@ -1339,13 +1385,13 @@ function buildCommitContextMenuItems(
       label: `Merge ${shortSha} into ${currentBranch}`,
       onClick: () => mergeInto(commitId),
       writesRepo: true,
-      icon: GitMerge,
+      icon: ACTION_ICONS.Merge,
     });
     items.push({
       label: `Rebase ${currentBranch} onto ${shortSha}`,
       onClick: () => rebaseOnto(commitId),
       writesRepo: true,
-      icon: FastForward,
+      icon: ACTION_ICONS.Rebase,
     });
   }
 
@@ -1356,17 +1402,17 @@ function buildCommitContextMenuItems(
     label: `Checkout ${shortSha} (detached HEAD)`,
     onClick: () => checkoutDetached(commitId),
     writesRepo: true,
-    icon: Check,
+    icon: ACTION_ICONS.Checkout,
   });
   items.push({
     label: `Create branch at ${shortSha}…`,
     onClick: () => createBranchHere(commitId),
-    icon: GitBranchPlus,
+    icon: ACTION_ICONS["Create Branch"],
   });
   items.push({
     label: `Create tag at ${shortSha}…`,
     onClick: () => createTagHere(commitId),
-    icon: Tag,
+    icon: ACTION_ICONS["Create Tag"],
   });
 
   // Per-tag actions for tags already pointing at this commit
@@ -1379,13 +1425,13 @@ function buildCommitContextMenuItems(
     items.push({
       label: `Copy tag name: ${tag.name}`,
       onClick: () => navigator.clipboard.writeText(tag.name),
-      icon: Copy,
+      icon: ACTION_ICONS.Copy,
     });
     items.push({
       label: `Delete tag ${tag.name}…`,
       onClick: () => confirmDeleteTag(tag.name),
       destructive: true,
-      icon: Trash2,
+      icon: ACTION_ICONS["Delete Tag"],
     });
   }
 
@@ -1396,26 +1442,26 @@ function buildCommitContextMenuItems(
     label: "Edit commit message…",
     onClick: () => openRewordDialog(commitId),
     writesRepo: true,
-    icon: Pencil,
+    icon: ACTION_ICONS["Reword Commit"],
   });
   items.push({
     label: `Revert ${shortSha}`,
     onClick: () => revertCommit(commitId),
     writesRepo: true,
-    icon: Undo2,
+    icon: ACTION_ICONS.Revert,
   });
   items.push({
     label: `Reset soft to ${shortSha} (keep changes)`,
     onClick: () => resetTo(commitId, "soft"),
     writesRepo: true,
-    icon: RotateCcw,
+    icon: ACTION_ICONS.Reset,
   });
   items.push({
     label: `Reset hard to ${shortSha}`,
     onClick: () => resetTo(commitId, "hard"),
     writesRepo: true,
     destructive: true,
-    icon: RotateCcw,
+    icon: ACTION_ICONS.Reset,
   });
 
   items.push({ separator: true });
@@ -1424,7 +1470,7 @@ function buildCommitContextMenuItems(
   items.push({
     label: `Copy SHA: ${commitId.slice(0, 7)}`,
     onClick: () => navigator.clipboard.writeText(commitId),
-    icon: Copy,
+    icon: ACTION_ICONS.Copy,
   });
 
   // Copy link to commit (when forge is detected)
@@ -1435,7 +1481,7 @@ function buildCommitContextMenuItems(
     items.push({
       label: "Copy link to commit",
       onClick: () => navigator.clipboard.writeText(commitUrl),
-      icon: Link,
+      icon: ACTION_ICONS["Copy Link"],
     });
 
     // Copy link to branch (for branches on this commit)
@@ -1448,7 +1494,7 @@ function buildCommitContextMenuItems(
       items.push({
         label: `Copy link to ${branch.name}`,
         onClick: () => navigator.clipboard.writeText(branchUrl),
-        icon: Link,
+        icon: ACTION_ICONS["Copy Link"],
       });
     }
   }

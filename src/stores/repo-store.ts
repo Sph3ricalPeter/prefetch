@@ -21,6 +21,7 @@ import type {
   StashInfo,
   TagInfo,
   UndoAction,
+  WorktreeInfo,
 } from "@/types/git";
 import type { GraphColumnVisibility } from "@/components/graph/commit-graph-canvas";
 import type { GraphDensity } from "@/lib/graph-density";
@@ -31,6 +32,7 @@ export interface SidebarSections {
   ci: boolean;
   stashes: boolean;
   tags: boolean;
+  worktrees: boolean;
 }
 
 const DEFAULT_SIDEBAR_SECTIONS: SidebarSections = {
@@ -38,6 +40,7 @@ const DEFAULT_SIDEBAR_SECTIONS: SidebarSections = {
   ci: false,
   stashes: true,
   tags: true,
+  worktrees: true,
 };
 
 import {
@@ -118,7 +121,14 @@ import {
   showInFolder as showInFolderCmd,
   openInDefaultEditor as openInEditorCmd,
   deleteFileCmd,
+  getWorktrees,
+  suggestWorktreePath,
+  addWorktreeCmd,
+  removeWorktreeCmd,
+  pruneWorktreesCmd,
+  showWorktreeInFolder,
 } from "@/lib/commands";
+import { errorMessage, showError, showSuccess } from "@/lib/toast";
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
 import { computeDiffRegions, buildOutputWithSources } from "@/lib/conflict-regions";
 import { isHeavyConflict } from "@/lib/diff-size";
@@ -135,11 +145,6 @@ import {
 
 /** Files with more than this many changed lines show a "Load anyway" guard */
 const LARGE_DIFF_THRESHOLD = 10_000;
-
-/** Safely extract an error message string from an unknown catch value. */
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /** Parse a Tauri error to detect hook failures.
  *  Hook errors are serialized as `[hook:<name>] <output>` by the Rust backend. */
@@ -276,9 +281,9 @@ async function handleConflictError(
   } else {
     const { hookName, message } = parseError(e);
     if (hookName) {
-      toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
+      showError(`Hook '${hookName}' failed`, message);
     } else {
-      toast.error(message);
+      showError(operationLabel, message);
     }
   }
 }
@@ -373,6 +378,9 @@ interface RepoState {
   // Tags
   tags: TagInfo[];
 
+  // Worktrees
+  worktrees: WorktreeInfo[];
+
   // Force push
   forcePushPending: boolean;
 
@@ -461,6 +469,12 @@ interface RepoState {
   removeFromRecentRepos: (path: string) => Promise<void>;
   loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
+  loadWorktrees: () => Promise<void>;
+  suggestedWorktreePath: (branch: string) => Promise<string>;
+  addWorktree: (worktreePath: string, branch: string) => Promise<void>;
+  removeWorktree: (worktreePath: string, force?: boolean) => Promise<void>;
+  pruneWorktrees: () => Promise<void>;
+  revealWorktree: (worktreePath: string) => Promise<void>;
   refreshActiveDiff: () => Promise<void>;
   checkout: (name: string) => Promise<void>;
   stashAndProceed: () => Promise<void>;
@@ -588,10 +602,14 @@ interface RepoState {
 
 /** Fetch commits + branches + ref MRU without calling set(). Callers merge into their own set(). */
 async function fetchRepoData(): Promise<Partial<RepoState>> {
-  const [data, branchList, mruList] = await Promise.all([
+  const [data, branchList, mruList, worktreeList] = await Promise.all([
     getCommits(),
     getBranches(),
     getRefMru().catch(() => [] as Array<[string, number]>),
+    // `worktree add` writes under .git/worktrees/, which the non-recursive
+    // .git watch never sees — so worktrees refresh with every other ref read
+    // rather than waiting on a file event.
+    getWorktrees().catch(() => [] as WorktreeInfo[]),
   ]);
   const head = branchList.find((b) => b.is_head);
   return {
@@ -602,6 +620,7 @@ async function fetchRepoData(): Promise<Partial<RepoState>> {
     branches: branchList,
     refMru: new Map(mruList),
     currentBranch: head?.name ?? null,
+    worktrees: worktreeList,
   };
 }
 
@@ -659,6 +678,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   stashes: [],
   selectedStashIndex: null,
   tags: [],
+  worktrees: [],
   forcePushPending: false,
   conflictState: null,
   conflictContents: null,
@@ -714,6 +734,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       fileStatuses: [],
       stashes: [],
       tags: [],
+      worktrees: [],
       selectedCommitId: null,
       selectedStashIndex: null,
       selectedFilePath: null,
@@ -749,7 +770,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // Launch ALL independent data loads in a single parallel batch.
       // Previously these ran as two sequential rounds (commits/branches first,
       // then status/stashes/tags), adding 200-500ms of dead wait time.
-      const [, data, branchList, statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
+      const [, data, branchList, statuses, stashList, tagList, undoAction, conflict, worktreeList] = await Promise.all([
         useProfileStore.getState().autoSwitchForRepo(path),
         getCommits(),
         getBranches(),
@@ -758,6 +779,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getTags(),
         getUndoAction(),
         getConflictState(),
+        getWorktrees().catch(() => [] as WorktreeInfo[]),
       ]);
       const head = branchList.find((b) => b.is_head);
 
@@ -774,6 +796,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         fileStatuses: statuses,
         stashes: stashList,
         tags: tagList,
+        worktrees: worktreeList,
         undoInfo: undoAction,
         conflictState: conflict,
       });
@@ -797,7 +820,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       const msg = errorMessage(e);
       set({ isLoading: false, error: msg });
-      toast.error(msg);
+      showError("Open Repository", msg);
     }
   },
 
@@ -807,7 +830,81 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const head = branchList.find((b) => b.is_head);
       set({ branches: branchList, currentBranch: head?.name ?? null });
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Load Branches", e);
+    }
+  },
+
+  loadWorktrees: async () => {
+    try {
+      set({ worktrees: await getWorktrees() });
+    } catch (e) {
+      showError("Load Worktrees", e);
+    }
+  },
+
+  suggestedWorktreePath: async (branch: string) => suggestWorktreePath(branch),
+
+  addWorktree: async (worktreePath: string, branch: string) => {
+    if (blockedByOperation(get, "create a worktree")) return;
+    set({ isLoading: true });
+    try {
+      await addWorktreeCmd(worktreePath, branch);
+      // Refreshes branches too — the new worktree claims `branch`, so its badge
+      // and the checkout guard both need the updated worktree_path.
+      set({ ...(await fetchRepoData()), isLoading: false });
+      showSuccess("Create Worktree", `Created worktree for ${branch} at ${worktreePath}`);
+    } catch (e) {
+      set({ isLoading: false });
+      showError("Create Worktree", e);
+    }
+  },
+
+  removeWorktree: async (worktreePath: string, force = false) => {
+    if (blockedByOperation(get, "remove a worktree")) return;
+    set({ isLoading: true });
+    try {
+      await removeWorktreeCmd(worktreePath, force);
+      set({ ...(await fetchRepoData()), isLoading: false });
+      showSuccess("Remove Worktree", `Removed worktree ${worktreePath}`);
+    } catch (e) {
+      set({ isLoading: false });
+      const message = errorMessage(e);
+      // Git refuses to remove a locked or dirty worktree and points at the
+      // double -f that overrides it — offer that instead of the raw fatal.
+      if (!force && (message.includes("locked working tree") || message.includes("contains modified"))) {
+        toast.error("Worktree can't be removed", {
+          description: message,
+          action: {
+            label: "Force remove",
+            onClick: () => get().removeWorktree(worktreePath, true),
+          },
+          duration: 10000,
+        });
+      } else {
+        showError("Remove Worktree", message);
+      }
+    }
+  },
+
+  pruneWorktrees: async () => {
+    if (blockedByOperation(get, "prune worktrees")) return;
+    try {
+      const out = (await pruneWorktreesCmd()).trim();
+      set(await fetchRepoData());
+      // `run_git` substitutes the literal "Done" when a command prints nothing,
+      // which is what `worktree prune -v` does when there was nothing to prune.
+      const pruned = out && out !== "Done" ? out : "Nothing to prune";
+      showSuccess("Prune Worktrees", pruned);
+    } catch (e) {
+      showError("Prune Worktrees", e);
+    }
+  },
+
+  revealWorktree: async (worktreePath: string) => {
+    try {
+      await showWorktreeInFolder(worktreePath);
+    } catch (e) {
+      showError("Reveal Worktree", e);
     }
   },
 
@@ -836,7 +933,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       set({ fileStatuses: statuses });
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Load Status", e);
     }
   },
 
@@ -890,6 +987,24 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     const remotePrefix = name.match(/^([^/]+)\//)?.[0];
     const isRemote = branches.some((b) => b.is_remote && b.name === name);
 
+    // A branch checked out in another worktree can't be checked out here — git
+    // exits 128. Guard the branch that will ACTUALLY be checked out: every path
+    // below resolves a remote ref to its local counterpart ("origin/feat" ->
+    // "feat") before checking out, so guarding the raw `name` would let remote
+    // refs through. This runs before any pending-dialog state is set, which is
+    // what keeps stashAndProceed / discardAndProceed from stashing or discarding
+    // the working tree for a checkout that could never succeed.
+    const targetLocal = isRemote && remotePrefix ? name.slice(remotePrefix.length) : name;
+    const heldBy = branches.find((b) => !b.is_remote && b.name === targetLocal)?.worktree_path;
+    if (heldBy) {
+      toast.error(`'${targetLocal}' is checked out in another worktree`, {
+        description: heldBy,
+        action: { label: "Reveal", onClick: () => get().revealWorktree(heldBy) },
+        duration: 10000,
+      });
+      return;
+    }
+
     // If target is the remote counterpart of the current branch, always show
     // the reset dialog — even with a dirty tree (reset --hard handles it)
     if (isRemote && remotePrefix) {
@@ -925,10 +1040,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         await checkoutBranch(localName);
         const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
         set({ ...repoData, isLoading: false, fileStatuses: statuses });
-        toast.success(`Checked out ${localName} (tracking ${name})`);
+        showSuccess("Checkout", `Checked out ${localName} (tracking ${name})`);
       } catch (e) {
         set({ isLoading: false });
-        toast.error(errorMessage(e));
+        showError("Checkout", e);
       }
       return;
     }
@@ -945,10 +1060,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await checkoutBranch(name);
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses });
-      toast.success(`Checked out ${name}`);
+      showSuccess("Checkout", `Checked out ${name}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Checkout", e);
     }
   },
 
@@ -959,7 +1074,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ dirtyActionPending: null, isLoading: true, error: null });
 
     const opLabel = operationLabel(operation, targetName);
-    const ms = new MultiStepAction(`Stash & ${opLabel}`, ["git stash push", opLabel]);
+    const ms = new MultiStepAction(`Stash & ${opLabel}`, ["git stash push", opLabel], "Stash Changes");
     try {
       ms.startStep(0);
       await stashPushCmd(`Auto-stash before ${operation}`);
@@ -989,7 +1104,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ dirtyActionPending: null, isLoading: true, error: null });
 
     const opLabel = operationLabel(operation, targetName);
-    const ms = new MultiStepAction(`Discard & ${opLabel}`, ["Discard changes", opLabel]);
+    const ms = new MultiStepAction(`Discard & ${opLabel}`, ["Discard changes", opLabel], "Discard");
     try {
       ms.startStep(0);
       if (operation === "checkout") {
@@ -1029,7 +1144,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     const ms = new MultiStepAction(`Reset ${pending.localName} to ${pending.remoteName}`, [
       `git checkout ${pending.localName}`,
       `git reset --hard ${pending.remoteName}`,
-    ]);
+    ], "Reset");
     try {
       ms.startStep(0);
       await checkoutBranch(pending.localName);
@@ -1057,9 +1172,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await createBranchCmd(name);
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({ ...repoData, fileStatuses: statuses });
-      toast.success(`Created and checked out ${name}`);
+      showSuccess("Create Branch", `Created and checked out ${name}`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Create Branch", e);
     }
   },
 
@@ -1074,10 +1189,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, tagList] = await Promise.all([fetchRepoData(), getTags()]);
       set({ ...repoData, tags: tagList, isLoading: false, prCache: {} }); // invalidate PR cache after fetch
       clearPrCacheCmd().catch(() => {});
-      toast.success("Fetch complete", { id: toastId });
+      showSuccess("Fetch", "Fetch complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e), { id: toastId });
+      showError("Fetch", e, { id: toastId });
     } finally {
       unlisten();
     }
@@ -1100,14 +1215,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, prCache: {} }); // invalidate PR cache
       clearPrCacheCmd().catch(() => {});
-      toast.success("Pull complete", { id: toastId });
+      showSuccess("Pull", "Pull complete", { id: toastId });
     } catch (e) {
       set({ isLoading: false });
       const { hookName, message } = parseError(e);
       if (hookName) {
-        toast.error(`Hook '${hookName}' failed`, { id: toastId, description: message.slice(0, 300), duration: 10000 });
+        showError(`Hook '${hookName}' failed`, message, { id: toastId });
       } else {
-        toast.error(message, { id: toastId });
+        showError("Pull", message, { id: toastId });
       }
     } finally {
       unlisten();
@@ -1117,7 +1232,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   push: async () => {
     if (blockedByOperation(get, "push")) return;
     set({ isLoading: true });
-    const ms = new MultiStepAction("Push", ["git push", "Sync remote refs"]);
+    const ms = new MultiStepAction("Push", ["git push", "Sync remote refs"], "Push");
     try {
       ms.startStep(0);
       await pushRepo();
@@ -1137,7 +1252,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const { hookName, message } = parseError(e);
       const failIdx = ms.runningStepIndex();
       if (hookName) {
-        ms.failStep(failIdx >= 0 ? failIdx : 0, `Hook '${hookName}' failed: ${message.slice(0, 200)}`);
+        ms.failStep(failIdx >= 0 ? failIdx : 0, `Hook '${hookName}' failed: ${message}`);
       } else if (message.includes("rejected") || message.includes("non-fast-forward") || message.includes("fetch first")) {
         ms.failStep(failIdx >= 0 ? failIdx : 0, "Push rejected — remote has diverged");
         set({ forcePushPending: true });
@@ -1151,7 +1266,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     if (blockedByOperation(get, "force push")) return;
     set({ forcePushPending: false, isLoading: true });
     // Mirror push(): force push, then fetch to sync remote tracking refs.
-    const ms = new MultiStepAction("Force push", ["git push --force", "Sync remote refs"]);
+    const ms = new MultiStepAction("Force push", ["git push --force", "Sync remote refs"], "Push");
     try {
       ms.startStep(0);
       await forcePushRepo();
@@ -1196,7 +1311,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         if (get().selectedCommitId === id) {
           set({ commitFilesLoading: false });
         }
-        toast.error(errorMessage(e));
+        showError("Load Commit Files", e);
       }
     }
   },
@@ -1220,7 +1335,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, diffLoading: false, ciSelectedJobId: null, ciJobLog: null });
     } catch (e) {
       set({ diffLoading: false });
-      toast.error(errorMessage(e));
+      showError("Load Diff", e);
     }
   },
 
@@ -1239,7 +1354,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, diffLoading: false, ciSelectedJobId: null, ciJobLog: null });
     } catch (e) {
       set({ diffLoading: false });
-      toast.error(errorMessage(e));
+      showError("Load Diff", e);
     }
   },
 
@@ -1274,7 +1389,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, largeDiffPending: null, diffLoading: false });
     } catch (e) {
       set({ largeDiffPending: null, diffLoading: false });
-      toast.error(errorMessage(e));
+      showError("Load Diff", e);
     }
   },
 
@@ -1293,7 +1408,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Stage", e);
     }
   },
 
@@ -1318,7 +1433,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Unstage", e);
     }
   },
 
@@ -1335,7 +1450,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ isLoading: false });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Discard", e);
     }
   },
 
@@ -1345,10 +1460,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await discardAllCmd();
       await get().loadStatus();
       set({ activeDiff: null, selectedFilePath: null, isLoading: false });
-      toast.success("All changes discarded");
+      showSuccess("Discard All", "All changes discarded");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Discard All", e);
     }
   },
 
@@ -1358,10 +1473,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await resolveOursCmd(filePath);
       await get().loadStatus();
       set({ isLoading: false });
-      toast.success(`Resolved ${filePath.split("/").pop()} — kept ours`);
+      showSuccess("Resolve Conflict", `Resolved ${filePath.split("/").pop()} — kept ours`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Resolve Conflict", e);
     }
   },
 
@@ -1371,10 +1486,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await resolveTheirsCmd(filePath);
       await get().loadStatus();
       set({ isLoading: false });
-      toast.success(`Resolved ${filePath.split("/").pop()} — kept theirs`);
+      showSuccess("Resolve Conflict", `Resolved ${filePath.split("/").pop()} — kept theirs`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Resolve Conflict", e);
     }
   },
 
@@ -1391,7 +1506,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Stage Hunk", e);
     }
   },
 
@@ -1408,7 +1523,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Unstage Hunk", e);
     }
   },
 
@@ -1426,7 +1541,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Stage Lines", e);
     }
   },
 
@@ -1444,7 +1559,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: newDiff, isLoading: false });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Unstage Lines", e);
     }
   },
 
@@ -1453,7 +1568,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const contents = await getConflictContentsCmd(filePath);
       set({ conflictContents: contents });
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Load Conflict", e);
     }
   },
 
@@ -1465,10 +1580,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const autoMap = new Map(get().conflictAutoResolvedFiles);
       autoMap.delete(filePath);
       set({ conflictContents: null, conflictOutputText: null, conflictAutoResolvedFiles: autoMap, activeDiff: null, selectedFilePath: null, isLoading: false });
-      toast.success(`Resolved ${filePath.split("/").pop()}`);
+      showSuccess("Resolve Conflict", `Resolved ${filePath.split("/").pop()}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Resolve Conflict", e);
     }
   },
 
@@ -1499,14 +1614,14 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         selectedFilePath: null,
         activeDiff: null,
       });
-      toast.success(amend ? "Commit amended" : "Committed successfully");
+      showSuccess("Commit", amend ? "Commit amended" : "Committed successfully");
     } catch (e) {
       set({ isLoading: false });
       const { hookName, message } = parseError(e);
       if (hookName) {
-        toast.error(`Hook '${hookName}' failed`, { description: message.slice(0, 300), duration: 10000 });
+        showError(`Hook '${hookName}' failed`, message);
       } else {
-        toast.error(message);
+        showError("Commit", message);
       }
     }
   },
@@ -1531,10 +1646,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       } else if (selected && !get().commits.some((c) => c.id === selected)) {
         await get().selectCommit(null);
       }
-      toast.success("Commit message updated");
+      showSuccess("Reword Commit", "Commit message updated");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Reword Commit", e);
     }
   },
 
@@ -1583,7 +1698,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       if (get().selectedStashIndex === index) {
         set({ commitFilesLoading: false });
       }
-      toast.error(errorMessage(e));
+      showError("Load Stash", e);
     }
   },
 
@@ -1602,7 +1717,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ activeDiff: diff, diffLoading: false });
     } catch (e) {
       set({ diffLoading: false });
-      toast.error(errorMessage(e));
+      showError("Load Stash Diff", e);
     }
   },
 
@@ -1611,7 +1726,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const stashList = await getStashes();
       set({ stashes: stashList });
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Load Stashes", e);
     }
   },
 
@@ -1631,10 +1746,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         selectedFilePath: null,
         activeDiff: null,
       });
-      toast.success("Changes stashed");
+      showSuccess("Stash Changes", "Changes stashed");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Stash Changes", e);
       try {
         const [statuses, stashList] = await Promise.all([getFileStatus(), getStashes()]);
         set({ fileStatuses: statuses, stashes: stashList });
@@ -1649,10 +1764,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await stashApplyCmd(index);
       const statuses = await getFileStatus();
       set({ isLoading: false, fileStatuses: statuses });
-      toast.success("Stash applied (kept in stash list)");
+      showSuccess("Apply Stash", "Stash applied (kept in stash list)");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Apply Stash", e);
     }
   },
 
@@ -1666,10 +1781,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getStashes(),
       ]);
       set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
-      toast.success("Stash applied & removed from list");
+      showSuccess("Pop Stash", "Stash applied & removed from list");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Pop Stash", e);
     }
   },
 
@@ -1679,10 +1794,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await stashDropCmd(index);
       const stashList = await getStashes();
       set({ isLoading: false, stashes: stashList });
-      toast.success("Stash dropped");
+      showSuccess("Drop Stash", "Stash dropped");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Drop Stash", e);
     }
   },
 
@@ -1691,7 +1806,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const tagList = await getTags();
       set({ tags: tagList });
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Load Tags", e);
     }
   },
 
@@ -1700,9 +1815,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await createTagCmd(name, commit, message);
       const tagList = await getTags();
       set({ tags: tagList });
-      toast.success(`Tag "${name}" created`);
+      showSuccess("Create Tag", `Tag "${name}" created`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Create Tag", e);
     }
   },
 
@@ -1711,18 +1826,18 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await deleteTagCmd(name);
       const tagList = await getTags();
       set({ tags: tagList });
-      toast.success(`Tag "${name}" deleted`);
+      showSuccess("Delete Tag", `Tag "${name}" deleted`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Delete Tag", e);
     }
   },
 
   pushExistingTag: async (name) => {
     try {
       await pushTagCmd(name);
-      toast.success(`Tag "${name}" pushed`);
+      showSuccess("Push Tag", `Tag "${name}" pushed`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Push Tag", e);
     }
   },
 
@@ -1750,10 +1865,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         selectedCommitId: null,
         activeDiff: null,
       });
-      toast.success(mode === "soft" ? "Reset (soft) — changes kept staged" : "Reset (hard) — working tree clean");
+      showSuccess("Reset", mode === "soft" ? "Reset (soft) — changes kept staged" : "Reset (hard) — working tree clean");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Reset", e);
     }
   },
 
@@ -1771,7 +1886,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       if (conflict.in_progress) {
         toast.error("Cherry-pick has conflicts — resolve them, then continue or abort");
       } else {
-        toast.success("Cherry-pick successful");
+        showSuccess("Cherry-pick", "Cherry-pick successful");
       }
     } catch (e) {
       await handleConflictError(e, "Cherry-pick", set, get);
@@ -1791,7 +1906,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         }
         toast.error("Rebase has conflicts — resolve them, then continue or abort");
       } else {
-        toast.success(`Rebased onto ${targetBranch}`);
+        showSuccess("Rebase", `Rebased onto ${targetBranch}`);
       }
     } catch (e) {
       await handleConflictError(e, "Rebase", set, get, async () => {
@@ -1821,7 +1936,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         if (mergeMsg) set({ commitMessage: mergeMsg });
         toast.error("Merge has conflicts — resolve them, then continue or abort");
       } else {
-        toast.success(`Merged ${target}`);
+        showSuccess("Merge", `Merged ${target}`);
       }
     } catch (e) {
       await handleConflictError(e, "Merge", set, get, async () => {
@@ -1838,12 +1953,18 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await deleteBranchCmd(name, force);
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses });
-      toast.success(`Deleted branch ${name}`);
+      showSuccess("Delete Branch", `Deleted branch ${name}`);
     } catch (e) {
       set({ isLoading: false });
       const message = errorMessage(e);
       // If the branch has unmerged commits, git suggests -D
-      if (!force && message.includes("not fully merged")) {
+      if (message.includes("used by worktree")) {
+        // Force can't help here — the worktree has to go first.
+        toast.error(`'${name}' is checked out in another worktree`, {
+          description: "Remove that worktree before deleting the branch.",
+          duration: 10000,
+        });
+      } else if (!force && message.includes("not fully merged")) {
         toast.error(`Branch '${name}' has unmerged commits`, {
           description: "Use force delete to remove it anyway.",
           action: {
@@ -1853,7 +1974,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
           duration: 10000,
         });
       } else {
-        toast.error(message);
+        showError("Delete Branch", message);
       }
     }
   },
@@ -1872,7 +1993,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       if (conflict.in_progress) {
         toast.error("Revert has conflicts — resolve them, then continue or abort");
       } else {
-        toast.success(`Reverted ${commitId.slice(0, 7)}`);
+        showSuccess("Revert", `Reverted ${commitId.slice(0, 7)}`);
       }
     } catch (e) {
       await handleConflictError(e, "Revert", set, get);
@@ -1891,10 +2012,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await checkoutDetachedCmd(commitId);
       const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses });
-      toast.success(`Checked out ${commitId.slice(0, 7)} (detached HEAD)`);
+      showSuccess("Checkout Commit", `Checked out ${commitId.slice(0, 7)} (detached HEAD)`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Checkout Commit", e);
     }
   },
 
@@ -1904,10 +2025,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await createBranchAtCmd(name, commitId);
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
-      toast.success(`Created branch '${name}' at ${commitId.slice(0, 7)}`);
+      showSuccess("Create Branch", `Created branch '${name}' at ${commitId.slice(0, 7)}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Create Branch", e);
     }
   },
 
@@ -1917,16 +2038,16 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       if (renameRemote) {
         await renameBranchOnRemote(oldName, newName);
-        toast.success(`Renamed '${oldName}' to '${newName}' (local + remote)`);
+        showSuccess("Rename Branch", `Renamed '${oldName}' to '${newName}' (local + remote)`);
       } else {
         await renameBranchCmd(oldName, newName);
-        toast.success(`Renamed '${oldName}' to '${newName}'`);
+        showSuccess("Rename Branch", `Renamed '${oldName}' to '${newName}'`);
       }
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Rename Branch", e);
     }
   },
 
@@ -1936,16 +2057,16 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await deleteRemoteBranchCmd(remote, branch);
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
-      toast.success(`Deleted ${remote}/${branch} from remote`);
+      showSuccess("Delete Remote Branch", `Deleted ${remote}/${branch} from remote`);
     } catch (e) {
       const msg = errorMessage(e);
       if (msg.includes("remote ref does not exist")) {
         const repoData = await fetchRepoData();
         set({ ...repoData, isLoading: false });
-        toast.success(`Remote branch ${remote}/${branch} already deleted`);
+        showSuccess("Delete Remote Branch", `Remote branch ${remote}/${branch} already deleted`);
       } else {
         set({ isLoading: false });
-        toast.error(msg);
+        showError("Delete Remote Branch", msg);
       }
     }
   },
@@ -1956,10 +2077,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await setUpstreamCmd(remoteBranch);
       const repoData = await fetchRepoData();
       set({ ...repoData, isLoading: false });
-      toast.success(`Upstream set to ${remoteBranch}`);
+      showSuccess("Set Upstream", `Upstream set to ${remoteBranch}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Set Upstream", e);
     }
   },
 
@@ -1970,10 +2091,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await stashPushFilesCmd(paths, message);
       const [statuses, stashList] = await Promise.all([getFileStatus(), getStashes()]);
       set({ isLoading: false, fileStatuses: statuses, stashes: stashList });
-      toast.success(paths.length === 1 ? "Stashed 1 file" : `Stashed ${paths.length} files`);
+      showSuccess("Stash Files", paths.length === 1 ? "Stashed 1 file" : `Stashed ${paths.length} files`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Stash Files", e);
       try {
         const [statuses, stashList] = await Promise.all([getFileStatus(), getStashes()]);
         set({ fileStatuses: statuses, stashes: stashList });
@@ -1985,7 +2106,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await showInFolderCmd(filePath);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Show in Folder", e);
     }
   },
 
@@ -1993,7 +2114,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await openInEditorCmd(filePath);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Open in Editor", e);
     }
   },
 
@@ -2006,10 +2127,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       await deleteFileCmd(filePath);
       await get().loadStatus();
-      toast.success(`Deleted ${filePath.split("/").pop()}`);
+      showSuccess("Delete File", `Deleted ${filePath.split("/").pop()}`);
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Delete File", e);
     }
   },
 
@@ -2019,10 +2140,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       await abortOperationCmd();
       const [repoData, statuses, conflict] = await Promise.all([fetchRepoData(), getFileStatus(), getConflictState()]);
       set({ ...repoData, isLoading: false, fileStatuses: statuses, conflictState: conflict, rebaseProgress: null, conflictAutoResolvedFiles: new Map() });
-      toast.success("Operation aborted");
+      showSuccess("Abort Operation", "Operation aborted");
     } catch (e) {
       set({ isLoading: false });
-      toast.error(errorMessage(e));
+      showError("Abort Operation", e);
     }
   },
 
@@ -2040,10 +2161,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         toast.error("Still has conflicts — resolve remaining files");
       } else {
         set({ rebaseProgress: null });
-        toast.success("Operation completed");
+        showSuccess("Continue Operation", "Operation completed");
       }
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Continue Operation", e);
       // Always refresh state after failure — the operation may have partially
       // succeeded (e.g. commit created but editor failed) or the rebase may
       // have completed despite the error.
@@ -2123,9 +2244,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getStashes(),
       ]);
       set({ ...repoData, fileStatuses: statuses, stashes: stashList });
-      toast.success(info.description);
+      showSuccess("Undo", info.description);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Undo", e);
     }
   },
 
@@ -2144,7 +2265,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const repos = await getRecentRepos();
       set({ recentRepos: repos });
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Remove Recent Repository", e);
     }
   },
 
@@ -2244,10 +2365,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   saveForgeToken: async (host: string, token: string) => {
     try {
       await saveForgeTokenCmd(host, token);
-      toast.success("Token saved");
+      showSuccess("Save Forge Token", "Token saved");
       await get().loadForgeStatus();
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Save Forge Token", e);
     }
   },
 
@@ -2255,10 +2376,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await deleteForgeTokenCmd(host);
       set({ prCache: {} });
-      toast.success("Token removed");
+      showSuccess("Delete Forge Token", "Token removed");
       await get().loadForgeStatus();
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Delete Forge Token", e);
     }
   },
 
@@ -2266,7 +2387,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     try {
       await openUrlCmd(url);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Open Pull Request", e);
     }
   },
 
@@ -2419,6 +2540,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
               ci: parsed.ci === true,
               stashes: parsed.stashes !== false,
               tags: parsed.tags !== false,
+              worktrees: parsed.worktrees !== false,
             },
           });
         } catch { /* malformed — keep defaults */ }
@@ -2570,10 +2692,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await lfsInitialize();
-      toast.success("LFS initialised in this repository");
+      showSuccess("Initialize LFS", "LFS initialised in this repository");
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Initialize LFS", e);
     } finally {
       set({ isLoading: false });
     }
@@ -2583,10 +2705,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await lfsTrackCmd(pattern);
-      toast.success(`Tracking "${pattern}" with LFS`);
+      showSuccess("Track LFS Pattern", `Tracking "${pattern}" with LFS`);
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Track LFS Pattern", e);
     } finally {
       set({ isLoading: false });
     }
@@ -2596,10 +2718,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await lfsUntrackCmd(pattern);
-      toast.success(`Untracked "${pattern}" from LFS`);
+      showSuccess("Untrack LFS Pattern", `Untracked "${pattern}" from LFS`);
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Untrack LFS Pattern", e);
     } finally {
       set({ isLoading: false });
     }
@@ -2609,10 +2731,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await lfsPruneCmd();
-      toast.success("LFS objects pruned");
+      showSuccess("Prune LFS Objects", "LFS objects pruned");
       await get().loadLfsInfo(true);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError("Prune LFS Objects", e);
     } finally {
       set({ isLoading: false });
     }

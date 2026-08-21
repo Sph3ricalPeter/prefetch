@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, Monitor, Cloud, Tag, Archive, Calendar, Hash, ArrowUp } from "lucide-react";
+import { Check, Monitor, Cloud, Tag, Archive, Calendar, Hash, ArrowUp, FolderGit2 } from "lucide-react";
 import type {
   BranchInfo,
   CommitInfo,
@@ -355,6 +355,14 @@ const ICON_CLOUD: LucideNodeData = [
   ["path", { d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" }],
 ];
 
+// lucide `folder-git-2` — a branch held by another worktree.
+const ICON_FOLDER_GIT: LucideNodeData = [
+  ["path", { d: "M18 19a5 5 0 0 1-5-5v8" }],
+  ["path", { d: "M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5" }],
+  ["circle", { cx: "13", cy: "12", r: "2" }],
+  ["circle", { cx: "20", cy: "19", r: "2" }],
+];
+
 const ICON_CHECK: LucideNodeData = [
   ["path", { d: "M20 6 9 17l-5-5" }],
 ];
@@ -599,6 +607,17 @@ function drawRemoteIcon(
   return size;
 }
 
+function drawWorktreeIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+): number {
+  const size = 14;
+  drawLucideIcon(ctx, ICON_FOLDER_GIT, x, y, size, color);
+  return size + 1;
+}
+
 function drawCheckIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -626,6 +645,8 @@ interface MergedBranchGroup {
   local: BranchInfo | null;
   remote: BranchInfo | null;
   isHead: boolean;
+  /** Path of the worktree holding this branch, when it isn't the open one. */
+  worktreePath: string | null;
 }
 
 function groupBranches(branches: BranchInfo[]): MergedBranchGroup[] {
@@ -637,12 +658,14 @@ function groupBranches(branches: BranchInfo[]): MergedBranchGroup[] {
       local: null,
       remote: null,
       isHead: false,
+      worktreePath: null,
     };
     if (b.is_remote) {
       existing.remote = b;
     } else {
       existing.local = b;
       existing.isHead = existing.isHead || b.is_head;
+      existing.worktreePath = b.worktree_path;
     }
     map.set(baseName, existing);
   }
@@ -661,11 +684,12 @@ const CHECK_ICON_W = 16;          // 14px icon + 2px gap
 const TRAILING_ICON_GAP = 3;      // left margin before trailing icons
 const LOCAL_ICON_W = 15;          // 14px icon + 1px gap
 const REMOTE_ICON_W = 14;         // 14px icon
+const WORKTREE_ICON_W = 15;       // 14px icon + 1px gap
 
-/** Layout: [check?] [name] [local?] [remote?]
- *  HEAD branch gets a leading checkmark; local / remote indicators sit on the
- *  right of the name (issue #38). Pass `maxContentWidth` to truncate the name
- *  so the pill fits a bounded area (e.g. the badge column). */
+/** Layout: [check?] [name] [worktree?] [local?] [remote?]
+ *  HEAD branch gets a leading checkmark; worktree / local / remote indicators
+ *  sit on the right of the name (issue #38, #17). Pass `maxContentWidth` to
+ *  truncate the name so the pill fits a bounded area (e.g. the badge column). */
 function drawMergedBranchPill(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -689,6 +713,7 @@ function drawMergedBranchPill(
 
   const checkW = group.isHead ? CHECK_ICON_W : 0;
   let trailingIconsW = 0;
+  if (group.worktreePath) trailingIconsW += TRAILING_ICON_GAP + WORKTREE_ICON_W;
   if (group.local) trailingIconsW += TRAILING_ICON_GAP + LOCAL_ICON_W;
   if (group.remote) trailingIconsW += TRAILING_ICON_GAP + REMOTE_ICON_W;
 
@@ -720,6 +745,11 @@ function drawMergedBranchPill(
   if (highlightQuery) drawSearchHighlight(ctx, displayName, cursorX, y, highlightQuery, fontCfg.sizeBody);
   ctx.fillText(displayName, cursorX, y);
   cursorX += textWidth;
+  if (group.worktreePath) {
+    cursorX += TRAILING_ICON_GAP;
+    drawWorktreeIcon(ctx, cursorX, y, textCol);
+    cursorX += WORKTREE_ICON_W;
+  }
   if (group.local) {
     cursorX += TRAILING_ICON_GAP;
     drawLocalIcon(ctx, cursorX, y, textCol);
@@ -754,6 +784,8 @@ interface DropdownRef {
   hasLocal: boolean;
   hasRemote: boolean;
   isRemoteOnly: boolean;
+  /** True when the branch is checked out in another worktree. */
+  hasWorktree: boolean;
   /** Branch/tag color hex used for the row swatch. */
   color: string;
   stashIndex?: number;
@@ -1702,6 +1734,7 @@ export function CommitGraphCanvas({
                 hasLocal: !!g.local,
                 hasRemote: !!g.remote,
                 isRemoteOnly: !g.local && !!g.remote,
+                hasWorktree: !!g.worktreePath,
                 color: branchColor(g.baseName),
               };
             }
@@ -1714,6 +1747,7 @@ export function CommitGraphCanvas({
                 hasLocal: false,
                 hasRemote: false,
                 isRemoteOnly: false,
+                hasWorktree: false,
                 color: graphColors.dim,
               };
             }
@@ -1725,6 +1759,7 @@ export function CommitGraphCanvas({
               hasLocal: false,
               hasRemote: false,
               isRemoteOnly: false,
+              hasWorktree: false,
               color: graphColors.dim,
               stashIndex: it.stash.index,
             };
@@ -2533,6 +2568,9 @@ function DropdownItemRow({
       )}
       {isStash && (
         <Archive className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+      )}
+      {item.hasWorktree && (
+        <FolderGit2 className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />
       )}
       {item.hasLocal && (
         <Monitor className="h-3 w-3 shrink-0" style={colorStyle} aria-hidden="true" />

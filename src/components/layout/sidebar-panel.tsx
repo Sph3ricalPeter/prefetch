@@ -7,6 +7,7 @@ import { BranchList } from "@/components/sidebar/branch-list";
 import { CiList } from "@/components/sidebar/ci-list";
 import { StashList } from "@/components/sidebar/stash-list";
 import { TagList } from "@/components/sidebar/tag-list";
+import { WorktreeList } from "@/components/sidebar/worktree-list";
 
 export function SidebarPanel() {
   const repoPath = useRepoStore((s) => s.repoPath);
@@ -77,6 +78,9 @@ export function SidebarPanel() {
       <div className="flex-1 overflow-y-auto pr-2">
         {/* Branches */}
         <BranchList />
+
+        {/* Worktrees — renders nothing until a linked worktree exists */}
+        <WorktreeList />
 
         {/* Divider */}
         <div className="my-1 border-t border-border" />

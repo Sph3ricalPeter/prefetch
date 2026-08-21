@@ -48,6 +48,25 @@ export interface BranchInfo {
   can_fast_forward: boolean;
   /** Short upstream ref name, e.g. "origin/main". Null for remote branches or locals without an upstream. */
   upstream_name: string | null;
+  /** Path of the linked worktree holding this branch, when it isn't the open one.
+   *  Set means git refuses both checkout and delete for this branch. */
+  worktree_path: string | null;
+}
+
+export interface WorktreeInfo {
+  /** Path as git reports it — forward slashes, even on Windows. */
+  path: string;
+  head: string;
+  /** Branch shorthand, or null for a detached HEAD. */
+  branch: string | null;
+  /** The worktree the app currently has open. */
+  is_current: boolean;
+  /** The repository's main worktree (git lists it first). */
+  is_main: boolean;
+  /** Lock reason when locked. Empty string means locked without a reason. */
+  locked: string | null;
+  /** Prune reason when the worktree's directory has gone missing. */
+  prunable: string | null;
 }
 
 /** Porcelain status codes returned by the Rust backend. */
