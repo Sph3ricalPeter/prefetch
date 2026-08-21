@@ -7,6 +7,7 @@ import { DetailPanel } from "./detail-panel";
 import { StatusBar } from "./status-bar";
 import { SettingsNav, SettingsContent, type SettingsTarget } from "@/components/ui/settings-page";
 import { CloneDialog } from "@/components/ui/clone-dialog";
+import { Toaster } from "@/components/ui/sonner";
 import { getUiState, setUiState } from "@/lib/database";
 import { useRepoStore } from "@/stores/repo-store";
 const SIDEBAR_DEFAULT = 300;
@@ -237,7 +238,7 @@ export function AppLayout() {
             unwrapped code) and overflows the outer flex, squeezing the sidebar. With
             basis-0 the card grows purely from free space, so center content can't
             push the side panels around. */}
-        <div className="ml-1 flex grow basis-0 min-w-0 overflow-hidden rounded-xl border border-border bg-background">
+        <div className="relative ml-1 flex grow basis-0 min-w-0 overflow-hidden rounded-xl border border-border bg-background">
           {settingsTarget ? (
             <SettingsContent
               tab={settingsTarget.tab}
@@ -283,6 +284,14 @@ export function AppLayout() {
               )}
             </>
           )}
+
+          {/* Toasts anchor to the card's bottom-right, not the viewport's: above
+              the status bar, and offset left past the detail column so they never
+              cover it. `detailWidth` only updates on resize-end, so a toast raised
+              mid-drag lags the handle — not worth reading the ref for. */}
+          <Toaster
+            offsetRight={settingsTarget || showCiLog || detailCollapsed ? 12 : detailWidth + 12}
+          />
         </div>
       </div>
       <StatusBar onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />

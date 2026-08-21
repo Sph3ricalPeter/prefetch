@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { toast } from "sonner";
+import { showError, showSuccess } from "@/lib/toast";
 import type {
   Profile,
   ProfilePath,
@@ -94,10 +94,10 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         is_default: data.is_default ?? false,
       });
       await get().loadProfiles();
-      toast.success(`Profile "${data.name}" created`);
+      showSuccess("Create Profile", `Profile "${data.name}" created`);
       return id;
     } catch (e) {
-      toast.error(`Failed to create profile: ${e}`);
+      showError("Create Profile", e);
       throw e;
     }
   },
@@ -116,9 +116,9 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         }
       }
 
-      toast.success("Profile updated");
+      showSuccess("Update Profile", "Profile updated");
     } catch (e) {
-      toast.error(`Failed to update profile: ${e}`);
+      showError("Update Profile", e);
       throw e;
     }
   },
@@ -136,9 +136,9 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         await get().activateProfile(null);
       }
 
-      toast.success(`Profile "${profile?.name ?? "Unknown"}" deleted`);
+      showSuccess("Delete Profile", `Profile "${profile?.name ?? "Unknown"}" deleted`);
     } catch (e) {
-      toast.error(`Failed to delete profile: ${e}`);
+      showError("Delete Profile", e);
       throw e;
     }
   },

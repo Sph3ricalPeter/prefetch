@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, X, type LucideIcon } from "lucide-react";
+import { IconButton } from "./icon-button";
+import { CopyButton } from "./copy-button";
 
 export interface StepInfo {
   label: string;
@@ -11,6 +13,10 @@ export interface MultiStepState {
   title: string;
   steps: StepInfo[];
   error?: string;
+  /** The action's icon, shown once the run settles; the spinner owns the slot
+   *  until then. Resolved by MultiStepAction so this stays a dumb renderer —
+   *  same shape as ContextMenuItem's `icon`. */
+  icon?: LucideIcon;
 }
 
 function formatElapsed(ms: number): string {
@@ -18,7 +24,13 @@ function formatElapsed(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export function MultiStepToast({ state }: { state: MultiStepState }) {
+export function MultiStepToast({
+  state,
+  onDismiss,
+}: {
+  state: MultiStepState;
+  onDismiss?: () => void;
+}) {
   const [elapsed, setElapsed] = useState(0);
 
   const runningStep = state.steps.find((s) => s.status === "running");
@@ -40,9 +52,13 @@ export function MultiStepToast({ state }: { state: MultiStepState }) {
   }, [runningLabel]);
 
   return (
-    <div className="w-[320px] rounded-lg border border-border bg-card p-3 shadow-lg text-foreground">
+    <div className="w-full rounded-md border border-foreground/15 bg-card p-3 shadow-xl text-foreground">
       <div className="flex items-center gap-2 mb-2">
-        {allDone ? (
+        {(allDone || failed) && state.icon ? (
+          <state.icon
+            className={`h-4 w-4 shrink-0 ${failed ? "text-destructive" : "text-green-500"}`}
+          />
+        ) : allDone ? (
           <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
         ) : failed ? (
           <XCircle className="h-4 w-4 text-destructive shrink-0" />
@@ -53,6 +69,11 @@ export function MultiStepToast({ state }: { state: MultiStepState }) {
         <span className="ml-auto text-caption text-muted-foreground shrink-0">
           {completedCount}/{total}
         </span>
+        {failed && onDismiss && (
+          <IconButton size="sm" variant="subtle" title="Dismiss" onClick={onDismiss}>
+            <X className="h-3.5 w-3.5" />
+          </IconButton>
+        )}
       </div>
 
       {/* Progress bar */}
@@ -90,7 +111,18 @@ export function MultiStepToast({ state }: { state: MultiStepState }) {
       </div>
 
       {state.error && (
-        <p className="mt-2 text-label text-destructive truncate">{state.error}</p>
+        <div className="mt-2 flex items-start gap-1">
+          <p className="text-label text-destructive line-clamp-4 whitespace-pre-wrap break-words">
+            {state.error}
+          </p>
+          <CopyButton
+            text={`${state.title}
+
+${state.error}`}
+            title="Copy full error"
+            className="ml-auto shrink-0"
+          />
+        </div>
       )}
     </div>
   );

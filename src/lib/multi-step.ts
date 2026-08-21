@@ -1,15 +1,17 @@
 import { toast } from "sonner";
 import { createElement } from "react";
 import { MultiStepToast, type MultiStepState } from "@/components/ui/multi-step-toast";
+import { actionIcon, type ActionName } from "@/lib/action-icons";
 
 export class MultiStepAction {
   private state: MultiStepState;
   private toastId: string | number;
   private stepStart = 0;
 
-  constructor(title: string, stepLabels: string[]) {
+  constructor(title: string, stepLabels: string[], action?: ActionName) {
     this.state = {
       title,
+      icon: action ? actionIcon(action) : undefined,
       steps: stepLabels.map((label) => ({ label, status: "pending" })),
     };
     this.toastId = toast.custom(() => createElement(MultiStepToast, { state: { ...this.state } }), {
@@ -35,7 +37,7 @@ export class MultiStepAction {
   failStep(index: number, error: string): void {
     this.state.steps[index] = { ...this.state.steps[index], status: "failed" };
     this.state.error = error;
-    this.render(5000);
+    this.render();
   }
 
   finish(autoDismissMs = 3000): void {
@@ -55,9 +57,10 @@ export class MultiStepAction {
       ...this.state,
       steps: this.state.steps.map((s) => ({ ...s })),
     };
-    toast.custom(() => createElement(MultiStepToast, { state: snapshot }), {
-      id: this.toastId,
-      duration: duration ?? Infinity,
-    });
+    toast.custom(
+      () =>
+        createElement(MultiStepToast, { state: snapshot, onDismiss: () => this.dismiss() }),
+      { id: this.toastId, duration: duration ?? Infinity },
+    );
   }
 }

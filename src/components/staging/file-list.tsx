@@ -3,7 +3,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ChevronLeft,
   Plus,
   Minus,
   Trash2,
@@ -13,11 +12,6 @@ import {
   Pencil,
   ArrowRightLeft,
   HelpCircle,
-  Archive,
-  ExternalLink,
-  Copy,
-  Undo2,
-  Save,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import React, { useCallback, useMemo, useRef, useState } from "react";
@@ -48,6 +42,7 @@ import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { RowDragHandle } from "@/components/ui/row-drag-handle";
 import { useSplitRatio, splitGrowStyle, useDragHeight } from "@/hooks/use-split-ratio";
+import { ACTION_ICONS } from "@/lib/action-icons";
 
 /** Returns true if the file path matches an LFS glob pattern (e.g. "*.psd"). */
 function matchesLfsPattern(filePath: string, pattern: string): boolean {
@@ -1398,22 +1393,22 @@ function buildFileContextMenuItems(
 
   // Stage / unstage
   if (isStaged) {
-    items.push({ label: "Unstage file", onClick: () => unstage([file.path]), icon: Minus });
+    items.push({ label: "Unstage file", onClick: () => unstage([file.path]), icon: ACTION_ICONS.Unstage });
   } else {
-    items.push({ label: "Stage file", onClick: () => stage([file.path]), icon: Plus });
+    items.push({ label: "Stage file", onClick: () => stage([file.path]), icon: ACTION_ICONS.Stage });
   }
 
   // Stash (only for unstaged files)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: "Stash this file", onClick: () => stashFiles([file.path]), icon: Archive, writesRepo: true });
+    items.push({ label: "Stash this file", onClick: () => stashFiles([file.path]), icon: ACTION_ICONS["Stash Files"], writesRepo: true });
   }
 
   items.push({ separator: true });
 
   // External
-  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path), icon: ExternalLink });
-  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path), icon: FolderOpen });
+  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path), icon: ACTION_ICONS["Open in Editor"] });
+  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path), icon: ACTION_ICONS["Show in Folder"] });
 
   items.push({ separator: true });
 
@@ -1421,7 +1416,7 @@ function buildFileContextMenuItems(
   items.push({
     label: "Copy file path",
     onClick: () => navigator.clipboard.writeText(file.path),
-    icon: Copy,
+    icon: ACTION_ICONS.Copy,
   });
 
   items.push({ separator: true });
@@ -1431,13 +1426,13 @@ function buildFileContextMenuItems(
     label: "Discard changes",
     onClick: () => discard(file.path),
     destructive: true,
-    icon: Undo2,
+    icon: ACTION_ICONS.Discard,
   });
   items.push({
     label: "Delete file",
     onClick: () => deleteFile(file.path),
     destructive: true,
-    icon: Trash2,
+    icon: ACTION_ICONS["Delete File"],
   });
 
   return items;
@@ -1458,21 +1453,21 @@ function buildFolderContextMenuItems(
 
   // Stage / unstage
   if (isStaged) {
-    items.push({ label: `Unstage folder (${count} files)`, onClick: () => unstage(paths), icon: Minus });
+    items.push({ label: `Unstage folder (${count} files)`, onClick: () => unstage(paths), icon: ACTION_ICONS.Unstage });
   } else {
-    items.push({ label: `Stage folder (${count} files)`, onClick: () => stage(paths), icon: Plus });
+    items.push({ label: `Stage folder (${count} files)`, onClick: () => stage(paths), icon: ACTION_ICONS.Stage });
   }
 
   // Stash (only for unstaged)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: "Stash folder", onClick: () => stashFiles(paths), icon: Archive, writesRepo: true });
+    items.push({ label: "Stash folder", onClick: () => stashFiles(paths), icon: ACTION_ICONS["Stash Files"], writesRepo: true });
   }
 
   items.push({ separator: true });
 
   // External
-  items.push({ label: "Open folder", onClick: () => showInFolder(folderPath), icon: FolderOpen });
+  items.push({ label: "Open folder", onClick: () => showInFolder(folderPath), icon: ACTION_ICONS["Show in Folder"] });
 
   items.push({ separator: true });
 
@@ -1481,7 +1476,7 @@ function buildFolderContextMenuItems(
     label: "Discard folder changes",
     onClick: () => discard(paths),
     destructive: true,
-    icon: Undo2,
+    icon: ACTION_ICONS.Discard,
   });
 
   return items;
@@ -1500,15 +1495,15 @@ function buildBatchContextMenuItems(
 
   // Stage / unstage
   if (isStaged) {
-    items.push({ label: `Unstage ${count} files`, onClick: () => unstage(paths), icon: Minus });
+    items.push({ label: `Unstage ${count} files`, onClick: () => unstage(paths), icon: ACTION_ICONS.Unstage });
   } else {
-    items.push({ label: `Stage ${count} files`, onClick: () => stage(paths), icon: Plus });
+    items.push({ label: `Stage ${count} files`, onClick: () => stage(paths), icon: ACTION_ICONS.Stage });
   }
 
   // Stash (only for unstaged)
   if (!isStaged) {
     items.push({ separator: true });
-    items.push({ label: `Stash ${count} files`, onClick: () => stashFiles(paths), icon: Archive, writesRepo: true });
+    items.push({ label: `Stash ${count} files`, onClick: () => stashFiles(paths), icon: ACTION_ICONS["Stash Files"], writesRepo: true });
   }
 
   items.push({ separator: true });
@@ -1518,7 +1513,7 @@ function buildBatchContextMenuItems(
     label: `Discard ${count} files`,
     onClick: () => discard(paths),
     destructive: true,
-    icon: Undo2,
+    icon: ACTION_ICONS.Discard,
   });
 
   return items;
@@ -1538,13 +1533,13 @@ function buildConflictContextMenuItems(
   items.push({
     label: "Accept Ours",
     onClick: () => resolveOurs(file.path),
-    icon: ChevronRight,
+    icon: ACTION_ICONS["Accept Ours"],
     iconClassName: "opacity-100 text-[var(--conflict-ours-text)]",
   });
   items.push({
     label: "Accept Theirs",
     onClick: () => resolveTheirs(file.path),
-    icon: ChevronLeft,
+    icon: ACTION_ICONS["Accept Theirs"],
     iconClassName: "opacity-100 text-[var(--conflict-theirs-text)]",
   });
 
@@ -1552,21 +1547,21 @@ function buildConflictContextMenuItems(
     items.push({
       label: "Save Resolution",
       onClick: () => resolveManual(file.path, outputText),
-      icon: Save,
+      icon: ACTION_ICONS["Resolve Conflict"],
     });
   }
 
   items.push({ separator: true });
 
-  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path), icon: ExternalLink });
-  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path), icon: FolderOpen });
+  items.push({ label: "Open in default editor", onClick: () => openInEditor(file.path), icon: ACTION_ICONS["Open in Editor"] });
+  items.push({ label: "Show in folder", onClick: () => showInFolder(file.path), icon: ACTION_ICONS["Show in Folder"] });
 
   items.push({ separator: true });
 
   items.push({
     label: "Copy file path",
     onClick: () => navigator.clipboard.writeText(file.path),
-    icon: Copy,
+    icon: ACTION_ICONS.Copy,
   });
 
   return items;

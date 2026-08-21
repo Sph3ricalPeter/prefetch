@@ -16,7 +16,7 @@ import { IconButton, iconButtonVariants } from "@/components/ui/icon-button";
 import { SettingsHeader } from "./settings-card";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
-import { toast } from "sonner";
+import { showError, showSuccess } from "@/lib/toast";
 import { useProfileStore } from "@/stores/profile-store";
 import { useRepoStore } from "@/stores/repo-store";
 import { getProfileForgeHosts, type ProfileForgeHost } from "@/lib/database";
@@ -705,14 +705,14 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
       await saveForgeTokenCmd(host, tokenInput.trim(), profileId);
       setEditingHost(null);
       setTokenInput("");
-      toast.success("Token saved");
+      showSuccess("Save Token", "Token saved");
       loadForgeStatus().catch(() => {});
       setLoadingInfo(true);
       const info = await fetchHostTokenInfo(host);
       setTokenInfos((prev) => ({ ...prev, [host]: info }));
       setLoadingInfo(false);
     } catch (e) {
-      toast.error(String(e));
+      showError("Save Token", e);
     } finally {
       setSaving(false);
     }
@@ -722,10 +722,10 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
     try {
       await deleteForgeTokenCmd(host, profileId);
       setTokenInfos((prev) => ({ ...prev, [host]: null }));
-      toast.success("Token removed");
+      showSuccess("Remove Token", "Token removed");
       loadForgeStatus().catch(() => {});
     } catch (e) {
-      toast.error(String(e));
+      showError("Remove Token", e);
     }
   };
 
@@ -733,7 +733,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
     setOauthWaitingHost(host);
     try {
       await startOAuthFlow(provider, profileId);
-      toast.success("Authenticated via OAuth");
+      showSuccess("Authenticate", "Authenticated via OAuth");
       loadForgeStatus().catch(() => {});
       setLoadingInfo(true);
       const info = await fetchHostTokenInfo(host);
@@ -741,7 +741,7 @@ function ForgeTokensSection({ profileId }: { profileId: string }) {
       setLoadingInfo(false);
     } catch (e) {
       const msg = String(e);
-      if (!msg.includes("cancelled")) toast.error(msg);
+      if (!msg.includes("cancelled")) showError("Authenticate", e);
     } finally {
       setOauthWaitingHost(null);
     }

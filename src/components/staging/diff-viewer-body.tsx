@@ -8,7 +8,13 @@ import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { useInViewSearch } from "@/hooks/use-in-view-search";
 import { SearchNav } from "@/components/ui/search-nav";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
-import { Plus, Check, Minus, UnfoldVertical, RotateCcw, Copy } from "lucide-react";
+import {
+  Plus,
+  Check,
+  Minus,
+  UnfoldVertical,
+  RotateCcw,
+} from "lucide-react";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import type { ExpandableContext } from "@/hooks/use-expandable-context";
@@ -19,11 +25,13 @@ import { LINE_CONTAINMENT, SCROLL_CONTAINER_STYLE } from "@/lib/diff-styles";
 import { useDiffLineSelection } from "@/hooks/use-diff-line-selection";
 import { buildSelectionRef, buildSelectionContent } from "@/lib/diff-selection";
 import { toast } from "sonner";
+import { successIcon } from "@/lib/toast";
+import { ACTION_ICONS } from "@/lib/action-icons";
 
 /** Write text to the clipboard and surface a toast (success or failure). */
 function copyWithToast(text: string, message: string, description?: string) {
   navigator.clipboard.writeText(text).then(
-    () => toast.success(message, description ? { description } : undefined),
+    () => toast.success(message, { icon: successIcon("Copy"), ...(description ? { description } : {}) }),
     () => toast.error("Failed to copy to clipboard"),
   );
 }
@@ -313,14 +321,14 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
       stageItems.push({
         label: `${actionLabel} ${selectedLines.size} selected line${selectedLines.size > 1 ? "s" : ""}`,
         onClick: handleApplySelected,
-        icon: staged ? Minus : Plus,
+        icon: staged ? ACTION_ICONS.Unstage : ACTION_ICONS.Stage,
       });
     }
     if (interactive && hunkIndex !== null) {
       stageItems.push({
         label: `${actionLabel} this hunk`,
         onClick: () => handleApplyHunk(hunkIndex),
-        icon: staged ? Minus : Plus,
+        icon: staged ? ACTION_ICONS.Unstage : ACTION_ICONS.Stage,
       });
     }
 
@@ -328,13 +336,13 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
     // whole selection (regardless of which line was right-clicked), mirroring
     // the stage actions. Without a selection, copy just the right-clicked line.
     if (selectedLines.size > 0) {
-      copyItems.push({ label: "Copy selection reference", onClick: copySelectionRef, icon: Copy });
-      copyItems.push({ label: "Copy line content", onClick: copySelectionContent, icon: Copy });
+      copyItems.push({ label: "Copy selection reference", onClick: copySelectionRef, icon: ACTION_ICONS.Copy });
+      copyItems.push({ label: "Copy line content", onClick: copySelectionContent, icon: ACTION_ICONS.Copy });
     } else if (line) {
       copyItems.push({
         label: "Copy line content",
         onClick: () => copyWithToast(line.content, "Copied line content"),
-        icon: Copy,
+        icon: ACTION_ICONS.Copy,
       });
     }
 

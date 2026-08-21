@@ -1,12 +1,7 @@
 import { create } from "zustand";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { toast } from "sonner";
-
-/** Safely extract an error message string from an unknown catch value. */
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
+import { errorMessage, showError } from "@/lib/toast";
 
 export type UpdateStatus =
   | "idle"
@@ -95,10 +90,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       }
 
       set({ status: "error", error: message });
-      toast.error("Update check failed", {
-        description: message,
-        duration: 8000,
-      });
+      showError("Update check failed", message);
     }
   },
 
@@ -133,10 +125,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
     } catch (err) {
       const message = errorMessage(err);
       set({ status: "error", error: message });
-      toast.error("Update download failed", {
-        description: message,
-        duration: 8000,
-      });
+      showError("Update download failed", message);
     }
   },
 
@@ -147,10 +136,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
     } catch (err) {
       const message = errorMessage(err);
       set({ status: "error", error: message });
-      toast.error("Update restart failed", {
-        description: message,
-        duration: 8000,
-      });
+      showError("Update restart failed", message);
     }
   },
 

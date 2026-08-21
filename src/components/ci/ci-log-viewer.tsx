@@ -14,6 +14,7 @@ import {
   Copy,
 } from "lucide-react";
 import { toast } from "sonner";
+import { showSuccess } from "@/lib/toast";
 import { IconButton } from "@/components/ui/icon-button";
 import { useRepoStore } from "@/stores/repo-store";
 import { openUrl } from "@/lib/commands";
@@ -26,6 +27,7 @@ import { useInViewSearch } from "@/hooks/use-in-view-search";
 import { SearchNav } from "@/components/ui/search-nav";
 import { ContextMenu, type ContextMenuItem } from "@/components/ui/context-menu";
 import { stripAnsi } from "@/lib/text-search";
+import { ACTION_ICONS } from "@/lib/action-icons";
 
 /**
  * Convert basic ANSI escape codes to styled HTML spans.
@@ -287,7 +289,7 @@ export function CiLogViewer() {
   const copyLog = () => {
     if (ciJobLog == null) return;
     navigator.clipboard.writeText(stripAnsi(ciJobLog)).then(
-      () => toast.success("Copied log"),
+      () => showSuccess("Copy", "Copied log"),
       () => toast.error("Failed to copy to clipboard"),
     );
   };
@@ -296,7 +298,7 @@ export function CiLogViewer() {
   const copySection = (lines: LogLine[]) => {
     const text = lines.map((l) => stripAnsi(l.content)).join("\n");
     navigator.clipboard.writeText(text).then(
-      () => toast.success("Copied section"),
+      () => showSuccess("Copy", "Copied section"),
       () => toast.error("Failed to copy to clipboard"),
     );
   };
@@ -339,14 +341,14 @@ export function CiLogViewer() {
         label: "Copy",
         onClick: () =>
           navigator.clipboard.writeText(selectedText).then(
-            () => toast.success("Copied"),
+            () => showSuccess("Copy", "Copied"),
             () => toast.error("Failed to copy to clipboard"),
           ),
-        icon: Copy,
+        icon: ACTION_ICONS.Copy,
       });
     }
     if (ciJobLog != null) {
-      items.push({ label: "Copy log", onClick: copyLog, icon: Copy });
+      items.push({ label: "Copy log", onClick: copyLog, icon: ACTION_ICONS.Copy });
     }
     if (items.length === 0) return;
     e.preventDefault();

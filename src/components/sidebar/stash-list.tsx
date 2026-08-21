@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   Archive,
   ArchiveRestore,
-  ArrowDownToLine,
   Trash2,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
@@ -19,6 +18,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { SectionHeader } from "@/components/ui/section-header";
 import { cn } from "@/lib/utils";
+import { ACTION_ICONS } from "@/lib/action-icons";
 
 export function StashList() {
   const stashes = useRepoStore((s) => s.stashes);
@@ -164,19 +164,19 @@ function buildStashContextMenuItems(
       label: "Apply (keep in stash list)",
       onClick: () => applyStash(index),
       writesRepo: true,
-      icon: ArrowDownToLine,
+      icon: ACTION_ICONS["Apply Stash"],
     },
     {
       label: "Pop (apply & remove)",
       onClick: () => popStash(index),
       writesRepo: true,
-      icon: ArchiveRestore,
+      icon: ACTION_ICONS["Pop Stash"],
     },
     {
       label: "Drop (discard)",
       onClick: () => dropStash(index),
       destructive: true,
-      icon: Trash2,
+      icon: ACTION_ICONS["Drop Stash"],
     },
   ];
 }

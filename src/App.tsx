@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { AppLayout } from "@/components/layout/app-layout";
-import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
@@ -300,7 +299,6 @@ function App() {
       <DevToolsBlocker />
       <FilterSearchHotkey />
       <EscapeStack />
-      <Toaster />
     </TooltipProvider>
   );
 }

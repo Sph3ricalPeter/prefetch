@@ -21,6 +21,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
 import { toast } from "sonner";
+import { showError, showSuccess } from "@/lib/toast";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { listForgeRepos, cloneRepo, checkProfileToken } from "@/lib/commands";
@@ -573,7 +574,7 @@ function CloneFooter({
         if (profileId) setUiState(`clone_dir:${profileId}`, parentDir);
         setUiState("clone_dir", parentDir);
       }
-      toast.success("Clone complete", { id: toastId });
+      showSuccess("Clone Repository", "Clone complete", { id: toastId });
       onClose();
       await openRepository(targetPath);
       // Activate the profile that was used for cloning so the repo inherits
@@ -583,8 +584,7 @@ function CloneFooter({
         await useProfileStore.getState().activateProfile(cloneProfile);
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast.error(msg, { id: toastId });
+      showError("Clone Repository", e, { id: toastId });
     } finally {
       unlisten();
       setCloning(false);

@@ -9,23 +9,18 @@ import {
   Square,
   X,
   Copy,
-  RefreshCw,
-  ArrowDownToLine,
-  ArrowUpFromLine,
   ChevronDown,
   FolderOpen,
   FolderGit2,
   GitBranch,
-  Undo2,
-  Archive,
-  ArchiveRestore,
-  GitBranchPlus,
   MoreHorizontal,
   Download,
   Check,
   ExternalLink,
   Settings,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { ACTION_ICONS } from "@/lib/action-icons";
 import { IconButton } from "@/components/ui/icon-button";
 import { DropdownPanel } from "@/components/ui/dropdown-panel";
 import { usePausedOperation } from "@/hooks/use-paused-operation";
@@ -242,20 +237,24 @@ function TitlebarRepoSwitcher({ onOpenClone }: { onOpenClone?: () => void }) {
   }, [openRepository]);
 
   if (!repoPath) {
+    // Aliased to Capitalized locals: JSX can't render a bracket-keyed member
+    // expression as a tag.
+    const OpenRepoIcon = ACTION_ICONS["Open Repository"];
+    const CloneIcon = ACTION_ICONS["Clone Repository"];
     return (
       <div className="flex items-center gap-1.5">
         <button
           onClick={handleOpenRepo}
           className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
-          <FolderOpen className="h-3.5 w-3.5" />
+          <OpenRepoIcon className="h-3.5 w-3.5" />
           <span>Open</span>
         </button>
         <button
           onClick={() => { onOpenClone?.(); }}
           className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
-          <Download className="h-3.5 w-3.5" />
+          <CloneIcon className="h-3.5 w-3.5" />
           <span>Clone</span>
         </button>
       </div>
@@ -481,7 +480,7 @@ function TitlebarActionsGroup() {
       {undoInfo?.can_undo && (
         <>
           <TitlebarActionButton
-            icon={<Undo2 className="h-3.5 w-3.5" />}
+            icon={ACTION_ICONS.Undo}
             label="Undo"
             tooltip={undoInfo.description}
             onClick={undoAction}
@@ -493,13 +492,13 @@ function TitlebarActionsGroup() {
 
       {/* Stash / Pop */}
       <TitlebarActionButton
-        icon={<Archive className="h-3.5 w-3.5" />}
+        icon={ACTION_ICONS["Stash Changes"]}
         label="Stash"
         onClick={() => pushStash()}
         disabled={isLoading || blocked || fileStatuses.length === 0}
       />
       <TitlebarActionButton
-        icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+        icon={ACTION_ICONS["Pop Stash"]}
         label="Pop"
         onClick={() => popStash(0)}
         disabled={isLoading || blocked || stashes.length === 0}
@@ -509,20 +508,20 @@ function TitlebarActionsGroup() {
 
       {/* Fetch / Pull / Push */}
       <TitlebarActionButton
-        icon={<RefreshCw className="h-3.5 w-3.5" />}
+        icon={ACTION_ICONS.Fetch}
         label="Fetch"
         tooltip={lastFetch ? `Last fetched ${formatTimeAgo(lastFetch)}` : "Never fetched"}
         onClick={() => void fetchAction().finally(refreshLastFetch)}
         disabled={isLoading}
       />
       <TitlebarActionButton
-        icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+        icon={ACTION_ICONS.Pull}
         label="Pull"
         onClick={pullAction}
         disabled={isLoading || blocked}
       />
       <TitlebarActionButton
-        icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
+        icon={ACTION_ICONS.Push}
         label="Push"
         onClick={pushAction}
         disabled={isLoading || blocked}
@@ -553,7 +552,7 @@ function TitlebarActionsGroup() {
         />
       ) : (
         <TitlebarActionButton
-          icon={<GitBranchPlus className="h-3.5 w-3.5" />}
+          icon={ACTION_ICONS["Create Branch"]}
           label="Branch"
             onClick={() => setShowBranchInput(true)}
           disabled={isLoading || blocked}
@@ -689,7 +688,7 @@ function CollapsedActionsDropdown({
           {undoInfo?.can_undo && (
             <>
               <DropdownActionItem
-                icon={<Undo2 className="h-3.5 w-3.5" />}
+                icon={ACTION_ICONS.Undo}
                 label="Undo"
                 sublabel={blockedTip ?? undoInfo.description}
                 disabled={isLoading || blocked}
@@ -701,14 +700,14 @@ function CollapsedActionsDropdown({
 
           {/* Stash / Pop */}
           <DropdownActionItem
-            icon={<Archive className="h-3.5 w-3.5" />}
+            icon={ACTION_ICONS["Stash Changes"]}
             label="Stash"
             sublabel={blockedTip}
             disabled={isLoading || blocked || fileStatuses.length === 0}
             onClick={() => { pushStash(); setIsOpen(false); }}
           />
           <DropdownActionItem
-            icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+            icon={ACTION_ICONS["Pop Stash"]}
             label="Pop"
             sublabel={blockedTip}
             disabled={isLoading || blocked || stashes.length === 0}
@@ -718,21 +717,21 @@ function CollapsedActionsDropdown({
 
           {/* Fetch / Pull / Push */}
           <DropdownActionItem
-            icon={<RefreshCw className="h-3.5 w-3.5" />}
+            icon={ACTION_ICONS.Fetch}
             label="Fetch"
             sublabel={lastFetch ? formatTimeAgo(lastFetch) : undefined}
             disabled={isLoading}
             onClick={() => { void fetchAction().finally(refreshLastFetch); setIsOpen(false); }}
           />
           <DropdownActionItem
-            icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+            icon={ACTION_ICONS.Pull}
             label="Pull"
             sublabel={blockedTip}
             disabled={isLoading || blocked}
             onClick={() => { pullAction(); setIsOpen(false); }}
           />
           <DropdownActionItem
-            icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
+            icon={ACTION_ICONS.Push}
             label="Push"
             sublabel={blockedTip}
             disabled={isLoading || blocked}
@@ -766,7 +765,7 @@ function CollapsedActionsDropdown({
             </div>
           ) : (
             <DropdownActionItem
-              icon={<GitBranchPlus className="h-3.5 w-3.5" />}
+              icon={ACTION_ICONS["Create Branch"]}
               label="Branch"
               sublabel={blockedTip}
               disabled={isLoading || blocked}
@@ -781,13 +780,13 @@ function CollapsedActionsDropdown({
 
 /** Single item inside the collapsed actions dropdown */
 function DropdownActionItem({
-  icon,
+  icon: Icon,
   label,
   sublabel,
   disabled,
   onClick,
 }: {
-  icon: React.ReactNode;
+  icon: LucideIcon;
   label: string;
   sublabel?: string;
   disabled: boolean;
@@ -799,7 +798,7 @@ function DropdownActionItem({
       disabled={disabled}
       className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
     >
-      {icon}
+      <Icon className="h-3.5 w-3.5" />
       <span>{label}</span>
       {sublabel && (
         <span className="ml-auto text-faint truncate max-w-24">{sublabel}</span>
@@ -810,13 +809,13 @@ function DropdownActionItem({
 
 /** Titlebar button with shadcn Tooltip instead of native title */
 function TitlebarActionButton({
-  icon,
+  icon: Icon,
   label,
   tooltip,
   onClick,
   disabled,
 }: {
-  icon: React.ReactNode;
+  icon: LucideIcon;
   label: string;
   tooltip?: string;
   onClick: () => void;
@@ -830,7 +829,7 @@ function TitlebarActionButton({
           disabled={disabled}
           className="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {icon}
+          <Icon className="h-3.5 w-3.5" />
           <span>{label}</span>
         </button>
       </TooltipTrigger>

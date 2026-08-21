@@ -2,9 +2,6 @@ import { useState } from "react";
 import {
   Tag,
   Plus,
-  ArrowUpFromLine,
-  Copy,
-  Trash2,
 } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import {
@@ -19,6 +16,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { SectionHeader } from "@/components/ui/section-header";
 import { cn } from "@/lib/utils";
+import { ACTION_ICONS } from "@/lib/action-icons";
 
 export function TagList() {
   const allTags = useRepoStore((s) => s.tags);
@@ -196,19 +194,19 @@ function buildTagContextMenuItems(
     {
       label: "Push to remote",
       onClick: () => pushTag(tagName),
-      icon: ArrowUpFromLine,
+      icon: ACTION_ICONS["Push Tag"],
     },
     {
       label: "Copy tag name",
       onClick: () => navigator.clipboard.writeText(tagName),
-      icon: Copy,
+      icon: ACTION_ICONS.Copy,
     },
     { separator: true },
     {
       label: `Delete ${tagName}…`,
       onClick: () => confirmDelete(tagName),
       destructive: true,
-      icon: Trash2,
+      icon: ACTION_ICONS["Delete Tag"],
     },
   ];
 }
