@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use crate::git::conflict;
-use crate::git::exec::{capture, capture_bytes, git_cmd, run_git, run_git_with_progress};
+use crate::git::exec::{capture, capture_bytes, run_git, run_git_stdin, run_git_with_progress};
 use crate::git::forge;
 use crate::git::graph::assign_lanes;
 use crate::git::parse;
@@ -1051,14 +1051,12 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
     // But only apply this fallback for genuinely untracked files; tracked files
     // can also produce empty diff output (e.g. working tree matches index).
     if diff_text.trim().is_empty() && !staged {
-        let is_tracked = git_cmd()
-            .args(["ls-files", "--error-unmatch", "--", file_path])
-            .current_dir(repo_path)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let is_tracked = capture(
+            repo_path,
+            &["ls-files", "--error-unmatch", "--", file_path],
+            &[],
+        )
+        .is_ok();
 
         if is_tracked {
             // File is in the index but has no unstaged changes — return empty diff
@@ -1245,39 +1243,15 @@ pub fn unstage_patch(repo_path: &str, patch_text: &str) -> Result<(), AppError> 
 }
 
 fn apply_patch_impl(repo_path: &str, patch_text: &str, reverse: bool) -> Result<(), AppError> {
-    use std::io::Write;
-    use std::process::Stdio;
-
     let mut args = vec!["apply", "--cached", "--unidiff-zero"];
     if reverse {
         args.push("--reverse");
     }
     args.push("-");
 
-    let mut child = git_cmd()
-        .args(&args)
-        .current_dir(repo_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| AppError::Other(format!("Failed to spawn git apply: {e}")))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(patch_text.as_bytes())
-            .map_err(|e| AppError::Other(format!("Failed to write patch to stdin: {e}")))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|e| AppError::Other(format!("Failed to wait for git apply: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(AppError::Git(format!("git apply failed: {stderr}")));
-    }
-
+    // Error passes through as-is: AppError::Git already renders as
+    // "Git error: <git's stderr>", and the toast names the action.
+    run_git_stdin(repo_path, &args, patch_text.as_bytes())?;
     Ok(())
 }
 
@@ -1824,75 +1798,6 @@ fn preflight_check_files(path: &str) -> Result<(), AppError> {
     }
 }
 
-/// Create a backup commit of all changes (tracked + untracked) via `git stash create`.
-/// Returns the commit hash, or None if there's nothing to back up.
-///
-/// `git stash create` only captures tracked files, so we temporarily stage
-/// everything (`git add -A`) and restore the original index afterwards via
-/// `git write-tree` / `git read-tree` to preserve the user's staging state.
-/// If `git add -A` itself fails (e.g. permission error), we still attempt
-/// the create so at least previously-tracked changes are captured.
-fn create_stash_backup(path: &str, extra_env: &[(String, String)]) -> Option<String> {
-    // Snapshot the current index so we can restore it exactly after the backup.
-    let saved_tree = run_git(path, &["write-tree"], extra_env)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    // Stage everything so untracked files are included in the snapshot.
-    let _ = run_git(path, &["add", "-A"], extra_env);
-
-    let hash = run_git(path, &["stash", "create"], extra_env)
-        .ok()
-        .and_then(|s| {
-            let h = s.trim().to_string();
-            if h.is_empty() || h == "Done" {
-                None
-            } else {
-                Some(h)
-            }
-        });
-
-    // Restore the original index state. `read-tree` replaces the index with the
-    // saved tree without touching the working tree, preserving staged/unstaged split.
-    if let Some(ref tree) = saved_tree {
-        let _ = run_git(path, &["read-tree", tree], extra_env);
-    } else {
-        let _ = run_git(path, &["reset"], extra_env);
-    }
-
-    hash
-}
-
-/// Store a backup stash commit so it shows up in `git stash list`.
-///
-/// Retrying a failed stash re-snapshots the same working tree, which would
-/// pile up identical `RECOVERED:` entries. `create_stash_backup` stages
-/// everything first, so the commit's tree captures tracked *and* untracked
-/// content — an existing entry with the same tree already holds these changes.
-fn store_stash_backup(
-    path: &str,
-    extra_env: &[(String, String)],
-    hash: Option<&str>,
-    message: Option<&str>,
-) {
-    let Some(hash) = hash else { return };
-
-    if let Ok(tree) = capture(path, &["rev-parse", &format!("{hash}^{{tree}}")], extra_env) {
-        let tree = tree.trim();
-        let existing =
-            capture(path, &["stash", "list", "--format=%T"], extra_env).unwrap_or_default();
-        if !tree.is_empty() && existing.lines().any(|line| line.trim() == tree) {
-            return;
-        }
-    }
-    let msg = format!(
-        "RECOVERED: {}",
-        message.unwrap_or("stash failed, changes saved here")
-    );
-    let _ = run_git(path, &["stash", "store", "-m", &msg, hash], extra_env);
-}
-
 /// Stash current changes (including untracked files).
 pub fn stash_push(
     path: &str,
@@ -1902,24 +1807,13 @@ pub fn stash_push(
     // Fail fast if any file is locked — before git modifies the working tree.
     preflight_check_files(path)?;
 
-    // Safety: snapshot all changes before `git stash push` touches the working tree.
-    // `git stash create` writes a commit object without modifying the worktree or refs.
-    // If the real stash fails mid-cleanup we store this commit so changes survive.
-    let backup_hash = create_stash_backup(path, extra_env);
-
     let mut args = vec!["stash", "push", "-u"];
     if let Some(msg) = message {
         args.push("-m");
         args.push(msg);
     }
 
-    match run_git(path, &args, extra_env) {
-        Ok(result) => Ok(result),
-        Err(e) => {
-            store_stash_backup(path, extra_env, backup_hash.as_deref(), message);
-            Err(e)
-        }
-    }
+    run_git(path, &args, extra_env)
 }
 
 /// Pop a stash entry (apply and remove from stash list).
@@ -2513,8 +2407,6 @@ pub fn stash_push_files(
         )));
     }
 
-    let backup_hash = create_stash_backup(path, extra_env);
-
     // `-u` so untracked paths in the selection are stashable — without it git
     // rejects the WHOLE batch with a pathspec error on the first untracked file.
     let mut args = vec!["stash", "push", "-u"];
@@ -2526,13 +2418,7 @@ pub fn stash_push_files(
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     args.extend(file_refs);
 
-    match run_git(path, &args, extra_env) {
-        Ok(result) => Ok(result),
-        Err(e) => {
-            store_stash_backup(path, extra_env, backup_hash.as_deref(), message);
-            Err(e)
-        }
-    }
+    run_git(path, &args, extra_env)
 }
 
 /// Open a file or folder in the OS file manager / explorer.
@@ -2723,6 +2609,9 @@ pub fn continue_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the test scaffolding builds a git Command directly; production code
+    // goes through exec.rs so every invocation takes the GIT_LOCK.
+    use crate::git::exec::git_cmd;
 
     fn init_temp_repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("create temp dir");
@@ -3359,29 +3248,86 @@ mod tests {
         assert!(get_status(p).unwrap().is_empty());
     }
 
+    /// Covers the stdin-fed mutation path (`run_git_stdin`) end to end: a patch
+    /// that never reaches git's stdin fails silently as "nothing staged".
     #[test]
-    fn store_stash_backup_skips_duplicate_content() {
+    fn stage_patch_stages_only_the_patched_hunk() {
         let dir = init_temp_repo();
         let p = dir.path().to_str().unwrap();
+
+        std::fs::write(
+            dir.path().join("a.txt"),
+            "one
+two
+",
+        )
+        .unwrap();
+        run_git(p, &["add", "a.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "add a"], &[]).unwrap();
+
+        std::fs::write(
+            dir.path().join("a.txt"),
+            "one
+two
+three
+",
+        )
+        .unwrap();
+        let patch = "diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -2,0 +3 @@
++three
+";
+        stage_patch(p, patch).unwrap();
+
+        assert_eq!(
+            capture(p, &["diff", "--cached", "--name-only"], &[])
+                .unwrap()
+                .trim(),
+            "a.txt"
+        );
+
+        unstage_patch(p, patch).unwrap();
+        assert!(capture(p, &["diff", "--cached", "--name-only"], &[])
+            .unwrap()
+            .trim()
+            .is_empty());
+    }
+
+    #[test]
+    fn stash_push_saves_tracked_and_untracked_and_pop_restores() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+
+        // init_temp_repo only commits .gitkeep — commit tracked.txt first, or
+        // this test silently covers the untracked path twice.
+        std::fs::write(dir.path().join("tracked.txt"), "v1").unwrap();
+        run_git(p, &["add", "tracked.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "add tracked"], &[]).unwrap();
 
         std::fs::write(dir.path().join("tracked.txt"), "change").unwrap();
         std::fs::write(dir.path().join("untracked.txt"), "new").unwrap();
 
-        let first = create_stash_backup(p, &[]);
-        assert!(first.is_some());
-        store_stash_backup(p, &[], first.as_deref(), None);
+        stash_push(p, Some("wip"), &[]).unwrap();
+        // Tracked file went back to its committed content, untracked one is gone.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+            "v1"
+        );
+        assert!(!dir.path().join("untracked.txt").exists());
         assert_eq!(list_stashes(p).unwrap().len(), 1);
+        assert!(get_status(p).unwrap().is_empty());
 
-        // Same working tree → second failed attempt must not add another entry.
-        let second = create_stash_backup(p, &[]);
-        store_stash_backup(p, &[], second.as_deref(), None);
-        assert_eq!(list_stashes(p).unwrap().len(), 1);
-
-        // Different content → a new entry is stored.
-        std::fs::write(dir.path().join("untracked.txt"), "different").unwrap();
-        let third = create_stash_backup(p, &[]);
-        store_stash_backup(p, &[], third.as_deref(), None);
-        assert_eq!(list_stashes(p).unwrap().len(), 2);
+        stash_pop(p, 0).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+            "change"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("untracked.txt")).unwrap(),
+            "new"
+        );
     }
 
     /// A paused rebase must be inert to undo: the top reflog entry is the

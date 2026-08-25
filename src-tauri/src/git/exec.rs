@@ -15,9 +15,10 @@
 
 use crate::error::AppError;
 use crate::git::profile::ActiveProfile;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::RwLock;
 
 /// Configure a Command to hide the console window on Windows.
 /// Without this, every `git` subprocess opens a visible terminal flash.
@@ -40,6 +41,39 @@ pub(crate) fn git_cmd() -> Command {
     let mut cmd = Command::new("git");
     hide_console_window(&mut cmd);
     cmd
+}
+
+/// Serializes git subprocesses so a read never runs while the worktree is
+/// being rewritten.
+///
+/// Reads ([`capture`]) take the read lock and still run concurrently with each
+/// other; worktree/index mutations ([`run_git`]) take the write lock. Without
+/// this, the 5-second status poll can hash a file at the moment `checkout` or
+/// `stash` is replacing it — git bails with `short read while indexing <path>`
+/// and the poll surfaces a "Load Status" error — and both processes fight over
+/// `index.lock`, which on Windows turns a stash into a retry loop.
+///
+/// The guard is scoped to the `output()` call alone, never held across the
+/// error-enrichment paths that call back into `capture` (that would deadlock:
+/// `std::sync::RwLock` is not reentrant).
+///
+/// Two exemptions, both for long-running commands that touch neither the index
+/// nor the worktree: `fetch` / `push` / `clone` in [`run_git_with_progress`]
+/// (`pull` there *is* locked — it ends by rewriting the working tree), and
+/// `git lfs prune`, which only deletes objects under `.git/lfs`. Holding the
+/// write lock across a network transfer or a multi-minute prune would stall
+/// every read for its whole duration.
+///
+/// ponytail: one lock for all repos — fine for a single-repo UI. Key it by repo
+/// path if multi-repo windows ever run git concurrently.
+static GIT_LOCK: RwLock<()> = RwLock::new(());
+
+fn lock_read() -> std::sync::RwLockReadGuard<'static, ()> {
+    GIT_LOCK.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn lock_write() -> std::sync::RwLockWriteGuard<'static, ()> {
+    GIT_LOCK.write().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Build environment variable overrides for git commands from the active profile.
@@ -165,16 +199,19 @@ pub(crate) fn run_git(
     const MAX_RETRIES: u32 = 3;
     const RETRY_DELAY_MS: u64 = 200;
 
+    // See GIT_LOCK: prune is long and confined to the LFS object store.
+    let needs_lock = !matches!(args, ["lfs", "prune", ..]);
+
     for attempt in 0..MAX_RETRIES {
         let mut cmd = git_cmd();
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
-        let output = cmd
-            .args(args)
-            .current_dir(path)
-            .output()
-            .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+        let output = {
+            let _guard = needs_lock.then(lock_write);
+            cmd.args(args).current_dir(path).output()
+        }
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -236,17 +273,52 @@ pub(crate) fn capture_bytes(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    let output = cmd
-        .args(args)
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+    let output = {
+        let _guard = lock_read();
+        cmd.args(args).current_dir(path).output()
+    }
+    .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(AppError::Git(stderr));
     }
     Ok(output.stdout)
+}
+
+/// Run a git **mutation** that reads its input from stdin (`git apply --cached -`).
+///
+/// Separate from [`run_git`] only because the payload has to be streamed into
+/// the child, which `Command::output()` can't do. Same write lock, same
+/// [`AppError::Git`] on failure. No `index.lock` retry: the lock is what keeps
+/// our own reads off the index, and an outside git process holding it is a
+/// case the retry never reliably covered anyway.
+pub(crate) fn run_git_stdin(path: &str, args: &[&str], input: &[u8]) -> Result<String, AppError> {
+    let _guard = lock_write();
+    let mut child = git_cmd()
+        .args(args)
+        .current_dir(path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Other(format!("Failed to run git: {e}")))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input)
+            .map_err(|e| AppError::Other(format!("Failed to write to git stdin: {e}")))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| AppError::Other(format!("Failed to wait for git: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::Git(stderr));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Run a git CLI command with real-time progress streaming.
@@ -268,6 +340,12 @@ pub(crate) fn run_git_with_progress<F: Fn(&str)>(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
+    // A pull ends by merging into the working tree, so it takes the same write
+    // lock as any other mutation — held for the whole stream, network phase
+    // included, since there's no seam between fetch and merge here. fetch /
+    // push / clone leave the worktree alone and stay unlocked.
+    let _guard = args.contains(&"pull").then(lock_write);
+
     let mut child = cmd
         .args(args)
         .current_dir(path)

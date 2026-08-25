@@ -4,7 +4,7 @@
 //! Windows console-window suppression and error handling are consistent.
 
 use crate::error::AppError;
-use crate::git::exec::{git_cmd, run_git};
+use crate::git::exec::{capture, git_cmd, run_git};
 use crate::git::types::{LfsFileInfo, LfsInfo, LfsTrackPattern};
 use std::path::Path;
 use tracing::{debug, warn};
@@ -60,13 +60,8 @@ pub fn lfs_install(path: &str) -> Result<String, AppError> {
 /// Parses `git lfs track` output. Each line looks like:
 ///   `    *.psd (stored in .gitattributes)`
 pub fn lfs_track_list(path: &str) -> Result<Vec<LfsTrackPattern>, AppError> {
-    let out = git_cmd()
-        .args(["lfs", "track"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git lfs track: {e}")))?;
-
-    let text = String::from_utf8_lossy(&out.stdout);
+    // Best-effort: no LFS installed / not a repo → no patterns, not an error.
+    let text = capture(path, &["lfs", "track"], &[]).unwrap_or_default();
     let mut patterns = Vec::new();
 
     for line in text.lines() {
@@ -110,18 +105,8 @@ pub fn lfs_prune(path: &str) -> Result<String, AppError> {
 /// Parses `git lfs ls-files -s` output. Each line looks like:
 ///   `abc123def456 * path/to/file.psd (1.2 MB)`
 pub fn lfs_ls_files(path: &str) -> Result<Vec<LfsFileInfo>, AppError> {
-    let out = git_cmd()
-        .args(["lfs", "ls-files", "-s"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run git lfs ls-files: {e}")))?;
-
-    if !out.status.success() {
-        // Not an error if LFS isn't installed or no files tracked
-        return Ok(Vec::new());
-    }
-
-    let text = String::from_utf8_lossy(&out.stdout);
+    // Not an error if LFS isn't installed or no files are tracked.
+    let text = capture(path, &["lfs", "ls-files", "-s"], &[]).unwrap_or_default();
     let mut files = Vec::new();
 
     for line in text.lines() {
