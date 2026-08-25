@@ -33,6 +33,15 @@ const LANG_MAP: Record<string, string> = {
   markdown: "markdown",
   yaml: "yaml",
   yml: "yaml",
+  // Unity serialized assets — YAML unless the project forces binary
+  // serialization, in which case the diff is binary and never reaches us.
+  asset: "yaml",
+  meta: "yaml",
+  prefab: "yaml",
+  unity: "yaml",
+  anim: "yaml",
+  controller: "yaml",
+  mat: "yaml",
   dockerfile: "docker",
   xml: "xml",
   sh: "bash",
