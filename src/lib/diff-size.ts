@@ -11,6 +11,16 @@ import type { ConflictContents, FileDiff } from "@/types/git";
 const RENDER_CHAR_LIMIT = 500_000;
 const RENDER_LINE_CHAR_LIMIT = 20_000;
 
+/**
+ * Row cap, because character volume is only a proxy for what rendering costs.
+ * Each diff row is ~11 DOM nodes (wrapper, checkbox, two gutters, origin, token
+ * spans), so weight tracks row *count*, not bytes. Unity `.prefab` diffs are the
+ * case the char limits miss: short lines mean ~14k rows fit under 500k chars,
+ * which is ~150k nodes and seconds of mount time. 10k rows is where a diff stops
+ * mounting in roughly one frame budget's worth of work on a cold view.
+ */
+const RENDER_ROW_LIMIT = 10_000;
+
 function hasLongLine(text: string): boolean {
   let start = 0;
   for (;;) {
@@ -24,13 +34,15 @@ function hasLongLine(text: string): boolean {
 /** True when a diff is too heavy to render without asking the user first. */
 export function isHeavyDiff(diff: FileDiff): boolean {
   let total = 0;
+  let rows = 0;
   for (const hunk of diff.hunks) {
+    rows += hunk.lines.length;
     for (const line of hunk.lines) {
       if (line.content.length > RENDER_LINE_CHAR_LIMIT) return true;
       total += line.content.length;
     }
   }
-  return total > RENDER_CHAR_LIMIT;
+  return total > RENDER_CHAR_LIMIT || rows > RENDER_ROW_LIMIT;
 }
 
 /** Same guard for the three-way conflict editor, which renders ours + theirs + output. */
