@@ -276,36 +276,33 @@ impl ForgeProvider for GitLabProvider {
         token: &str,
     ) -> Result<Vec<CiJob>, AppError> {
         let project_path = gitlab_project_path(config);
-
-        let url = format!(
-            "https://{}/api/v4/projects/{}/pipelines/{}/jobs?per_page=100",
+        let base = format!(
+            "https://{}/api/v4/projects/{}/pipelines/{}",
             config.host, project_path, pipeline_id,
         );
 
-        let (auth_header, auth_value) = gitlab_auth_header(token);
-        let client = reqwest::blocking::Client::new();
-        let resp = client
-            .get(&url)
-            .header("User-Agent", super::USER_AGENT)
-            .header(auth_header, &auth_value)
-            .send()
-            .map_err(|e| AppError::Other(format!("GitLab CI API error: {e}")))?;
+        let jobs = gl_get_json_array(&format!("{base}/jobs?per_page=100"), token)?;
+        // Trigger (bridge) jobs are excluded from /jobs. Child pipelines are
+        // additive, so a failed /bridges call must not break the job list.
+        // ponytail: /bridges is deprecated in favor of /trigger_jobs (GitLab 19.2+); switch once old self-managed instances stop mattering.
+        let bridges = gl_get_json_array(&format!("{base}/bridges?per_page=100"), token)
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "gitlab bridges request failed; skipping child pipelines");
+                Vec::new()
+            });
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().unwrap_or_default();
-            return Err(AppError::Other(format!("GitLab CI API {status}: {body}")));
-        }
-
-        let jobs: Vec<serde_json::Value> = resp
-            .json()
-            .map_err(|e| AppError::Other(format!("Failed to parse jobs response: {e}")))?;
-
-        // GitLab returns jobs newest-first; reverse to match pipeline execution order.
         let mut result: Vec<CiJob> = jobs
             .iter()
+            .chain(bridges.iter())
             .filter_map(|j| {
-                let mut status = gl_pipeline_status(j["status"].as_str().unwrap_or(""));
+                let downstream = &j["downstream_pipeline"];
+                // A bridge's own status ignores the child result unless
+                // `strategy:` is set; trust the downstream pipeline instead.
+                let raw_status = downstream["status"]
+                    .as_str()
+                    .or_else(|| j["status"].as_str())
+                    .unwrap_or("");
+                let mut status = gl_pipeline_status(raw_status);
                 // GitLab: failed job with allow_failure → warning
                 if status == PipelineStatus::Failure
                     && j["allow_failure"].as_bool().unwrap_or(false)
@@ -321,10 +318,17 @@ impl ForgeProvider for GitLabProvider {
                     duration_secs: j["duration"]
                         .as_u64()
                         .or_else(|| j["duration"].as_f64().map(|f| f as u64)),
+                    child_pipeline_id: if downstream["source"].as_str() == Some("parent_pipeline") {
+                        downstream["id"].as_u64()
+                    } else {
+                        None
+                    },
+                    child_pipeline_url: downstream["web_url"].as_str().map(|s| s.to_string()),
                 })
             })
             .collect();
-        result.reverse();
+        // Jobs and bridges share one id space, so id order is execution order.
+        result.sort_by_key(|j| j.id);
         Ok(result)
     }
 
@@ -411,6 +415,26 @@ fn fetch_schedule_names(config: &ForgeConfig, token: &str) -> HashMap<u64, Strin
         }
     }
     map
+}
+
+/// GET a GitLab API endpoint that returns a JSON array.
+fn gl_get_json_array(url: &str, token: &str) -> Result<Vec<serde_json::Value>, AppError> {
+    let (auth_header, auth_value) = gitlab_auth_header(token);
+    let resp = reqwest::blocking::Client::new()
+        .get(url)
+        .header("User-Agent", super::USER_AGENT)
+        .header(auth_header, &auth_value)
+        .send()
+        .map_err(|e| AppError::Other(format!("GitLab CI API error: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(AppError::Other(format!("GitLab CI API {status}: {body}")));
+    }
+
+    resp.json()
+        .map_err(|e| AppError::Other(format!("Failed to parse GitLab CI response: {e}")))
 }
 
 fn gl_pipeline_status(status: &str) -> PipelineStatus {

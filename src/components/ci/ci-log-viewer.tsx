@@ -19,7 +19,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { useRepoStore } from "@/stores/repo-store";
 import { openUrl } from "@/lib/commands";
 import { getUiState, setUiState } from "@/lib/database";
-import { formatDuration } from "@/lib/ci-utils";
+import { formatDuration, flattenJobs } from "@/lib/ci-utils";
 import { parseCiLog, type LogLine, type LogLineKind, type GroupStatus } from "@/lib/ci-log-parse";
 import { cn } from "@/lib/utils";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
@@ -202,7 +202,7 @@ export function CiLogViewer() {
   const clearCiJobLog = useRepoStore((s) => s.clearCiJobLog);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const jobs = selectedPipelineId != null ? (jobsMap[selectedPipelineId] ?? []) : [];
+  const jobs = selectedPipelineId != null ? flattenJobs(selectedPipelineId, jobsMap) : [];
   const selectedJob = jobs.find((j) => j.id === selectedJobId);
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
 

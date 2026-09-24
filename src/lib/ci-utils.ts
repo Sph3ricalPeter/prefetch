@@ -8,6 +8,16 @@ export function formatDuration(secs: number | null): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
+/** Jobs of a pipeline plus, recursively, jobs of any child pipelines its bridge jobs point at. */
+export function flattenJobs(pipelineId: number, jobsMap: Record<number, CiJob[]>, depth = 0): CiJob[] {
+  return (jobsMap[pipelineId] ?? []).flatMap((j) =>
+    j.child_pipeline_id != null && depth < 3
+      ? [j, ...flattenJobs(j.child_pipeline_id, jobsMap, depth + 1)]
+      : [j],
+  );
+}
+
+// Bridge job status already reflects its child pipeline, so callers pass direct jobs only, not flattened.
 export function effectivePipelineStatus(pipeline: Pipeline, jobs: CiJob[]): PipelineStatus {
   if (jobs.length === 0) return pipeline.status;
   if (jobs.some((j) => j.status === "failure")) return "failure";

@@ -269,6 +269,8 @@ impl ForgeProvider for GitHubProvider {
                         j["started_at"].as_str(),
                         j["completed_at"].as_str(),
                     ),
+                    child_pipeline_id: None,
+                    child_pipeline_url: None,
                 })
             })
             .collect())

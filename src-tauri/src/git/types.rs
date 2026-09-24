@@ -304,6 +304,12 @@ pub struct CiJob {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub duration_secs: Option<u64>,
+    /// Same-project child pipeline triggered by this job (GitLab bridge job with
+    /// `downstream_pipeline.source == "parent_pipeline"`). Its jobs live in the
+    /// same jobs map keyed by this id.
+    pub child_pipeline_id: Option<u64>,
+    /// Web URL of any downstream pipeline (child or multi-project).
+    pub child_pipeline_url: Option<String>,
 }
 
 // ── LFS types ─────────────────────────────────────────────────────────────────

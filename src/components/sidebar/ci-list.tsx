@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -266,7 +266,7 @@ export function CiList() {
               key={pipeline.id}
               pipeline={pipeline}
               isExpanded={pipeline.id === selectedPipelineId}
-              jobs={jobsMap[pipeline.id] ?? []}
+              jobsMap={jobsMap}
               selectedJobId={selectedJobId}
               dimmed={isDimmed(pipeline)}
               onToggle={() => toggleCiPipeline(pipeline.id)}
@@ -284,7 +284,7 @@ export function CiList() {
 function PipelineEntry({
   pipeline,
   isExpanded,
-  jobs,
+  jobsMap,
   selectedJobId,
   dimmed,
   onToggle,
@@ -292,13 +292,14 @@ function PipelineEntry({
 }: {
   pipeline: Pipeline;
   isExpanded: boolean;
-  jobs: CiJob[];
+  jobsMap: Record<number, CiJob[]>;
   selectedJobId: number | null;
   dimmed?: boolean;
   onToggle: () => void;
   onJobClick: (jobId: number) => void;
 }) {
-  const status = effectivePipelineStatus(pipeline, jobs);
+  const jobs = jobsMap[pipeline.id] ?? [];
+  const status = effectivePipelineStatus(pipeline, jobsMap[pipeline.id] ?? []);
   const branch = cleanBranchName(pipeline.branch);
 
   return (
@@ -357,29 +358,106 @@ function PipelineEntry({
           <div className="absolute left-[1.85rem] top-2 bottom-2 w-px bg-border" />
 
           {jobs.map((job) => (
-            <button
+            <JobRow
               key={job.id}
-              onClick={() => onJobClick(job.id)}
-              className={`relative flex w-full items-center gap-1.5 rounded-md pl-7 pr-3 py-0.5 my-1 text-left text-xs transition-colors ${
-                job.id === selectedJobId
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-            >
-              {/* Icon sits on top of the timeline line */}
-              <span className="relative z-10 shrink-0 bg-background rounded-full">
-                <CiStatusIcon status={job.status} />
-              </span>
-              <span className="truncate flex-1">{job.name}</span>
-              {job.duration_secs != null && (
-                <span className="shrink-0 text-label text-faint">
-                  {formatDuration(job.duration_secs)}
-                </span>
-              )}
-            </button>
+              job={job}
+              depth={0}
+              jobsMap={jobsMap}
+              selectedJobId={selectedJobId}
+              onJobClick={onJobClick}
+            />
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+// ── JobRow ───────────────────────────────────────────────────────────────────
+
+// Per-depth indent and timeline-line offset (1rem per level; GitLab nests child
+// pipelines at most 2 deep). Literal classes so Tailwind picks them up.
+const JOB_INDENT = ["pl-7", "pl-11", "pl-15"];
+const JOB_LINE_LEFT = ["left-[1.85rem]", "left-[2.85rem]", "left-[3.85rem]"];
+
+/** A job row. GitLab trigger jobs with a same-project child pipeline expand to
+ *  show the child's jobs nested one level deeper; multi-project downstream
+ *  pipelines open in the browser instead of loading a log. */
+function JobRow({
+  job,
+  depth,
+  jobsMap,
+  selectedJobId,
+  onJobClick,
+}: {
+  job: CiJob;
+  depth: number;
+  jobsMap: Record<number, CiJob[]>;
+  selectedJobId: number | null;
+  onJobClick: (jobId: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const childId = job.child_pipeline_id;
+  const childJobs = childId != null ? (jobsMap[childId] ?? []) : [];
+  const externalUrl = childId == null ? job.child_pipeline_url : null;
+
+  const onClick = () => {
+    if (childId != null) setExpanded((e) => !e);
+    else if (externalUrl != null) openUrl(externalUrl);
+    else onJobClick(job.id);
+  };
+
+  return (
+    <>
+      <button
+        onClick={onClick}
+        className={cn(
+          "group relative flex w-full items-center gap-1.5 rounded-md pr-3 py-0.5 my-1 text-left text-xs transition-colors",
+          JOB_INDENT[depth],
+          job.id === selectedJobId
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+        )}
+      >
+        {/* Chevron hangs left into the indent so the status icon stays on the timeline */}
+        {childId != null &&
+          (expanded ? (
+            <ChevronDown className="-ml-4 h-2.5 w-2.5 shrink-0" />
+          ) : (
+            <ChevronRight className="-ml-4 h-2.5 w-2.5 shrink-0" />
+          ))}
+        {/* Icon sits on top of the timeline line */}
+        <span className="relative z-10 shrink-0 bg-background rounded-full">
+          <CiStatusIcon status={job.status} />
+        </span>
+        <span className="truncate flex-1">{job.name}</span>
+        {job.duration_secs != null && (
+          <span className="shrink-0 text-label text-faint">
+            {formatDuration(job.duration_secs)}
+          </span>
+        )}
+        {externalUrl != null && (
+          <span className={cn(iconButtonVariants({ size: "sm", reveal: "slide" }), "shrink-0")}>
+            <ExternalLink className="h-3 w-3" />
+          </span>
+        )}
+      </button>
+
+      {expanded && childJobs.length > 0 && (
+        <div className="relative">
+          <div className={cn("absolute top-2 bottom-2 w-px bg-border", JOB_LINE_LEFT[depth + 1])} />
+          {childJobs.map((child) => (
+            <JobRow
+              key={child.id}
+              job={child}
+              depth={depth + 1}
+              jobsMap={jobsMap}
+              selectedJobId={selectedJobId}
+              onJobClick={onJobClick}
+            />
+          ))}
+        </div>
+      )}
+    </>
   );
 }

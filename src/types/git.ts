@@ -270,6 +270,10 @@ export interface CiJob {
   started_at: string | null;
   completed_at: string | null;
   duration_secs: number | null;
+  /** Same-project child pipeline this (GitLab trigger) job started; its jobs are in the jobs map under this id. */
+  child_pipeline_id: number | null;
+  /** Web URL of any downstream pipeline (child or multi-project). */
+  child_pipeline_url: string | null;
 }
 
 // ── LFS ───────────────────────────────────────────────────────────────────────

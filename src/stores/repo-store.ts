@@ -133,6 +133,7 @@ import { generatePatch, generateHunkPatch } from "@/lib/patch";
 import { computeDiffRegions, buildOutputWithSources } from "@/lib/conflict-regions";
 import { isHeavyConflict } from "@/lib/diff-size";
 import { MultiStepAction } from "@/lib/multi-step";
+import { flattenJobs } from "@/lib/ci-utils";
 import {
   addRecentRepo,
   getRecentRepos,
@@ -2598,6 +2599,32 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         const fetched = entries.find(([id]) => id === p.id);
         jobsMap[p.id] = fetched ? fetched[1] : (prevJobsMap[p.id] ?? []);
       }
+      // GitLab child pipelines (trigger jobs), nested at most 2 levels deep. Same cache rule:
+      // reuse cached jobs only when they and the bridge job pointing at them are all settled.
+      for (let level = 0; level < 2; level++) {
+        const children = Object.values(jobsMap)
+          .flat()
+          .flatMap((j) =>
+            j.child_pipeline_id != null && !(j.child_pipeline_id in jobsMap)
+              ? [[j.child_pipeline_id, j.status] as const]
+              : [],
+          );
+        if (children.length === 0) break;
+        const childEntries = await Promise.all(
+          children.map(async ([id, bridgeStatus]) => {
+            const cached = prevJobsMap[id];
+            if (cached && !isUnsettled(bridgeStatus) && !cached.some((j) => isUnsettled(j.status))) {
+              return [id, cached] as const;
+            }
+            try {
+              return [id, await getPipelineJobs(id)] as const;
+            } catch {
+              return [id, [] as CiJob[]] as const;
+            }
+          }),
+        );
+        for (const [id, jobs] of childEntries) jobsMap[id] = jobs;
+      }
       set({ ciJobsMap: jobsMap });
 
       // Auto-expand the latest pipeline
@@ -2608,7 +2635,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // Auto-start polling if any pipeline is still active — consider job-level status too,
       // so we keep polling until the jobs settle, not just the pipeline.
       const hasActive = pipelines.some(
-        (p) => isUnsettled(p.status) || (jobsMap[p.id] ?? []).some((j) => isUnsettled(j.status)),
+        (p) => isUnsettled(p.status) || flattenJobs(p.id, jobsMap).some((j) => isUnsettled(j.status)),
       );
       if (hasActive) get().startCiPolling();
     } catch {
@@ -2656,7 +2683,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         const isUnsettled = (s: PipelineStatus) => s === "queued" || s === "in_progress";
         const jobsMap = get().ciJobsMap;
         const active = get().ciPipelines.some(
-          (p) => isUnsettled(p.status) || (jobsMap[p.id] ?? []).some((j) => isUnsettled(j.status)),
+          (p) => isUnsettled(p.status) || flattenJobs(p.id, jobsMap).some((j) => isUnsettled(j.status)),
         );
         if (!active) {
           set({ ciPolling: false });
