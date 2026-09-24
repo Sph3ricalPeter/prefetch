@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod conflict;
 pub mod exec;
 pub mod forge;

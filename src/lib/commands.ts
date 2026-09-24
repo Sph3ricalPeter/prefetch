@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BranchInfo,
   CiJob,
+  CommitSuggestion,
   ConflictContents,
   ConflictState,
   FileDiff,
@@ -502,4 +503,14 @@ export async function setFetchInterval(seconds: number): Promise<void> {
 /** Unix-millis of the last fetch (manual or background), null if never fetched. */
 export async function getLastFetch(): Promise<number | null> {
   return tracedInvoke<number | null>("get_last_fetch");
+}
+
+/** Whether the Claude Code CLI is installed (probed once per app run). */
+export async function aiAvailable(): Promise<boolean> {
+  return tracedInvoke<boolean>("ai_available");
+}
+
+/** Ask Claude Code for a commit message describing the staged diff. */
+export async function suggestCommitMessage(model: string): Promise<CommitSuggestion> {
+  return tracedInvoke<CommitSuggestion>("suggest_commit_message", { model });
 }

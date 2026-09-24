@@ -48,6 +48,15 @@ const FETCH_INTERVALS = [
   { label: "Disabled", value: "0" },
 ];
 
+/** Aliases `claude --model` resolves to the latest model of each tier. The
+ *  CLI has no "list models" command, so this is the whole menu. */
+const AI_MODELS = [
+  { label: "Haiku", value: "haiku" },
+  { label: "Sonnet", value: "sonnet" },
+  { label: "Opus", value: "opus" },
+  { label: "Fable", value: "fable" },
+];
+
 const VIEW_MODES = [
   { label: "Flat list", value: "flat" },
   { label: "Tree view", value: "tree" },
@@ -65,6 +74,9 @@ export function GeneralSection() {
   const [fileViewMode, setFileViewMode] = useState("flat");
   const dateFormat = useRepoStore((s) => s.graphDateFormat);
   const setGraphDateFormat = useRepoStore((s) => s.setGraphDateFormat);
+  const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
+  const aiModel = useRepoStore((s) => s.aiModel);
+  const setAiModel = useRepoStore((s) => s.setAiModel);
   const [autoReopen, setAutoReopen] = useState(false);
   const [conflictAutoResolve, setConflictAutoResolve] = useState(false);
 
@@ -179,6 +191,17 @@ export function GeneralSection() {
           />
         </SettingsRow>
       </SettingsGroup>
+
+      {claudeAvailable && (
+        <SettingsGroup title="AI">
+          <SettingsRow
+            label="Commit message model"
+            description="Model Claude Code uses when suggesting a commit message from the staged diff. Larger models are slower."
+          >
+            <SettingsChoice options={AI_MODELS} value={aiModel} onChange={setAiModel} />
+          </SettingsRow>
+        </SettingsGroup>
+      )}
 
       <UpdatesSection />
 

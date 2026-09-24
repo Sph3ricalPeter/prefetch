@@ -359,3 +359,10 @@ pub struct GitIdentity {
     /// Where the identity was resolved from: "local", "global", "system", or "unknown"
     pub source: String,
 }
+
+/// A commit message suggested by the Claude Code CLI.
+#[derive(Debug, Clone, Serialize)]
+pub struct CommitSuggestion {
+    pub subject: String,
+    pub body: String,
+}

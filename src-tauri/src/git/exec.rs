@@ -23,13 +23,13 @@ use std::sync::RwLock;
 /// Configure a Command to hide the console window on Windows.
 /// Without this, every `git` subprocess opens a visible terminal flash.
 #[cfg(target_os = "windows")]
-fn hide_console_window(cmd: &mut Command) -> &mut Command {
+pub(crate) fn hide_console_window(cmd: &mut Command) -> &mut Command {
     use std::os::windows::process::CommandExt;
     cmd.creation_flags(0x08000000) // CREATE_NO_WINDOW
 }
 
 #[cfg(not(target_os = "windows"))]
-fn hide_console_window(cmd: &mut Command) -> &mut Command {
+pub(crate) fn hide_console_window(cmd: &mut Command) -> &mut Command {
     cmd
 }
 

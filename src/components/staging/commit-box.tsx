@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
-import { getTokenInfo } from "@/lib/commands";
+import { getTokenInfo, suggestCommitMessage } from "@/lib/commands";
+import { showError } from "@/lib/toast";
 import type { TokenInfo } from "@/lib/commands";
 import {
   Tooltip,
@@ -15,6 +16,7 @@ import { ProfileAvatar } from "@/components/ui/avatar";
 import { ResizableTextarea, type ResizableTextareaApi } from "@/components/ui/resizable-textarea";
 import { RowDragHandle } from "@/components/ui/row-drag-handle";
 import { AbortButton } from "@/components/ui/abort-button";
+import { IconButton } from "@/components/ui/icon-button";
 
 const SOURCE_LABELS: Record<string, string> = {
   local: "Local repo config",
@@ -47,6 +49,9 @@ export function CommitBox() {
   const setAmendMode = useRepoStore((s) => s.setAmendMode);
   const headCommitId = useRepoStore((s) => s.headCommitId);
   const repoPath = useRepoStore((s) => s.repoPath);
+  const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
+  const aiModel = useRepoStore((s) => s.aiModel);
+  const [isSuggesting, setIsSuggesting] = useState(false);
 
   // Drag handle above the card resizes the merged commit field — the
   // description part when it's shown, the subject otherwise.
@@ -158,6 +163,30 @@ export function CommitBox() {
   const canCommit =
     stagedCount > 0 && commitMessage.trim().length > 0 && !isLoading;
   const canContinue = unresolvedCount === 0 && !isLoading;
+  const canSuggest = claudeAvailable && stagedCount > 0 && !isOperationInProgress && !amendMode;
+
+  const handleSuggest = async () => {
+    setIsSuggesting(true);
+    const before = { repoPath, commitMessage, commitDescription, headCommitId };
+    try {
+      const { subject, body } = await suggestCommitMessage(aiModel);
+      // Repo switched, user typed, or HEAD moved while claude ran — the result is stale.
+      const now = useRepoStore.getState();
+      if (
+        now.repoPath !== before.repoPath ||
+        now.commitMessage !== before.commitMessage ||
+        now.commitDescription !== before.commitDescription ||
+        now.headCommitId !== before.headCommitId
+      ) return;
+      setCommitMessage(subject);
+      setCommitDescription(body);
+      persistDraft(subject, body);
+    } catch (e) {
+      showError("Suggest commit message", e);
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
 
   const handleCommit = () => {
     if (canCommit) {
@@ -281,21 +310,48 @@ export function CommitBox() {
           maxHeight={480}
           gripPosition="none"
           apiRef={messageResize}
-          className="rounded-none border-0 bg-transparent pr-10 focus:ring-0"
+          className={`rounded-none border-0 bg-transparent focus:ring-0 ${canSuggest ? "pr-14" : "pr-10"}`}
           overlay={
-            commitMessage.length > 0 ? (
-              <span
-                className={`pointer-events-none absolute right-2 top-2 text-caption tabular-nums ${
-                  commitMessage.length > 72
-                    ? "text-destructive"
-                    : commitMessage.length > 50
-                      ? "text-yellow-500"
-                      : "text-faint"
-                }`}
-              >
-                {commitMessage.length}
-              </span>
-            ) : null
+            <div className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1">
+              {commitMessage.length > 0 && (
+                <span
+                  className={`text-caption tabular-nums ${
+                    commitMessage.length > 72
+                      ? "text-destructive"
+                      : commitMessage.length > 50
+                        ? "text-yellow-500"
+                        : "text-faint"
+                  }`}
+                >
+                  {commitMessage.length}
+                </span>
+              )}
+              {canSuggest && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <IconButton
+                      size="sm"
+                      onClick={handleSuggest}
+                      disabled={isSuggesting}
+                      aria-label="Suggest message with Claude"
+                      className="pointer-events-auto"
+                    >
+                      {isSuggesting ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                    </IconButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p className="text-xs">Suggest message with Claude</p>
+                    <p className="text-label text-dim">
+                      Sends the staged diff to Anthropic via your Claude Code login
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           }
         />
 

@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod forge;
 mod helpers;
 pub mod lfs;

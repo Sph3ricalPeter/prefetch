@@ -91,6 +91,7 @@ import {
   continueOperation as continueOperationCmd,
   getRebaseProgress as getRebaseProgressCmd,
   lfsCheckInitialized,
+  aiAvailable,
   lfsGetInfo,
   lfsInitialize,
   lfsTrackPattern as lfsTrackCmd,
@@ -418,6 +419,11 @@ interface RepoState {
   // LFS
   lfsInfo: LfsInfo | null;
 
+  /** Claude Code CLI detected on this machine (machine-level, not per repo). */
+  claudeAvailable: boolean;
+  /** `claude --model` value for commit suggestions (alias or full id). */
+  aiModel: string;
+
   // Git identity
   gitIdentity: GitIdentity | null;
 
@@ -595,6 +601,8 @@ interface RepoState {
 
   // LFS actions
   loadLfsInfo: (full?: boolean) => Promise<void>;
+  loadClaudeAvailable: () => Promise<void>;
+  setAiModel: (model: string) => void;
   initializeLfs: () => Promise<void>;
   trackLfsPattern: (pattern: string) => Promise<void>;
   untrackLfsPattern: (pattern: string) => Promise<void>;
@@ -692,6 +700,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   lastUndoTime: 0,
   recentRepos: [],
   lfsInfo: null,
+  claudeAvailable: false,
+  aiModel: "opus",
   gitIdentity: null,
   forgeStatus: null,
   prCache: {},
@@ -2713,6 +2723,19 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch {
       // LFS info is non-critical — silently ignore
     }
+  },
+
+  loadClaudeAvailable: async () => {
+    const [available, model] = await Promise.all([
+      aiAvailable().catch(() => false),
+      getUiState("ai_model").catch(() => null),
+    ]);
+    set({ claudeAvailable: available, ...(model ? { aiModel: model } : {}) });
+  },
+
+  setAiModel: (model) => {
+    set({ aiModel: model });
+    setUiState("ai_model", model).catch(() => {});
   },
 
   initializeLfs: async () => {

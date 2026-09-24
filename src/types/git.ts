@@ -291,6 +291,12 @@ export interface LfsFileInfo {
   size: number;
 }
 
+/** Commit message suggested by the Claude Code CLI. */
+export interface CommitSuggestion {
+  subject: string;
+  body: string;
+}
+
 export interface LfsInfo {
   /** Whether the git-lfs binary is on PATH */
   installed: boolean;

@@ -24,6 +24,7 @@ function DatabaseInit() {
   const loadGraphPreferences = useRepoStore((s) => s.loadGraphPreferences);
   const loadSidebarPreferences = useRepoStore((s) => s.loadSidebarPreferences);
   const openRepository = useRepoStore((s) => s.openRepository);
+  const loadClaudeAvailable = useRepoStore((s) => s.loadClaudeAvailable);
   const loadProfiles = useProfileStore((s) => s.loadProfiles);
   const restoreActiveProfile = useProfileStore((s) => s.restoreActiveProfile);
   const loadThemePreferences = useThemeStore((s) => s.loadThemePreferences);
@@ -35,6 +36,9 @@ function DatabaseInit() {
       try {
         await initDatabase();
         if (cancelled) return;
+        // Not awaited: probing the claude CLI can take a second, and nothing
+        // below depends on it.
+        void loadClaudeAvailable();
         await Promise.all([
           loadRecentRepos(),
           loadFileViewMode(),
@@ -69,7 +73,7 @@ function DatabaseInit() {
     };
     tryInit();
     return () => { cancelled = true; };
-  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadGraphPreferences, loadSidebarPreferences, loadThemePreferences, loadProfiles, restoreActiveProfile, openRepository]);
+  }, [loadRecentRepos, loadFileViewMode, loadDiffPreferences, loadGraphPreferences, loadSidebarPreferences, loadThemePreferences, loadProfiles, restoreActiveProfile, openRepository, loadClaudeAvailable]);
 
   return null;
 }

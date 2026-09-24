@@ -181,6 +181,9 @@ pub fn run() {
             commands::lfs::lfs_prune_objects,
             commands::repo::set_fetch_interval,
             commands::repo::get_last_fetch,
+            // AI
+            commands::ai::ai_available,
+            commands::ai::suggest_commit_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
