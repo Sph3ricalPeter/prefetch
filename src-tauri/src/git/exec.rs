@@ -40,6 +40,10 @@ pub(crate) fn hide_console_window(cmd: &mut Command) -> &mut Command {
 pub(crate) fn git_cmd() -> Command {
     let mut cmd = Command::new("git");
     hide_console_window(&mut cmd);
+    // Windows git caps paths at 260 chars by default: longer ones are skipped
+    // with a "Filename too long" warning while `add` still exits 0.
+    #[cfg(target_os = "windows")]
+    cmd.args(["-c", "core.longpaths=true"]);
     cmd
 }
 

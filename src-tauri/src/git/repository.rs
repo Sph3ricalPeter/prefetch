@@ -1654,7 +1654,14 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
     let numstat_handle = std::thread::spawn(move || {
         parse_numstat(
             &path2,
-            &["diff-tree", "--no-commit-id", "-r", "--numstat", &id2],
+            &[
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "-r",
+                "--numstat",
+                &id2,
+            ],
         )
     });
 
@@ -1662,6 +1669,7 @@ pub fn get_commit_files(repo_path: &str, commit_id: &str) -> Result<Vec<FileStat
         repo_path,
         &[
             "diff-tree",
+            "--root",
             "--no-commit-id",
             "-r",
             "--name-status",
@@ -1682,13 +1690,28 @@ pub fn get_commit_file_diff(
     commit_id: &str,
     file_path: &str,
 ) -> Result<FileDiff, AppError> {
-    // Root commits have no `commit^`, so git exits non-zero here — fall back to
-    // an empty diff rather than erroring (matches the previous behaviour).
+    // Root commits have no `commit^`, so git exits non-zero — diff against the
+    // empty tree via `diff-tree --root` instead.
     let diff_text = capture(
         repo_path,
         &["diff", &format!("{commit_id}^"), commit_id, "--", file_path],
         &[],
     )
+    .or_else(|_| {
+        capture(
+            repo_path,
+            &[
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "-p",
+                commit_id,
+                "--",
+                file_path,
+            ],
+            &[],
+        )
+    })
     .unwrap_or_default();
 
     if parse::has_binary_marker(&diff_text) {
@@ -2644,6 +2667,42 @@ mod tests {
             .output()
             .expect("commit");
         dir
+    }
+
+    #[test]
+    fn root_commit_lists_files_and_diff() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        // Amending the root commit keeps it parentless.
+        std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+        run_git(p, &["add", "a.txt"], &[]).unwrap();
+        run_git(p, &["commit", "--amend", "-m", "init"], &[]).unwrap();
+        let head = run_git(p, &["rev-parse", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let files = get_commit_files(p, &head).unwrap();
+        assert!(files.iter().any(|f| f.path == "a.txt"));
+        assert!(files.iter().any(|f| f.path == ".gitkeep"));
+
+        let diff = get_commit_file_diff(p, &head, "a.txt").unwrap();
+        assert!(!diff.hunks.is_empty());
+    }
+
+    #[test]
+    fn stages_path_longer_than_windows_max_path() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        let rel = format!("{}/{}/file.longextension", "a".repeat(120), "b".repeat(120));
+        let abs = dir.path().join(&rel);
+        std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        std::fs::write(&abs, "hi\n").unwrap();
+
+        stage_files(p, std::slice::from_ref(&rel)).unwrap();
+
+        let status = get_status(p).unwrap();
+        assert!(status.iter().any(|f| f.path == rel && f.is_staged));
     }
 
     #[test]
