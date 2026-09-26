@@ -347,6 +347,10 @@ pub fn unified_diff(diff_text: &str) -> Vec<DiffHunk> {
                 new_lines,
                 lines: Vec::new(),
             });
+        } else if line.starts_with('\\') {
+            // "\ No newline at end of file" annotates the previous line; it is
+            // not a file line and must not advance the line counters.
+            continue;
         } else if let Some(hunk) = hunks.last_mut() {
             let origin = if line.starts_with('+') {
                 '+'
@@ -629,6 +633,15 @@ mod tests {
         assert_eq!(lines[1].new_lineno, None);
         assert_eq!(lines[2].origin, '+');
         assert_eq!(lines[2].old_lineno, None);
+        assert_eq!(lines[2].new_lineno, Some(2));
+    }
+
+    #[test]
+    fn unified_diff_skips_no_newline_marker() {
+        let diff = "@@ -1,1 +1,2 @@\n-}\n\\ No newline at end of file\n+}\n+\n";
+        let lines = &unified_diff(diff)[0].lines;
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[1].new_lineno, Some(1));
         assert_eq!(lines[2].new_lineno, Some(2));
     }
 
