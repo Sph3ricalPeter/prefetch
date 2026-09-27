@@ -37,6 +37,15 @@ fn truncate_diff(mut diff: FileDiff) -> FileDiff {
     diff
 }
 
+/// Git's heuristic: a NUL byte in the first 8000 bytes means binary.
+fn looks_binary(path: &Path) -> bool {
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(8000);
+    std::fs::File::open(path)
+        .and_then(|f| f.take(8000).read_to_end(&mut buf))
+        .is_ok_and(|_| buf.contains(&0))
+}
+
 /// Get the repository display name from its path.
 pub fn repo_name(path: &str) -> String {
     Path::new(path)
@@ -1071,6 +1080,17 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<F
 
         let abs_path = Path::new(repo_path).join(file_path);
         if abs_path.exists() {
+            // Binary sniff must come before the size gate, else a large image
+            // gets the "too large" stub instead of the image viewer.
+            if looks_binary(&abs_path) {
+                return Ok(FileDiff {
+                    path: file_path.to_string(),
+                    hunks: vec![],
+                    is_binary: true,
+                    is_truncated: false,
+                    total_lines: 0,
+                });
+            }
             if let Ok(meta) = std::fs::metadata(&abs_path) {
                 let size = meta.len();
                 // Skip reading files > 1 MB — return truncated stub
@@ -2703,6 +2723,19 @@ mod tests {
 
         let status = get_status(p).unwrap();
         assert!(status.iter().any(|f| f.path == rel && f.is_staged));
+    }
+
+    #[test]
+    fn untracked_large_binary_is_binary_not_truncated() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
+        png.resize(2_000_000, b'x');
+        std::fs::write(dir.path().join("big.png"), &png).unwrap();
+
+        let diff = get_file_diff(p, "big.png", false).unwrap();
+        assert!(diff.is_binary);
+        assert!(!diff.is_truncated);
     }
 
     #[test]
