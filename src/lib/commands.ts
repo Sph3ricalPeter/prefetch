@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BranchInfo,
   CiJob,
-  CommitSuggestion,
   ConflictContents,
   ConflictState,
   FileDiff,
@@ -511,6 +510,6 @@ export async function aiAvailable(): Promise<boolean> {
 }
 
 /** Ask Claude Code for a commit message describing the staged diff. */
-export async function suggestCommitMessage(model: string): Promise<CommitSuggestion> {
-  return tracedInvoke<CommitSuggestion>("suggest_commit_message", { model });
+export async function suggestCommitMessage(model: string): Promise<string> {
+  return tracedInvoke<string>("suggest_commit_message", { model });
 }

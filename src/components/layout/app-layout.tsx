@@ -8,6 +8,7 @@ import { StatusBar } from "./status-bar";
 import { SettingsNav, SettingsContent, type SettingsTarget } from "@/components/ui/settings-page";
 import { CloneDialog } from "@/components/ui/clone-dialog";
 import { Toaster } from "@/components/ui/sonner";
+import { ConfirmDialog } from "@/components/ui/modal";
 import { getUiState, setUiState } from "@/lib/database";
 import { useRepoStore } from "@/stores/repo-store";
 const SIDEBAR_DEFAULT = 300;
@@ -49,6 +50,39 @@ function fitPanels(
   }
 
   return { sidebar: newSb, detail: newDt };
+}
+
+/**
+ * Force delete/remove confirmation, raised when git refuses the safe variant.
+ * Lives here rather than in GraphPanel because the sidebar can trigger it
+ * while settings has GraphPanel unmounted.
+ */
+function ForceConfirmDialog() {
+  const pending = useRepoStore((s) => s.forcePending);
+  const cancel = useRepoStore((s) => s.cancelForcePending);
+  const deleteBranch = useRepoStore((s) => s.deleteBranch);
+  const removeWorktree = useRepoStore((s) => s.removeWorktree);
+  if (!pending) return null;
+  const isBranch = pending.kind === "branch";
+  return (
+    <ConfirmDialog
+      open
+      onClose={cancel}
+      title={isBranch ? "Force delete branch?" : "Force remove worktree?"}
+      description={
+        isBranch
+          ? `"${pending.target}" has commits not merged into its upstream or HEAD. Force deleting loses them unless they're reachable elsewhere.`
+          : `The worktree at ${pending.target} is locked or has uncommitted changes. Force removing discards them.`
+      }
+      confirmLabel={isBranch ? "Force Delete" : "Force Remove"}
+      destructive
+      onConfirm={() => {
+        cancel();
+        if (isBranch) deleteBranch(pending.target, true);
+        else removeWorktree(pending.target, true);
+      }}
+    />
+  );
 }
 
 export function AppLayout() {
@@ -295,6 +329,8 @@ export function AppLayout() {
         </div>
       </div>
       <StatusBar onOpenSettings={(target) => setSettingsTarget(target ?? { tab: "general" })} />
+
+      <ForceConfirmDialog />
 
       {cloneOpen && (
         <CloneDialog

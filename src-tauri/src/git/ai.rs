@@ -5,7 +5,6 @@
 
 use crate::error::AppError;
 use crate::git::exec::{capture, hide_console_window};
-use crate::git::types::CommitSuggestion;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -62,12 +61,18 @@ pub fn suggest_commit_message(
     repo_path: &str,
     claude: &Path,
     model: &str,
-) -> Result<CommitSuggestion, AppError> {
+) -> Result<String, AppError> {
     // `model` comes from the frontend and lands in argv.
     if !valid_model(model) {
         return Err(AppError::Other("Invalid model name".into()));
     }
-    let mut diff = capture(repo_path, &["diff", "--cached"], &[])?;
+    // Stat first so every file stays visible even if the diff gets truncated.
+    // Wide stat: without a TTY git shortens long paths to ".../tail".
+    let mut diff = capture(
+        repo_path,
+        &["diff", "--cached", "--stat=1000", "--patch"],
+        &[],
+    )?;
     if diff.trim().is_empty() {
         return Err(AppError::Other("Nothing staged".into()));
     }
@@ -85,11 +90,17 @@ pub fn suggest_commit_message(
         .map(|b| b.trim().to_string())
         .unwrap_or_else(|_| "detached HEAD".into());
     let prompt = format!(
-        "Write a git commit message for the staged diff on stdin (branch: {branch}). \
-         Subject line: imperative mood, <=50 chars, conventional-commit prefix \
+        "Write a git commit message for the staged changes on stdin (branch: {branch}); \
+         a diffstat comes first, then the diff. \
+         First read every file and identify each distinct concern (separate features, \
+         fixes, refactors, etc.). The message must cover ALL of them, not just the largest. \
+         Output a single line: imperative mood, conventional-commit prefix \
          (feat/fix/refactor/chore/docs/test) when it fits, no trailing period. \
-         If the change warrants explanation, add a blank line then 1-3 short body lines. \
-         Output ONLY the commit message, no fences, no preamble."
+         One concern: aim for <=50 chars. Several concerns: list each tersely, \
+         joined with \"; \" and each with its own prefix, e.g. \
+         \"feat: add X; fix: Y crash on Z\". \
+         Exactly one line: no body, no description, no bullets. \
+         Output ONLY that line, no fences, no preamble."
     );
 
     // No `--bare`: it ignores OAuth logins. `--setting-sources ""` still keeps
@@ -143,9 +154,9 @@ fn valid_model(model: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "-._[]".contains(c))
 }
 
-/// Strip code fences and split into subject (first line) + body (the rest).
-/// `None` when empty.
-fn parse_suggestion(raw: &str) -> Option<CommitSuggestion> {
+/// Strip code fences and keep the first line; anything after it is dropped so
+/// the description is never filled. `None` when empty.
+fn parse_suggestion(raw: &str) -> Option<String> {
     let raw = raw.replace("\r\n", "\n");
     let mut text = raw.trim();
     if let Some(rest) = text.strip_prefix("```") {
@@ -154,15 +165,8 @@ fn parse_suggestion(raw: &str) -> Option<CommitSuggestion> {
     }
     text = text.trim_end().strip_suffix("```").unwrap_or(text).trim();
 
-    let (head, body) = text.split_once('\n').unwrap_or((text, ""));
-    let subject = head.trim().trim_end_matches('.').to_string();
-    if subject.is_empty() {
-        return None;
-    }
-    Some(CommitSuggestion {
-        subject,
-        body: body.trim().to_string(),
-    })
+    let subject = text.lines().next()?.trim().trim_end_matches('.');
+    (!subject.is_empty()).then(|| subject.to_string())
 }
 
 #[cfg(test)]
@@ -172,29 +176,21 @@ mod tests {
     #[test]
     fn subject_only() {
         let s = parse_suggestion("  fix: handle empty diff.\n").unwrap();
-        assert_eq!(s.subject, "fix: handle empty diff");
-        assert_eq!(s.body, "");
+        assert_eq!(s, "fix: handle empty diff");
     }
 
     #[test]
-    fn subject_and_body() {
-        let s = parse_suggestion("feat: add x\n\nWhy line one.\nWhy line two.").unwrap();
-        assert_eq!(s.subject, "feat: add x");
-        assert_eq!(s.body, "Why line one.\nWhy line two.");
-    }
-
-    #[test]
-    fn body_without_blank_line_and_crlf() {
+    fn drops_body() {
+        let s = parse_suggestion("feat: add x; fix: y\n\n- feat: add x\n- fix: y").unwrap();
+        assert_eq!(s, "feat: add x; fix: y");
         let s = parse_suggestion("fix: y\r\nMore detail.\r\n").unwrap();
-        assert_eq!(s.subject, "fix: y");
-        assert_eq!(s.body, "More detail.");
+        assert_eq!(s, "fix: y");
     }
 
     #[test]
     fn strips_fences() {
         let s = parse_suggestion("```text\nchore: bump deps\n\nBody.\n```\n").unwrap();
-        assert_eq!(s.subject, "chore: bump deps");
-        assert_eq!(s.body, "Body.");
+        assert_eq!(s, "chore: bump deps");
     }
 
     #[test]

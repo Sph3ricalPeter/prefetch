@@ -408,6 +408,9 @@ interface RepoState {
     alreadyOnLocal: boolean;
   } | null;
 
+  // Force confirmation — set when git refuses the safe delete/remove
+  forcePending: { kind: "branch" | "worktree"; target: string } | null;
+
   // Undo
   undoInfo: UndoAction | null;
   /** Timestamp of last undo — suppresses undo refresh for a few seconds to prevent undo-of-undo loop */
@@ -489,6 +492,7 @@ interface RepoState {
   cancelDirtyAction: () => void;
   resetLocalToRemote: () => Promise<void>;
   cancelRemoteCheckout: () => void;
+  cancelForcePending: () => void;
   createBranch: (name: string) => Promise<void>;
   fetch: () => Promise<void>;
   pull: () => Promise<void>;
@@ -696,6 +700,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   rebaseProgress: null,
   dirtyActionPending: null,
   remoteCheckoutPending: null,
+  forcePending: null,
   undoInfo: null,
   lastUndoTime: 0,
   recentRepos: [],
@@ -768,6 +773,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       ciSelectedJobId: null,
       ciJobLog: null,
       ciLoading: false,
+      forcePending: null,
     });
     try {
       // openRepo MUST complete first — it sets up Rust-side state (watcher,
@@ -872,6 +878,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   removeWorktree: async (worktreePath: string, force = false) => {
     if (blockedByOperation(get, "remove a worktree")) return;
+    const { repoPath } = get();
     set({ isLoading: true });
     try {
       await removeWorktreeCmd(worktreePath, force);
@@ -881,16 +888,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ isLoading: false });
       const message = errorMessage(e);
       // Git refuses to remove a locked or dirty worktree and points at the
-      // double -f that overrides it — offer that instead of the raw fatal.
+      // double -f that overrides it — confirm that instead of the raw fatal.
       if (!force && (message.includes("locked working tree") || message.includes("contains modified"))) {
-        toast.error("Worktree can't be removed", {
-          description: message,
-          action: {
-            label: "Force remove",
-            onClick: () => get().removeWorktree(worktreePath, true),
-          },
-          duration: 10000,
-        });
+        // Dropped if the repo changed meanwhile — force must not hit another repo.
+        if (get().repoPath === repoPath) set({ forcePending: { kind: "worktree", target: worktreePath } });
       } else {
         showError("Remove Worktree", message);
       }
@@ -1010,7 +1011,6 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     if (heldBy) {
       toast.error(`'${targetLocal}' is checked out in another worktree`, {
         description: heldBy,
-        action: { label: "Reveal", onClick: () => get().revealWorktree(heldBy) },
         duration: 10000,
       });
       return;
@@ -1176,6 +1176,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   cancelRemoteCheckout: () => set({ remoteCheckoutPending: null }),
+  cancelForcePending: () => set({ forcePending: null }),
 
   createBranch: async (name: string) => {
     if (blockedByOperation(get, "create a branch")) return;
@@ -1959,6 +1960,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   deleteBranch: async (name, force = false) => {
     if (blockedByOperation(get, "delete a branch")) return;
+    const { repoPath } = get();
     set({ isLoading: true });
     try {
       await deleteBranchCmd(name, force);
@@ -1976,14 +1978,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
           duration: 10000,
         });
       } else if (!force && message.includes("not fully merged")) {
-        toast.error(`Branch '${name}' has unmerged commits`, {
-          description: "Use force delete to remove it anyway.",
-          action: {
-            label: "Force delete",
-            onClick: () => get().deleteBranch(name, true),
-          },
-          duration: 10000,
-        });
+        if (get().repoPath === repoPath) set({ forcePending: { kind: "branch", target: name } });
       } else {
         showError("Delete Branch", message);
       }

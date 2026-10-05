@@ -169,7 +169,7 @@ export function CommitBox() {
     setIsSuggesting(true);
     const before = { repoPath, commitMessage, commitDescription, headCommitId };
     try {
-      const { subject, body } = await suggestCommitMessage(aiModel);
+      const subject = await suggestCommitMessage(aiModel);
       // Repo switched, user typed, or HEAD moved while claude ran — the result is stale.
       const now = useRepoStore.getState();
       if (
@@ -179,8 +179,7 @@ export function CommitBox() {
         now.headCommitId !== before.headCommitId
       ) return;
       setCommitMessage(subject);
-      setCommitDescription(body);
-      persistDraft(subject, body);
+      persistDraft(subject, commitDescription);
     } catch (e) {
       showError("Suggest commit message", e);
     } finally {
