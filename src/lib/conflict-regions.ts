@@ -1,5 +1,5 @@
 import { Text } from "@codemirror/state";
-import { Chunk } from "@codemirror/merge";
+import { Chunk, diff } from "@codemirror/merge";
 
 /**
  * A region of text that is either unchanged between ours/theirs or changed.
@@ -56,11 +56,11 @@ export interface OutputLineMapping {
 
 /**
  * Compute diff regions between ours and theirs content.
- * Uses @codemirror/merge's Chunk.build for efficient line-level diff.
  *
- * When `base` (common ancestor) is provided, uses 3-way classification:
- * changes made by only one side are auto-resolved (not shown as conflicts),
- * only changes where both sides modified the same region are true conflicts.
+ * When `base` (common ancestor) is provided, runs a diff3 merge aligned on
+ * base (see diff3Regions): changes made by only one side are auto-resolved,
+ * only changes where both sides touched the same base lines are conflicts.
+ * Without base, falls back to a 2-way ours/theirs diff via Chunk.build.
  */
 export function computeDiffRegions(
   ours: string,
@@ -81,6 +81,13 @@ export function computeDiffRegions(
         bStartLine: 1,
       },
     ];
+  }
+
+  const merged = base !== undefined ? diff3Regions(base.split("\n"), oursLines, theirsLines) : null;
+  if (merged) {
+    const regions = mergeConsecutiveUnchanged(merged);
+    flagSuspiciousAutoResolves(regions);
+    return regions;
   }
 
   const oursText = Text.of(oursLines);
@@ -134,156 +141,142 @@ export function computeDiffRegions(
 
   // ── Refine changed regions ───────────────────────────────────
   regions = refineChangedRegions(regions);
-
-  // ── 3-way classification ─────────────────────────────────────
-  // Attach base lines first so classify3Way can compare regions against
-  // the ancestor. Run classify3Way BEFORE coalescing so auto-resolved
-  // regions aren't absorbed into neighboring conflicts.
-  if (base !== undefined) {
-    attachBaseLines(regions, base, ours);
-    regions = classify3Way(regions);
-  }
-
   regions = coalesceFragments(regions);
-  regions = mergeConsecutiveUnchanged(regions);
+  return mergeConsecutiveUnchanged(regions);
+}
 
-  flagSuspiciousAutoResolves(regions);
+/** A changed range of base lines [baseFrom, baseTo) replaced by side lines [from, to). */
+interface Hunk {
+  baseFrom: number;
+  baseTo: number;
+  from: number;
+  to: number;
+}
 
+/**
+ * Line-level diff. Each distinct line is mapped to one UTF-16 unit so the
+ * character diff becomes a line diff. Returns null past ~63k distinct lines.
+ */
+function lineHunks(a: string[], b: string[]): Hunk[] | null {
+  const ids = new Map<string, number>();
+  const encode = (lines: string[]): string | null => {
+    let s = "";
+    for (const line of lines) {
+      let id = ids.get(line);
+      if (id === undefined) {
+        id = ids.size;
+        ids.set(line, id);
+      }
+      // Skip the surrogate range so every line stays exactly one unit.
+      const code = id < 0xd800 ? id : id + 0x800;
+      if (code > 0xffff) return null;
+      s += String.fromCharCode(code);
+    }
+    return s;
+  };
+  const sa = encode(a);
+  const sb = encode(b);
+  if (sa === null || sb === null) return null;
+  return diff(sa, sb).map((c) => ({ baseFrom: c.fromA, baseTo: c.toA, from: c.fromB, to: c.toB }));
+}
+
+/**
+ * Three-way merge aligned on base, matching git's diff3 rules: a hunk only
+ * one side changed takes that side, identical changes are kept once, and
+ * hunks that overlap or touch in base are a conflict. Lines identical on
+ * both sides are split out of conflicts (like git's zealous merge).
+ * Returns null when the line diff can't run, so the caller falls back to 2-way.
+ */
+function diff3Regions(base: string[], ours: string[], theirs: string[]): DiffRegion[] | null {
+  const oh = lineHunks(base, ours);
+  const th = lineHunks(base, theirs);
+  if (!oh || !th) return null;
+
+  const regions: DiffRegion[] = [];
+  // Side position = base position + delta, outside that side's hunks.
+  let oDelta = 0;
+  let tDelta = 0;
+  let pos = 0;
+  let i = 0;
+  let j = 0;
+
+  const pushStable = (to: number) => {
+    if (to > pos) {
+      regions.push({
+        type: "unchanged",
+        aLines: base.slice(pos, to),
+        bLines: base.slice(pos, to),
+        aStartLine: pos + oDelta + 1,
+        bStartLine: pos + tDelta + 1,
+      });
+    }
+  };
+
+  while (i < oh.length || j < th.length) {
+    const start = Math.min(oh[i]?.baseFrom ?? Infinity, th[j]?.baseFrom ?? Infinity);
+    pushStable(start);
+
+    // Grow the group while either side has a hunk overlapping or touching it.
+    let end = start;
+    const oStartDelta = oDelta;
+    const tStartDelta = tDelta;
+    let oursTouched = false;
+    let theirsTouched = false;
+    for (;;) {
+      if (i < oh.length && oh[i].baseFrom <= end) {
+        const h = oh[i++];
+        end = Math.max(end, h.baseTo);
+        oDelta += (h.to - h.from) - (h.baseTo - h.baseFrom);
+        oursTouched = true;
+      } else if (j < th.length && th[j].baseFrom <= end) {
+        const h = th[j++];
+        end = Math.max(end, h.baseTo);
+        tDelta += (h.to - h.from) - (h.baseTo - h.baseFrom);
+        theirsTouched = true;
+      } else {
+        break;
+      }
+    }
+
+    const aFrom = start + oStartDelta;
+    const bFrom = start + tStartDelta;
+    const aLines = ours.slice(aFrom, end + oDelta);
+    const bLines = theirs.slice(bFrom, end + tDelta);
+    const baseLines = base.slice(start, end);
+    const region: DiffRegion = {
+      type: "changed", aLines, bLines, aStartLine: aFrom + 1, bStartLine: bFrom + 1,
+      baseLines, baseStartLine: start + 1,
+    };
+
+    if (!theirsTouched) {
+      regions.push({ ...region, type: "auto-resolved", autoSide: "ours" });
+    } else if (!oursTouched) {
+      regions.push({ ...region, type: "auto-resolved", autoSide: "theirs" });
+    } else {
+      regions.push(...splitConflict(region));
+    }
+    pos = end;
+  }
+  pushStable(base.length);
   return regions;
 }
 
 /**
- * Auto-resolve regions where only one side changed from the ancestor.
- *
- * 1. Pure insertions (0 lines on one side) → auto-resolve to the side
- *    with content.
- * 2. Region-level base comparison: if baseLines matches one side exactly,
- *    only the other side changed → auto-resolve to the changed side.
- *    This is safe because it requires the ENTIRE region to match (unlike
- *    the per-line approach which false-matched on individual lines).
+ * Split lines identical on both sides out of a conflict. Each resulting
+ * sub-conflict shows the whole overlapped base, as git's diff3 style does.
  */
-function classify3Way(
-  regions: DiffRegion[],
-): DiffRegion[] {
-  const result: DiffRegion[] = [];
-  for (const region of regions) {
-    if (region.type !== "changed") {
-      result.push(region);
-      continue;
-    }
-
-    if (region.aLines.length === 0 && region.bLines.length > 0) {
-      result.push({ ...region, type: "auto-resolved", autoSide: "theirs" });
-    } else if (region.bLines.length === 0 && region.aLines.length > 0) {
-      result.push({ ...region, type: "auto-resolved", autoSide: "ours" });
-    } else if (region.baseLines) {
-      const baseContent = region.baseLines.join("\n");
-      const oursContent = region.aLines.join("\n");
-      const theirsContent = region.bLines.join("\n");
-
-      if (baseContent === oursContent) {
-        result.push({ ...region, type: "auto-resolved", autoSide: "theirs" });
-      } else if (baseContent === theirsContent) {
-        result.push({ ...region, type: "auto-resolved", autoSide: "ours" });
-      } else {
-        result.push(region);
-      }
-    } else {
-      result.push(region);
-    }
+function splitConflict(r: DiffRegion): DiffRegion[] {
+  // Same change on both sides (incl. both deleting the same lines) is no conflict.
+  if (r.aLines.length === r.bLines.length && r.aLines.every((l, k) => l === r.bLines[k])) {
+    return r.aLines.length ? [{ ...r, type: "unchanged", baseLines: undefined, baseStartLine: undefined }] : [];
   }
-
-  return result;
-}
-
-/**
- * Attach base (ancestor) lines to each remaining changed region by diffing
- * base vs ours and mapping ours line ranges back to the corresponding base
- * line ranges. Mutates regions in place.
- */
-function attachBaseLines(
-  regions: DiffRegion[],
-  base: string,
-  ours: string,
-): void {
-  const baseLineArr = base.split("\n");
-  const oursLineArr = ours.split("\n");
-  const baseDoc = Text.of(baseLineArr);
-  const oursDoc = Text.of(oursLineArr);
-  const chunks = Chunk.build(baseDoc, oursDoc);
-
-  interface Segment {
-    baseStart: number; // 0-based inclusive
-    baseEnd: number; // 0-based exclusive
-    oursStart: number;
-    oursEnd: number;
-    changed: boolean;
+  const parts = refineChangedRegions([r]);
+  for (const p of parts) {
+    if (p.type !== "changed") continue;
+    p.baseLines = r.baseLines;
+    p.baseStartLine = r.baseStartLine;
   }
-
-  const segments: Segment[] = [];
-  let bIdx = 0;
-  let oIdx = 0;
-
-  for (const chunk of chunks) {
-    const hasBase = chunk.fromA < chunk.toA;
-    const hasOurs = chunk.fromB < chunk.toB;
-    const bStart = baseDoc.lineAt(chunk.fromA).number - 1;
-    const bEnd = hasBase ? baseDoc.lineAt(chunk.endA).number : bStart;
-    const oStart = oursDoc.lineAt(chunk.fromB).number - 1;
-    const oEnd = hasOurs ? oursDoc.lineAt(chunk.endB).number : oStart;
-
-    if (bIdx < bStart) {
-      segments.push({
-        baseStart: bIdx, baseEnd: bStart,
-        oursStart: oIdx, oursEnd: oStart,
-        changed: false,
-      });
-    }
-    segments.push({
-      baseStart: bStart, baseEnd: bEnd,
-      oursStart: oStart, oursEnd: oEnd,
-      changed: true,
-    });
-    bIdx = bEnd;
-    oIdx = oEnd;
-  }
-
-  if (bIdx < baseLineArr.length || oIdx < oursLineArr.length) {
-    segments.push({
-      baseStart: bIdx, baseEnd: baseLineArr.length,
-      oursStart: oIdx, oursEnd: oursLineArr.length,
-      changed: false,
-    });
-  }
-
-  for (const region of regions) {
-    if (region.type !== "changed") continue;
-
-    const qStart = region.aStartLine - 1;
-    const qEnd = qStart + region.aLines.length;
-
-    let minBase = Infinity;
-    let maxBase = -Infinity;
-
-    for (const seg of segments) {
-      if (seg.oursEnd <= qStart || seg.oursStart >= qEnd) continue;
-
-      if (!seg.changed) {
-        const offset = Math.max(0, qStart - seg.oursStart);
-        const end = Math.min(seg.oursEnd, qEnd) - seg.oursStart;
-        minBase = Math.min(minBase, seg.baseStart + offset);
-        maxBase = Math.max(maxBase, seg.baseStart + end);
-      } else {
-        minBase = Math.min(minBase, seg.baseStart);
-        maxBase = Math.max(maxBase, seg.baseEnd);
-      }
-    }
-
-    if (minBase !== Infinity) {
-      region.baseLines = baseLineArr.slice(minBase, maxBase);
-      region.baseStartLine = minBase + 1;
-    }
-  }
+  return parts;
 }
 
 
@@ -438,8 +431,8 @@ function coalesceFragments(subRegions: DiffRegion[]): DiffRegion[] {
 
 /**
  * Merge consecutive unchanged regions into single larger regions.
- * After classify3Way converts many changed→unchanged, we can end up with
- * adjacent unchanged regions that should be a single block.
+ * Refining and splitting conflicts leaves adjacent unchanged regions that
+ * should be a single block.
  */
 function mergeConsecutiveUnchanged(regions: DiffRegion[]): DiffRegion[] {
   if (regions.length === 0) return regions;

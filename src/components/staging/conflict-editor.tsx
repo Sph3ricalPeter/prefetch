@@ -1946,7 +1946,7 @@ function AutoResolvedBlock({
   const winStartLine = region.autoSide === "theirs" ? region.bStartLine : region.aStartLine;
   const loseStartLine = side === "ours" ? region.aStartLine : region.bStartLine;
 
-  if (isWinner) {
+  if (isWinner && winLines.length > 0) {
     return (
       <div className="border-l-2" style={{ borderLeftColor: "rgba(var(--conflict-auto), 0.5)" }}>
         {winLines.map((line, li) => (
@@ -1979,14 +1979,14 @@ function AutoResolvedBlock({
     );
   }
 
-  if (loseLines.length === 0) {
+  if (isWinner || loseLines.length === 0) {
     return (
       <div className="border-l-2" style={{ borderLeftColor: "rgba(var(--conflict-auto), 0.2)" }}>
         <div className="flex items-center" style={{ backgroundColor: "rgba(var(--conflict-auto), 0.03)" }}>
           <span className="shrink-0 w-12" />
           <span className="w-9 shrink-0" />
           <span className="flex-1 px-2 text-caption italic leading-5 text-muted-foreground">
-            — no changes —
+            {isWinner ? "— deleted —" : "— no changes —"}
           </span>
         </div>
       </div>

@@ -131,7 +131,7 @@ import {
 } from "@/lib/commands";
 import { errorMessage, showError, showSuccess } from "@/lib/toast";
 import { generatePatch, generateHunkPatch } from "@/lib/patch";
-import { computeDiffRegions, buildOutputWithSources } from "@/lib/conflict-regions";
+import { computeDiffRegions, buildOutputWithSources, isEditableRegion } from "@/lib/conflict-regions";
 import { isHeavyConflict } from "@/lib/diff-size";
 import { MultiStepAction } from "@/lib/multi-step";
 import { flattenJobs } from "@/lib/ci-utils";
@@ -219,7 +219,7 @@ async function analyzeConflictFiles(
         // app on rebase entry, before the user has clicked anything.
         if (isHeavyConflict(contents)) return null;
         const regions = computeDiffRegions(contents.ours, contents.theirs, contents.base ?? undefined);
-        const hasRealConflict = regions.some((r) => r.type === "changed");
+        const hasRealConflict = regions.some(isEditableRegion);
         const hasAutoResolved = regions.some((r) => r.type === "auto-resolved");
         if (!hasRealConflict && hasAutoResolved) {
           const { text } = buildOutputWithSources(regions, new Map());
