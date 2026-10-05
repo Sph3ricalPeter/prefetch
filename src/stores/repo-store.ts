@@ -49,7 +49,6 @@ import {
   getBranches,
   getRefMru,
   checkoutBranch,
-  forceCheckoutBranch,
   createBranchCmd,
   fetchRepo,
   pullRepo,
@@ -396,7 +395,7 @@ interface RepoState {
 
   // Dirty working tree dialog — shown when an operation needs a clean tree
   dirtyActionPending: {
-    operation: "checkout" | "pull" | "merge" | "cherry-pick" | "revert" | "checkout-detached";
+    operation: "pull" | "merge" | "cherry-pick" | "revert";
     targetName: string;
     changesCount: number;
   } | null;
@@ -637,10 +636,70 @@ async function fetchRepoData(): Promise<Partial<RepoState>> {
   };
 }
 
+/**
+ * Switch with a dirty tree: stash the WIP, then run `switchCmd`. The WIP stays
+ * stashed. The stash message is the marker `autostash_switch_origin`
+ * (repository.rs) reads so a single undo switches back and pops it.
+ * `target` must be what git records as the checkout target in the reflog
+ * (local branch name or full sha).
+ */
+async function autostashSwitch(
+  set: (state: Partial<RepoState>) => void,
+  get: StoreGet,
+  target: string,
+  label: string,
+  switchCmd: () => Promise<unknown>,
+): Promise<void> {
+  // A second click while the first switch runs would act on stale statuses.
+  if (get().isLoading) return;
+  const { currentBranch, headCommitId } = get();
+  set({ isLoading: true, error: null });
+  const ms = new MultiStepAction(`Stash & ${label}`, ["git stash push", label], "Stash Changes");
+  try {
+    ms.startStep(0);
+    const stashCount = (await getStashes()).length;
+    await stashPushCmd(`prefetch-autostash → ${target}`);
+    ms.completeStep(0);
+    ms.startStep(1);
+    try {
+      await switchCmd();
+    } catch (e) {
+      // Pop the WIP back only if the switch really didn't happen (a failing
+      // post-checkout hook errors after HEAD moved) and the push really made
+      // stash@{0} (it's a no-op on a tree that turned out clean).
+      const [repoData, stashList] = await Promise.all([fetchRepoData(), getStashes()]);
+      const moved = repoData.currentBranch !== currentBranch || repoData.headCommitId !== headCommitId;
+      if (!moved && stashList.length > stashCount) {
+        await stashPopCmd(0).catch(() => {
+          throw new Error(`${errorMessage(e)}\nYour changes are kept in stash@{0}.`);
+        });
+      }
+      throw e;
+    }
+    ms.completeStep(1);
+    ms.finish();
+    const [repoData, statuses, stashList] = await Promise.all([fetchRepoData(), getFileStatus(), getStashes()]);
+    set({
+      ...repoData,
+      isLoading: false,
+      fileStatuses: statuses,
+      stashes: stashList,
+      selectedFilePath: null,
+      activeDiff: null,
+    });
+  } catch (e) {
+    const failIdx = ms.runningStepIndex();
+    ms.failStep(failIdx >= 0 ? failIdx : 0, errorMessage(e));
+    set({ isLoading: false });
+    try {
+      const [repoData, statuses, stashList] = await Promise.all([fetchRepoData(), getFileStatus(), getStashes()]);
+      set({ ...repoData, fileStatuses: statuses, stashes: stashList });
+    } catch { /* stale UI is acceptable in error recovery */ }
+  }
+}
+
 function operationLabel(op: string, target: string): string {
   switch (op) {
-    case "checkout": return `Checkout ${target}`;
-    case "checkout-detached": return `Checkout ${target.slice(0, 7)}`;
     case "pull": return "Pull";
     case "merge": return `Merge ${target}`;
     case "cherry-pick": return `Cherry-pick ${target.slice(0, 7)}`;
@@ -653,8 +712,6 @@ type StoreGet = () => RepoState;
 
 async function retryOperation(get: StoreGet, operation: string, targetName: string): Promise<void> {
   switch (operation) {
-    case "checkout": await get().checkout(targetName); break;
-    case "checkout-detached": await get().checkoutDetached(targetName); break;
     case "pull": await get().pull(); break;
     case "merge": await get().mergeInto(targetName); break;
     case "cherry-pick": await get().cherryPick(targetName); break;
@@ -1003,9 +1060,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     // exits 128. Guard the branch that will ACTUALLY be checked out: every path
     // below resolves a remote ref to its local counterpart ("origin/feat" ->
     // "feat") before checking out, so guarding the raw `name` would let remote
-    // refs through. This runs before any pending-dialog state is set, which is
-    // what keeps stashAndProceed / discardAndProceed from stashing or discarding
-    // the working tree for a checkout that could never succeed.
+    // refs through. This runs before the auto-stash, which is what keeps it
+    // from stashing the working tree for a checkout that could never succeed.
     const targetLocal = isRemote && remotePrefix ? name.slice(remotePrefix.length) : name;
     const heldBy = branches.find((b) => !b.is_remote && b.name === targetLocal)?.worktree_path;
     if (heldBy) {
@@ -1018,50 +1074,39 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
     // If target is the remote counterpart of the current branch, always show
     // the reset dialog — even with a dirty tree (reset --hard handles it)
+    if (isRemote && targetLocal === currentBranch) {
+      set({ remoteCheckoutPending: { localName: targetLocal, remoteName: name, alreadyOnLocal: true } });
+      return;
+    }
+
+    // Dirty tree: stash the WIP and switch. A remote ref lands on its local
+    // counterpart (checking out "origin/x" itself would detach HEAD); git's
+    // DWIM creates the tracking branch if there isn't one yet.
+    if (fileStatuses.length > 0) {
+      await autostashSwitch(set, get, targetLocal, `Checkout ${targetLocal}`, () => checkoutBranch(targetLocal));
+      return;
+    }
+
     if (isRemote && remotePrefix) {
-      const localName = name.slice(remotePrefix.length);
-
-      if (localName === currentBranch) {
-        set({ remoteCheckoutPending: { localName, remoteName: name, alreadyOnLocal: true } });
-        return;
-      }
-
-      const localExists = branches.some((b) => !b.is_remote && b.name === localName);
+      const localExists = branches.some((b) => !b.is_remote && b.name === targetLocal);
 
       if (localExists) {
-        if (fileStatuses.length > 0) {
-          // Discard & switch should land on the LOCAL branch, not the remote
-          // ref — force-checking-out a remote ref ("origin/x") detaches HEAD.
-          set({ dirtyActionPending: { operation: "checkout", targetName: localName, changesCount: fileStatuses.length } });
-          return;
-        }
-        set({ remoteCheckoutPending: { localName, remoteName: name, alreadyOnLocal: false } });
+        set({ remoteCheckoutPending: { localName: targetLocal, remoteName: name, alreadyOnLocal: false } });
         return;
       }
 
-      // No local branch — if dirty, prompt; otherwise auto-create tracking branch.
-      // Pass the bare name so git's DWIM creates a tracking branch (force-checking
-      // out the remote ref directly would detach HEAD instead).
-      if (fileStatuses.length > 0) {
-        set({ dirtyActionPending: { operation: "checkout", targetName: localName, changesCount: fileStatuses.length } });
-        return;
-      }
+      // No local branch — auto-create tracking branch. Pass the bare name so
+      // git's DWIM creates it (checking out the remote ref would detach HEAD).
       set({ isLoading: true, error: null });
       try {
-        await checkoutBranch(localName);
+        await checkoutBranch(targetLocal);
         const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
         set({ ...repoData, isLoading: false, fileStatuses: statuses });
-        showSuccess("Checkout", `Checked out ${localName} (tracking ${name})`);
+        showSuccess("Checkout", `Checked out ${targetLocal} (tracking ${name})`);
       } catch (e) {
         set({ isLoading: false });
         showError("Checkout", e);
       }
-      return;
-    }
-
-    // If working tree is dirty, prompt before switching
-    if (fileStatuses.length > 0) {
-      set({ dirtyActionPending: { operation: "checkout", targetName: name, changesCount: fileStatuses.length } });
       return;
     }
 
@@ -1118,25 +1163,15 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     const ms = new MultiStepAction(`Discard & ${opLabel}`, ["Discard changes", opLabel], "Discard");
     try {
       ms.startStep(0);
-      if (operation === "checkout") {
-        await forceCheckoutBranch(targetName);
-        ms.completeStep(0);
-        ms.startStep(1);
-        const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
-        set({ ...repoData, isLoading: false, fileStatuses: statuses });
-        ms.completeStep(1);
-        ms.finish();
-      } else {
-        await discardAllCmd();
-        ms.completeStep(0);
-        ms.startStep(1);
-        ms.completeStep(1);
-        ms.finish(1500);
+      await discardAllCmd();
+      ms.completeStep(0);
+      ms.startStep(1);
+      ms.completeStep(1);
+      ms.finish(1500);
 
-        const freshStatuses = await getFileStatus();
-        set({ isLoading: false, fileStatuses: freshStatuses });
-        await retryOperation(get, operation, targetName);
-      }
+      const freshStatuses = await getFileStatus();
+      set({ isLoading: false, fileStatuses: freshStatuses });
+      await retryOperation(get, operation, targetName);
     } catch (e) {
       const failIdx = ms.runningStepIndex();
       ms.failStep(failIdx >= 0 ? failIdx : 0, errorMessage(e));
@@ -1780,6 +1815,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       set({ isLoading: false });
       showError("Apply Stash", e);
+      // A conflicting apply still changed the tree.
+      getFileStatus().then((statuses) => set({ fileStatuses: statuses })).catch(() => {});
     }
   },
 
@@ -1797,6 +1834,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       set({ isLoading: false });
       showError("Pop Stash", e);
+      // A conflicting pop still changed the tree (and kept the stash).
+      getFileStatus().then((statuses) => set({ fileStatuses: statuses })).catch(() => {});
     }
   },
 
@@ -2010,7 +2049,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     if (blockedByOperation(get, "check out a commit")) return;
     const { fileStatuses } = get();
     if (fileStatuses.length > 0) {
-      set({ dirtyActionPending: { operation: "checkout-detached", targetName: commitId, changesCount: fileStatuses.length } });
+      await autostashSwitch(set, get, commitId, `Checkout ${commitId.slice(0, 7)}`, () => checkoutDetachedCmd(commitId));
       return;
     }
     set({ isLoading: true });
@@ -2244,16 +2283,19 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ undoInfo: null, lastUndoTime: Date.now() });
     try {
       await undoLast();
+      showSuccess("Undo", info.description);
+    } catch (e) {
+      showError("Undo", e);
+    }
+    // Refresh either way: a multi-step undo can fail after its first step.
+    try {
       const [repoData, statuses, stashList] = await Promise.all([
         fetchRepoData(),
         getFileStatus(),
         getStashes(),
       ]);
       set({ ...repoData, fileStatuses: statuses, stashes: stashList });
-      showSuccess("Undo", info.description);
-    } catch (e) {
-      showError("Undo", e);
-    }
+    } catch { /* stale UI is acceptable in error recovery */ }
   },
 
   loadRecentRepos: async () => {

@@ -39,6 +39,14 @@ import {
 } from "@/components/ui/tooltip";
 import { ACTION_ICONS } from "@/lib/action-icons";
 
+/** Button verbs for the dirty-tree dialog, keyed by `dirtyActionPending.operation`. */
+const DIRTY_OP_LABELS = {
+  pull: "Pull",
+  merge: "Merge",
+  "cherry-pick": "Cherry-pick",
+  revert: "Revert",
+} as const;
+
 // ── Graph column layout (badge / graph / message / author / date / sha) ──────
 // Static columns (user-resizable pixels, or fixed constants):
 //   - badge (branch/tag): pixels, user-resizable
@@ -857,13 +865,13 @@ export function GraphPanel() {
               onClick={stashAndProceed}
               className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
             >
-              Stash &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
+              Stash &amp; {DIRTY_OP_LABELS[dirtyActionPending.operation]}
             </button>
             <button
               onClick={discardAndProceed}
               className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20 hover:-translate-y-px transition-all whitespace-nowrap"
             >
-              Discard &amp; {dirtyActionPending.operation === "pull" ? "Pull" : dirtyActionPending.operation === "merge" ? "Merge" : dirtyActionPending.operation === "cherry-pick" ? "Cherry-pick" : dirtyActionPending.operation === "revert" ? "Revert" : "Switch"}
+              Discard &amp; {DIRTY_OP_LABELS[dirtyActionPending.operation]}
             </button>
           </div>
         </Modal>

@@ -228,7 +228,14 @@ pub(crate) fn run_git(
             });
         }
 
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // Some failures (e.g. a conflicting `stash pop`) report the cause on
+        // stdout, possibly behind unrelated stderr warnings (CRLF, LFS).
+        let stderr = [&output.stderr, &output.stdout]
+            .map(|b| String::from_utf8_lossy(b).trim().to_string())
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
 
         // Retry on index.lock contention (another git process is running)
         if attempt + 1 < MAX_RETRIES && stderr.contains("index.lock") {

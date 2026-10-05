@@ -439,12 +439,6 @@ pub fn checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Force-checkout a branch, discarding all local changes.
-pub fn force_checkout_branch(path: &str, name: &str) -> Result<(), AppError> {
-    run_git(path, &["checkout", "--force", name], &[])?;
-    Ok(())
-}
-
 /// Checkout a branch and reset it to match a remote ref.
 /// Used for "Reset Local to Remote" when checking out a remote branch.
 pub fn reset_branch_to_remote(path: &str, branch: &str, remote_ref: &str) -> Result<(), AppError> {
@@ -1225,8 +1219,9 @@ pub fn discard_files(path: &str, files: &[String]) -> Result<(), AppError> {
 
 /// Discard ALL changes — revert entire working tree to HEAD.
 pub fn discard_all(path: &str) -> Result<(), AppError> {
-    // Unstage everything
-    let _ = run_git(path, &["reset", "HEAD"], &[]);
+    // Unstage everything. Path-limited so it writes no `reset: moving to HEAD`
+    // reflog entry, which would pose as an auto-stash (autostash_switch_origin).
+    let _ = run_git(path, &["reset", "-q", "--", "."], &[]);
     // Revert all tracked files
     run_git(path, &["checkout", "--", "."], &[])?;
     // Remove all untracked files
@@ -1861,14 +1856,27 @@ pub fn stash_push(
 
 /// Pop a stash entry (apply and remove from stash list).
 pub fn stash_pop(path: &str, index: usize) -> Result<String, AppError> {
-    let stash_ref = format!("stash@{{{index}}}");
-    run_git(path, &["stash", "pop", &stash_ref], &[])
+    run_stash_apply(path, "pop", index)
 }
 
 /// Apply a stash entry without removing it from the stash list.
 pub fn stash_apply(path: &str, index: usize) -> Result<String, AppError> {
+    run_stash_apply(path, "apply", index)
+}
+
+/// A conflicting stash apply leaves conflict markers but no sequencer state
+/// (nothing to continue/abort) and git keeps the entry. Its report is a full
+/// `git status` dump, so replace it with what the user needs to know.
+fn run_stash_apply(path: &str, sub: &str, index: usize) -> Result<String, AppError> {
     let stash_ref = format!("stash@{{{index}}}");
-    run_git(path, &["stash", "apply", &stash_ref], &[])
+    run_git(path, &["stash", sub, &stash_ref], &[]).map_err(|e| match e {
+        AppError::Git(msg) if msg.contains("CONFLICT") => AppError::Git(if sub == "pop" {
+            format!("Stash applied with conflicts. Resolve them, then drop {stash_ref} (it was kept).")
+        } else {
+            "Stash applied with conflicts. Resolve them in the file list.".to_string()
+        }),
+        e => e,
+    })
 }
 
 /// Drop a stash entry without applying.
@@ -2130,13 +2138,27 @@ pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
         });
     }
 
-    let text = capture(path, &["reflog", "--format=%H %gs", "-n", "1"], &[]).unwrap_or_default();
-    let line = text.trim();
+    let text = capture(path, &["reflog", "--format=%H %gs", "-n", "2"], &[]).unwrap_or_default();
+    let lines: Vec<&str> = text.trim().lines().collect();
 
-    if line.is_empty() {
+    let Some(line) = lines.first() else {
         return Ok(UndoAction {
             description: "Nothing to undo".to_string(),
             can_undo: false,
+        });
+    };
+
+    if let Some(from) = autostash_switch_origin(path, &lines) {
+        return Ok(if worktree_is_dirty(path) {
+            UndoAction {
+                description: AUTOSTASH_UNDO_DIRTY.to_string(),
+                can_undo: false,
+            }
+        } else {
+            UndoAction {
+                description: format!("Undo checkout → back to {from} and restore stashed changes"),
+                can_undo: true,
+            }
         });
     }
 
@@ -2149,11 +2171,57 @@ pub fn get_undo_action(path: &str) -> Result<UndoAction, AppError> {
     })
 }
 
+/// Stash message the frontend's auto-stash switch uses (`autostashSwitch` in
+/// repo-store.ts), followed by the checkout target.
+const AUTOSTASH_MARKER: &str = "prefetch-autostash → ";
+
+/// Undoing an auto-stash switch over new WIP would carry it back and mix it
+/// with the popped stash. No suggested fix: committing or stashing it adds a
+/// reflog entry, which ends the combined undo anyway.
+const AUTOSTASH_UNDO_DIRTY: &str =
+    "Can't undo checkout: uncommitted changes would mix with the stashed ones";
+
+/// If the top reflog entry is the checkout half of an auto-stash switch, return
+/// the branch (or sha) it left. Matches when the checkout directly follows the
+/// stash's own `reset: moving to HEAD` entry, stash@{0} was taken on that
+/// commit, and its message names this checkout's target. Anything in between
+/// (another switch, a commit) breaks the chain and undo falls back to a plain
+/// checkout undo.
+fn autostash_switch_origin(path: &str, reflog: &[&str]) -> Option<String> {
+    let [top, prev, ..] = reflog else {
+        return None;
+    };
+    let (_, action) = top.split_once(' ')?;
+    let (from, to) = action
+        .strip_prefix("checkout: moving from ")?
+        .split_once(" to ")?;
+    let (prev_sha, prev_action) = prev.split_once(' ')?;
+    if prev_action != "reset: moving to HEAD" {
+        return None;
+    }
+    // Line 1: parents (first = the commit stashed on). Line 2: subject.
+    let stash = capture(path, &["log", "-1", "--format=%P%n%s", "stash@{0}"], &[]).ok()?;
+    let (parents, subject) = stash.trim().split_once('\n')?;
+    (parents.split(' ').next() == Some(prev_sha)
+        && subject.ends_with(&format!("{AUTOSTASH_MARKER}{to}")))
+    .then(|| from.to_string())
+}
+
+fn worktree_is_dirty(path: &str) -> bool {
+    capture(path, &["status", "--porcelain"], &[])
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(true)
+}
+
 /// Classify a reflog action string and return (can_undo, human_description).
 fn classify_reflog_action(action: &str) -> (bool, String) {
     let action_lower = action.to_lowercase();
 
-    if action_lower.starts_with("checkout: moving from") {
+    if action == "reset: moving to HEAD" {
+        // Written by `git stash push` (and plain `git reset`): HEAD didn't move,
+        // and "undoing" it with reset --hard would only destroy the worktree.
+        (false, "Nothing to undo".to_string())
+    } else if action_lower.starts_with("checkout: moving from") {
         let desc = if let Some(rest) = action.strip_prefix("checkout: moving from ") {
             let parts: Vec<&str> = rest.split(" to ").collect();
             if parts.len() == 2 {
@@ -2204,11 +2272,24 @@ pub fn undo_last(path: &str, extra_env: &[(String, String)]) -> Result<String, A
         ));
     }
 
+    if let Some(from) = autostash_switch_origin(path, &lines) {
+        if worktree_is_dirty(path) {
+            return Err(AppError::Other(AUTOSTASH_UNDO_DIRTY.to_string()));
+        }
+        run_git(path, &["checkout", &from], &[])?;
+        return stash_pop(path, 0);
+    }
+
     let current_line = lines[0];
     let action = current_line
         .split_once(' ')
         .map(|(_, desc)| desc)
         .unwrap_or("");
+    // The reflog may have moved since the UI asked get_undo_action.
+    let (can_undo, description) = classify_reflog_action(action);
+    if !can_undo {
+        return Err(AppError::Other(description));
+    }
     let action_lower = action.to_lowercase();
 
     if action_lower.starts_with("checkout: moving from") {
@@ -3422,6 +3503,97 @@ three
         );
     }
 
+    /// A conflicting pop reports on stdout only — the error must still say what
+    /// happened, and the stash must survive.
+    #[test]
+    fn conflicting_stash_pop_reports_conflict_and_keeps_stash() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        let f = dir.path().join("f.txt");
+
+        std::fs::write(&f, "a").unwrap();
+        run_git(p, &["add", "f.txt"], &[]).unwrap();
+        run_git(p, &["commit", "-m", "a"], &[]).unwrap();
+        std::fs::write(&f, "b").unwrap();
+        stash_push(p, None, &[]).unwrap();
+        std::fs::write(&f, "c").unwrap();
+        run_git(p, &["commit", "-am", "c"], &[]).unwrap();
+
+        let err = stash_pop(p, 0).unwrap_err().to_string();
+        assert!(err.contains("Stash applied with conflicts"), "{err}");
+        assert_eq!(list_stashes(p).unwrap().len(), 1);
+    }
+
+    /// Auto-stash switch (stash with marker, then checkout) undoes as one step:
+    /// back to the origin branch with the WIP popped. A later plain switch to
+    /// the same target must not be mistaken for it.
+    #[test]
+    fn autostash_switch_undoes_checkout_and_stash_together() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        let main = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+        run_git(p, &["branch", "b"], &[]).unwrap();
+        std::fs::write(dir.path().join(".gitkeep"), "wip").unwrap();
+        std::fs::write(dir.path().join("new.txt"), "new").unwrap();
+
+        stash_push(p, Some("prefetch-autostash → b"), &[]).unwrap();
+        checkout_branch(p, "b").unwrap();
+
+        let undo = get_undo_action(p).unwrap();
+        assert!(undo.can_undo);
+        assert!(
+            undo.description.contains("restore stashed"),
+            "{}",
+            undo.description
+        );
+
+        // New WIP on the target would mix with the popped stash: refused, but
+        // the combined undo comes back once the tree is clean again.
+        std::fs::write(dir.path().join("later.txt"), "x").unwrap();
+        assert!(!get_undo_action(p).unwrap().can_undo);
+        assert!(undo_last(p, &[]).is_err());
+        std::fs::remove_file(dir.path().join("later.txt")).unwrap();
+
+        undo_last(p, &[]).unwrap();
+        let head = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[]).unwrap();
+        assert_eq!(head.trim(), main);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".gitkeep")).unwrap(),
+            "wip"
+        );
+        assert!(dir.path().join("new.txt").exists());
+        assert!(list_stashes(p).unwrap().is_empty());
+
+        // Stash again, but reach `b` via a detour: the chain is broken.
+        stash_push(p, Some("prefetch-autostash → b"), &[]).unwrap();
+        // The stash's own `reset: moving to HEAD` moved nothing: not undoable.
+        assert!(!get_undo_action(p).unwrap().can_undo);
+        checkout_branch(p, "b").unwrap();
+        checkout_branch(p, &main).unwrap();
+        checkout_branch(p, "b").unwrap();
+        let undo = get_undo_action(p).unwrap();
+        assert!(
+            !undo.description.contains("restore stashed"),
+            "{}",
+            undo.description
+        );
+
+        // Discard All on the stash's commit must not stand in for the stash.
+        checkout_branch(p, &main).unwrap();
+        std::fs::write(dir.path().join(".gitkeep"), "edit").unwrap();
+        discard_all(p).unwrap();
+        checkout_branch(p, "b").unwrap();
+        let undo = get_undo_action(p).unwrap();
+        assert!(
+            !undo.description.contains("restore stashed"),
+            "{}",
+            undo.description
+        );
+    }
+
     /// A paused rebase must be inert to undo: the top reflog entry is the
     /// rebase's own start marker, and resetting onto it strands the sequencer —
     /// the following `--continue` then reports success on an unrebased branch.
@@ -3514,6 +3686,11 @@ three
         assert_eq!(sequencer_in_progress(p), Some("revert"));
         assert_eq!(get_conflict_state(p).unwrap().operation, "revert");
         assert!(!get_undo_action(p).unwrap().can_undo);
+        // No MERGE_HEAD, but it's not a stash apply either.
+        assert_ne!(
+            get_conflict_contents(p, "f.txt").unwrap().theirs_branch,
+            "stash"
+        );
 
         abort_operation(p).unwrap();
         assert_eq!(sequencer_in_progress(p), None);

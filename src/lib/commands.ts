@@ -58,10 +58,6 @@ export async function checkoutBranch(name: string): Promise<void> {
   return tracedInvoke<void>("checkout_branch", { name });
 }
 
-export async function forceCheckoutBranch(name: string): Promise<void> {
-  return tracedInvoke<void>("force_checkout_branch", { name });
-}
-
 export async function resetBranchToRemote(
   branch: string,
   remoteRef: string,

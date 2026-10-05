@@ -200,25 +200,30 @@ pub fn gather(repo_path: &str, file_path: &str) -> ConflictFacts {
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|_| head_short.clone());
 
-        let theirs_ref = if Path::new(repo_path).join(".git/MERGE_HEAD").exists() {
-            "MERGE_HEAD"
-        } else if Path::new(repo_path).join(".git/CHERRY_PICK_HEAD").exists() {
-            "CHERRY_PICK_HEAD"
-        } else {
-            "HEAD" // shouldn't reach here given the rebase check above
+        let git_dir = Path::new(repo_path).join(".git");
+        let theirs_ref = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
+            .into_iter()
+            .find(|r| git_dir.join(r).exists());
+        let (theirs_short, theirs_branch) = match theirs_ref {
+            Some(theirs_ref) => {
+                let theirs_short = short(&["rev-parse", "--short", theirs_ref]);
+                let theirs_branch = branch_from_merge_msg(repo_path)
+                    .or_else(|| {
+                        capture(
+                            repo_path,
+                            &["name-rev", "--name-only", "--no-undefined", theirs_ref],
+                            &[],
+                        )
+                        .ok()
+                        .and_then(|s| parse::sanitize_name_rev(&s))
+                    })
+                    .unwrap_or_else(|| theirs_short.clone());
+                (theirs_short, theirs_branch)
+            }
+            // Conflicted `stash pop`/`apply` leaves no ref for the incoming
+            // side, and which stash@{N} it was isn't recorded anywhere.
+            None => (String::new(), "stash".to_string()),
         };
-        let theirs_short = short(&["rev-parse", "--short", theirs_ref]);
-        let theirs_branch = branch_from_merge_msg(repo_path)
-            .or_else(|| {
-                capture(
-                    repo_path,
-                    &["name-rev", "--name-only", "--no-undefined", theirs_ref],
-                    &[],
-                )
-                .ok()
-                .and_then(|s| parse::sanitize_name_rev(&s))
-            })
-            .unwrap_or_else(|| theirs_short.clone());
 
         ConflictFacts {
             file_path: file_path.to_string(),
