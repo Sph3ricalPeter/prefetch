@@ -1278,6 +1278,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   push: async () => {
     if (blockedByOperation(get, "push")) return;
+    // Already diverged (e.g. after amend/rebase) — a plain push can only be
+    // rejected, so go straight to the force-push confirmation.
+    const head = get().branches.find((b) => b.is_head);
+    if (head?.ahead && head.behind) {
+      set({ forcePushPending: true });
+      return;
+    }
     set({ isLoading: true });
     const ms = new MultiStepAction("Push", ["git push", "Sync remote refs"], "Push");
     try {
@@ -1300,8 +1307,10 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const failIdx = ms.runningStepIndex();
       if (hookName) {
         ms.failStep(failIdx >= 0 ? failIdx : 0, `Hook '${hookName}' failed: ${message}`);
-      } else if (message.includes("rejected") || message.includes("non-fast-forward") || message.includes("fetch first")) {
-        ms.failStep(failIdx >= 0 ? failIdx : 0, "Push rejected — remote has diverged");
+      } else if (message.includes("non-fast-forward") || message.includes("fetch first")) {
+        // The force-push dialog explains the divergence. A failed toast here
+        // has no auto-dismiss and would outlive a successful force push.
+        ms.dismiss();
         set({ forcePushPending: true });
       } else {
         ms.failStep(failIdx >= 0 ? failIdx : 0, message);

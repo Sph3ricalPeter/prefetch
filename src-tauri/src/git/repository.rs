@@ -677,6 +677,9 @@ pub fn force_push<F: Fn(&str)>(
     let repo = Repository::open(path)?;
     let head = repo.head()?;
     let branch_name = head.shorthand().unwrap_or("HEAD");
+    if has_upstream(&repo, branch_name) {
+        return result;
+    }
     if let Some(ref a) = authed {
         let lease_flag = explicit_lease_flag(path);
         let args = a.build_args(&["push", "-u", &a.url, branch_name, &lease_flag, "--progress"]);
@@ -701,6 +704,15 @@ pub fn force_push<F: Fn(&str)>(
             extra_env,
         )
     }
+}
+
+/// Whether `branch` has an upstream configured. Push only retries with `-u`
+/// when it doesn't — otherwise the failure is a real rejection (diverged,
+/// hook, protected branch) and a retry would just repeat it.
+fn has_upstream(repo: &Repository, branch: &str) -> bool {
+    repo.config()
+        .and_then(|c| c.get_string(&format!("branch.{branch}.merge")))
+        .is_ok()
 }
 
 /// Build an explicit `--force-with-lease=<branch>:<sha>` flag.
@@ -824,6 +836,9 @@ pub fn push<F: Fn(&str)>(
     let repo = Repository::open(path)?;
     let head = repo.head()?;
     let branch_name = head.shorthand().unwrap_or("HEAD");
+    if has_upstream(&repo, branch_name) {
+        return result;
+    }
     if let Some(ref a) = authed {
         let args = a.build_args(&["push", "-u", &a.url, branch_name, "--progress"]);
         let env = a.merge_env(extra_env);
@@ -2912,6 +2927,30 @@ mod tests {
             .unwrap()
             .trim()
             .to_string()
+    }
+
+    #[test]
+    fn push_after_amend_is_rejected_as_non_fast_forward_and_force_push_lands() {
+        let remote = tempfile::tempdir().unwrap();
+        let rp = remote.path().to_str().unwrap();
+        run_git(rp, &["init", "--bare"], &[]).unwrap();
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        run_git(p, &["remote", "add", "origin", rp], &[]).unwrap();
+
+        // No upstream yet: the -u fallback still sets it up.
+        commit_file(&dir, "a.txt", "a\n", "first");
+        push(p, |_| {}, &[], None).unwrap();
+
+        run_git(p, &["commit", "--amend", "-m", "amended"], &[]).unwrap();
+        // The frontend keys the force-push dialog on this text.
+        let err = push(p, |_| {}, &[], None).unwrap_err().to_string();
+        assert!(err.contains("non-fast-forward"), "{err}");
+
+        force_push(p, |_| {}, &[], None).unwrap();
+        let head = capture(p, &["rev-parse", "HEAD"], &[]).unwrap();
+        let remote_head = capture(rp, &["rev-parse", "HEAD"], &[]).unwrap();
+        assert_eq!(head, remote_head);
     }
 
     fn log_subjects(p: &str) -> Vec<String> {
