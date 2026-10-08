@@ -476,7 +476,6 @@ interface RepoState {
   openRepository: (path: string) => Promise<void>;
   loadRecentRepos: () => Promise<void>;
   removeFromRecentRepos: (path: string) => Promise<void>;
-  loadBranches: () => Promise<void>;
   loadStatus: () => Promise<void>;
   loadWorktrees: () => Promise<void>;
   suggestedWorktreePath: (branch: string) => Promise<string>;
@@ -561,9 +560,7 @@ interface RepoState {
   loadUndoAction: () => Promise<void>;
   undo: () => Promise<void>;
 
-  /** Reload commits + branches only — called on Refs watcher events (fetch updated refs) */
-  reloadRefs: () => Promise<void>;
-  /** Reload all repo data — called by file watcher Head events (checkout) */
+  /** Reload all repo data — called by file watcher Refs/Head events */
   reloadAll: () => Promise<void>;
 
   // Git identity
@@ -612,8 +609,18 @@ interface RepoState {
   pruneLfsObjects: () => Promise<void>;
 }
 
+/**
+ * Bumped whenever a repo-data read starts (fetchRepoData, repo open). A
+ * background reload compares it against its own start value and drops its
+ * whole set() if a newer read began meanwhile — otherwise a watcher reload
+ * started mid-commit (old commits + new branch tips) can resolve after the
+ * commit's own refresh and wipe the new commit and HEAD badge from the graph.
+ */
+let repoReadSeq = 0;
+
 /** Fetch commits + branches + ref MRU without calling set(). Callers merge into their own set(). */
 async function fetchRepoData(): Promise<Partial<RepoState>> {
+  repoReadSeq++;
   const [data, branchList, mruList, worktreeList] = await Promise.all([
     getCommits(),
     getBranches(),
@@ -844,6 +851,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // Launch ALL independent data loads in a single parallel batch.
       // Previously these ran as two sequential rounds (commits/branches first,
       // then status/stashes/tags), adding 200-500ms of dead wait time.
+      repoReadSeq++; // drops any in-flight background reload of the previous repo
       const [, data, branchList, statuses, stashList, tagList, undoAction, conflict, worktreeList] = await Promise.all([
         useProfileStore.getState().autoSwitchForRepo(path),
         getCommits(),
@@ -895,16 +903,6 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       const msg = errorMessage(e);
       set({ isLoading: false, error: msg });
       showError("Open Repository", msg);
-    }
-  },
-
-  loadBranches: async () => {
-    try {
-      const branchList = await getBranches();
-      const head = branchList.find((b) => b.is_head);
-      set({ branches: branchList, currentBranch: head?.name ?? null });
-    } catch (e) {
-      showError("Load Branches", e);
     }
   },
 
@@ -2326,16 +2324,6 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
   },
 
-  reloadRefs: async () => {
-    if (!get().repoPath) return;
-    try {
-      const [repoData, tagList] = await Promise.all([fetchRepoData(), getTags()]);
-      set({ ...repoData, tags: tagList });
-    } catch {
-      // Silently handle — background refresh
-    }
-  },
-
   reloadAll: async () => {
     if (!get().repoPath) return;
     try {
@@ -2344,14 +2332,17 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // Single parallel batch + single set() to avoid double re-renders.
       // Previously reloadRepoData called set() first (canvas redraw), then
       // a second set() for status/stashes/tags (another canvas redraw).
+      const repoDataP = fetchRepoData();
+      const seq = repoReadSeq;
       const [repoData, statuses, stashList, tagList, undoAction, conflict] = await Promise.all([
-        fetchRepoData(),
+        repoDataP,
         getFileStatus(),
         getStashes(),
         getTags(),
         suppressUndo ? Promise.resolve(null) : getUndoAction(),
         getConflictState(),
       ]);
+      if (seq !== repoReadSeq) return; // a newer read started — its set() wins
       const update: Partial<RepoState> = { ...repoData, fileStatuses: statuses, stashes: stashList, tags: tagList, conflictState: conflict };
       if (undoAction !== null) {
         update.undoInfo = undoAction;

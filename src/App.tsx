@@ -85,7 +85,6 @@ function DatabaseInit() {
 function RepoEventListener() {
   const repoPath = useRepoStore((s) => s.repoPath);
   const loadStatus = useRepoStore((s) => s.loadStatus);
-  const reloadRefs = useRepoStore((s) => s.reloadRefs);
   const reloadAll = useRepoStore((s) => s.reloadAll);
 
   useEffect(() => {
@@ -99,12 +98,10 @@ function RepoEventListener() {
           loadStatus();
           break;
         case "Refs":
-          // Branch/tag refs changed (fetch, push) — only commits + branches
-          // need refreshing. Working tree is unaffected.
-          reloadRefs();
-          break;
         case "Head":
-          // HEAD changed (checkout) — full reload including status
+          // Refs (fetch, push, commit) or HEAD (checkout) moved. One full
+          // reload path, so a superseded reload can be dropped whole without
+          // losing a status/stash refresh a lighter reload wouldn't redo.
           reloadAll();
           break;
       }
@@ -113,7 +110,7 @@ function RepoEventListener() {
     return () => {
       unlistenPromise.then((unlisten) => unlisten());
     };
-  }, [repoPath, loadStatus, reloadRefs, reloadAll]);
+  }, [repoPath, loadStatus, reloadAll]);
 
   return null;
 }

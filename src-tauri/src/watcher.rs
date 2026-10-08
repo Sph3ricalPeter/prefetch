@@ -9,7 +9,7 @@ use tracing::debug;
 
 /// Watches the `.git/` directory for changes and emits `repo_changed` events.
 ///
-/// Debounces filesystem events (500ms) to avoid flooding the frontend
+/// Debounces filesystem events (500ms of quiet) to avoid flooding the frontend
 /// during git operations that touch many files rapidly.
 pub struct RepoWatcher {
     /// Kept alive to maintain the watch — dropped when RepoWatcher is dropped,
@@ -63,39 +63,52 @@ impl RepoWatcher {
 
     /// Receives raw filesystem events, debounces them, classifies the change
     /// type, and emits a single `repo_changed` event after 500ms of quiet.
+    /// Any `.git/` event (lock files included) counts as activity, so a reload
+    /// doesn't start mid-operation and read old commits next to new refs.
+    /// `MAX_WAIT` keeps a constantly busy `.git/` from starving the UI.
     fn debounce_loop(rx: mpsc::Receiver<Event>, git_dir: &Path, app: &AppHandle) {
-        let debounce_duration = Duration::from_millis(500);
-        let mut last_emit = Instant::now() - debounce_duration;
-        let mut pending: Option<ChangeType> = None;
+        const QUIET: Duration = Duration::from_millis(500);
+        const MAX_WAIT: Duration = Duration::from_secs(3);
+        let mut last_event = Instant::now();
+        let mut pending: Option<(ChangeType, Instant)> = None;
 
         loop {
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(event) => {
+                    last_event = Instant::now();
                     if let Some(ct) = Self::classify_event(&event, git_dir) {
                         // Upgrade pending change type (Head > Refs > Status)
-                        pending = Some(match (&pending, &ct) {
-                            (Some(ChangeType::Head), _) | (_, ChangeType::Head) => ChangeType::Head,
-                            (Some(ChangeType::Refs), _) | (_, ChangeType::Refs) => ChangeType::Refs,
-                            _ => ct,
+                        pending = Some(match pending {
+                            None => (ct, last_event),
+                            Some((prev, since)) => {
+                                let ct = match (prev, ct) {
+                                    (ChangeType::Head, _) | (_, ChangeType::Head) => {
+                                        ChangeType::Head
+                                    }
+                                    (ChangeType::Refs, _) | (_, ChangeType::Refs) => {
+                                        ChangeType::Refs
+                                    }
+                                    _ => ChangeType::Status,
+                                };
+                                (ct, since)
+                            }
                         });
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Some(ref ct) = pending {
-                        if last_emit.elapsed() >= debounce_duration {
-                            let payload = match ct {
-                                ChangeType::Status => "Status",
-                                ChangeType::Refs => "Refs",
-                                ChangeType::Head => "Head",
-                            };
-                            debug!(change_type = payload, "watcher: emitting repo_changed");
-                            app.emit(events::REPO_CHANGED, payload).ok();
-                            last_emit = Instant::now();
-                            pending = None;
-                        }
-                    }
-                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            if let Some((ref ct, since)) = pending {
+                if last_event.elapsed() >= QUIET || since.elapsed() >= MAX_WAIT {
+                    let payload = match ct {
+                        ChangeType::Status => "Status",
+                        ChangeType::Refs => "Refs",
+                        ChangeType::Head => "Head",
+                    };
+                    debug!(change_type = payload, "watcher: emitting repo_changed");
+                    app.emit(events::REPO_CHANGED, payload).ok();
+                    pending = None;
+                }
             }
         }
     }
