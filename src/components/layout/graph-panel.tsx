@@ -886,7 +886,7 @@ export function GraphPanel() {
                 Reset &apos;{remoteCheckoutPending.localName}&apos; to match &apos;{remoteCheckoutPending.remoteName}&apos;?
               </p>
               <p className="text-xs text-muted-foreground mb-4">
-                This will hard-reset your local branch to the remote version. Any uncommitted changes will be lost.
+                This will hard-reset your local branch to the remote version. Uncommitted changes will be stashed first.
               </p>
             </>
           ) : (

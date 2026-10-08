@@ -676,11 +676,12 @@ async function autostashSwitch(
       // stash@{0} (it's a no-op on a tree that turned out clean).
       const [repoData, stashList] = await Promise.all([fetchRepoData(), getStashes()]);
       const moved = repoData.currentBranch !== currentBranch || repoData.headCommitId !== headCommitId;
-      if (!moved && stashList.length > stashCount) {
-        await stashPopCmd(0).catch(() => {
-          throw new Error(`${errorMessage(e)}\nYour changes are kept in stash@{0}.`);
-        });
-      }
+      if (stashList.length <= stashCount) throw e;
+      const kept = new Error(`${errorMessage(e)}\nYour changes are kept in stash@{0}.`);
+      if (moved) throw kept;
+      await stashPopCmd(0).catch(() => {
+        throw kept;
+      });
       throw e;
     }
     ms.completeStep(1);
@@ -1071,7 +1072,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     }
 
     // If target is the remote counterpart of the current branch, always show
-    // the reset dialog — even with a dirty tree (reset --hard handles it)
+    // the reset dialog — even with a dirty tree (resetLocalToRemote stashes it)
     if (isRemote && targetLocal === currentBranch) {
       set({ remoteCheckoutPending: { localName: targetLocal, remoteName: name, alreadyOnLocal: true } });
       return;
@@ -1182,20 +1183,40 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   resetLocalToRemote: async () => {
     const pending = get().remoteCheckoutPending;
     if (!pending) return;
-    set({ remoteCheckoutPending: null, isLoading: true, error: null });
+    const { localName, remoteName } = pending;
+    set({ remoteCheckoutPending: null });
 
+    // reset --hard destroys the working tree, so WIP gets stashed first. Read
+    // the status fresh (the tree may have changed while the dialog was open)
+    // and refuse to reset at all if it can't be read.
+    let dirty: boolean;
+    try {
+      dirty = (await getFileStatus()).length > 0;
+    } catch (e) {
+      showError("Reset", e);
+      return;
+    }
+    if (dirty) {
+      await autostashSwitch(set, get, localName, `Reset ${localName} to ${remoteName}`, async () => {
+        await checkoutBranch(localName);
+        await resetToCommitCmd(remoteName, "--hard");
+      });
+      return;
+    }
+
+    set({ isLoading: true, error: null });
     // Two distinct git commands in sequence — surface them as a multi-step toast.
-    const ms = new MultiStepAction(`Reset ${pending.localName} to ${pending.remoteName}`, [
-      `git checkout ${pending.localName}`,
-      `git reset --hard ${pending.remoteName}`,
+    const ms = new MultiStepAction(`Reset ${localName} to ${remoteName}`, [
+      `git checkout ${localName}`,
+      `git reset --hard ${remoteName}`,
     ], "Reset");
     try {
       ms.startStep(0);
-      await checkoutBranch(pending.localName);
+      await checkoutBranch(localName);
       ms.completeStep(0);
 
       ms.startStep(1);
-      await resetToCommitCmd(pending.remoteName, "--hard");
+      await resetToCommitCmd(remoteName, "--hard");
       ms.completeStep(1);
       ms.finish();
 
