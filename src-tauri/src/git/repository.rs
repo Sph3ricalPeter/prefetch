@@ -2376,12 +2376,36 @@ pub fn cherry_pick(
 }
 
 /// Rebase the current branch onto a target branch (non-interactive).
+///
+/// When HEAD is an ancestor of `target` this is a plain fast-forward via
+/// `merge --ff-only`. `git rebase` would take the sequencer path even then,
+/// leaving `.git/rebase-merge/` on disk mid-op (e.g. while the LFS
+/// post-checkout hook runs), and a watcher reload landing in that window shows
+/// a phantom "rebase in progress".
 pub fn rebase_onto(
     path: &str,
     target: &str,
     extra_env: &[(String, String)],
 ) -> Result<String, AppError> {
+    if is_fast_forward(path, target) {
+        return run_git(
+            path,
+            &["merge", "--ff-only", "--autostash", target],
+            extra_env,
+        );
+    }
     run_git(path, &["rebase", "--autostash", target], extra_env)
+}
+
+/// True when HEAD is an ancestor of `target` (or equal to it).
+fn is_fast_forward(path: &str, target: &str) -> bool {
+    let check = || -> Result<bool, git2::Error> {
+        let repo = Repository::open(path)?;
+        let head = repo.head()?.peel_to_commit()?.id();
+        let target = repo.revparse_single(target)?.peel_to_commit()?.id();
+        Ok(head == target || repo.graph_descendant_of(target, head)?)
+    };
+    check().unwrap_or(false)
 }
 
 /// Merge a target branch (or commit) into the current branch.
@@ -3631,6 +3655,34 @@ three
             "{}",
             undo.description
         );
+    }
+
+    /// Rebasing onto a branch that's purely ahead is a real fast-forward: no
+    /// sequencer state, dirty WIP carried over, reflog reads as a merge.
+    #[test]
+    fn rebase_onto_descendant_fast_forwards() {
+        let dir = init_temp_repo();
+        let p = dir.path().to_str().unwrap();
+        let main = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"], &[])
+            .unwrap()
+            .trim()
+            .to_string();
+        run_git(p, &["checkout", "-b", "feature"], &[]).unwrap();
+        let tip = commit_file(&dir, "f.txt", "f\n", "feat");
+        run_git(p, &["checkout", &main], &[]).unwrap();
+        std::fs::write(dir.path().join(".gitkeep"), "wip").unwrap();
+
+        rebase_onto(p, "feature", &[]).unwrap();
+
+        let head = capture(p, &["rev-parse", "HEAD"], &[]).unwrap();
+        assert_eq!(head.trim(), tip);
+        assert_eq!(sequencer_in_progress(p), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".gitkeep")).unwrap(),
+            "wip"
+        );
+        let reflog = capture(p, &["reflog", "-1", "--format=%gs"], &[]).unwrap();
+        assert!(reflog.starts_with("merge"), "{reflog}");
     }
 
     /// A paused rebase must be inert to undo: the top reflog entry is the
