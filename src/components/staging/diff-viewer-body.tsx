@@ -631,7 +631,7 @@ function DiffLineImpl({
   return (
     <div
       className={cn(
-        "flex group/line cursor-default",
+        "flex group/line line-hover cursor-default",
         bgClass,
         dimmed ? FILTER_DIM_CLASS : isContext && "opacity-80",
       )}
@@ -653,11 +653,11 @@ function DiffLineImpl({
         )}
       </span>
       {/* Old line number */}
-      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-caption">
+      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 group-hover/line:text-foreground text-caption">
         {line.old_lineno ?? ""}
       </span>
       {/* New line number */}
-      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
+      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/line:text-foreground text-caption">
         {line.new_lineno ?? ""}
       </span>
       {/* Origin column */}
@@ -782,7 +782,7 @@ function SideBySideHunk({
         const rightDimmed = searchQuery !== "" && !!pair.right && !pair.right.content.toLowerCase().includes(searchQuery);
 
         return (
-          <div key={i} className="flex group/diffpair">
+          <div key={i} className="flex group/diffpair line-hover">
             {/* Left (old) side */}
             <SideBySideCell
               line={pair.left}
@@ -920,12 +920,12 @@ interface ContextLineProps {
 
 function ContextLine({ line, tokens, wrapClass }: ContextLineProps) {
   return (
-    <div className="flex opacity-80">
+    <div className="flex opacity-80 group/line line-hover">
       <span className="w-5 shrink-0" />
-      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 text-caption">
+      <span className="w-9 shrink-0 text-right pr-1 select-none text-muted-foreground/30 group-hover/line:text-foreground text-caption">
         {line.old_lineno ?? ""}
       </span>
-      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 text-caption">
+      <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/line:text-foreground text-caption">
         {line.new_lineno ?? ""}
       </span>
       <span className="w-5 shrink-0 text-center select-none text-muted-foreground/50" />
@@ -954,7 +954,7 @@ function SideBySideContextBlock({ lines, wrapClass, fileTokens }: SideBySideCont
       {lines.map((line, i) => {
         const tokens = line.new_lineno != null ? fileTokens?.[line.new_lineno - 1] : undefined;
         return (
-          <div key={i} className="flex opacity-80 group/diffpair">
+          <div key={i} className="flex opacity-80 group/diffpair line-hover">
             <div className="flex flex-1 min-w-0 overflow-hidden border-r border-border">
               <span className="w-5 shrink-0" />
               <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-caption">

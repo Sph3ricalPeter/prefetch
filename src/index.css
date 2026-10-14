@@ -269,12 +269,14 @@ body::before {
   }
 }
 
-/* Cross-pane hover highlight in the conflict editor. Lines that correspond
-   across ours/theirs/output (unchanged blocks, auto-resolved winner side,
-   matched conflict lines) all get this outline when any one of them is
-   hovered. Outline rather than background tint so it doesn't fight with the
-   per-side coloring already on those lines. */
-.conflict-line-hover {
+/* Line hover highlight. The conflict editor toggles .conflict-line-hover from
+   JS so lines that correspond across ours/theirs/output (unchanged blocks,
+   auto-resolved winner side, matched conflict lines) all light up when any
+   one of them is hovered; diff rows just use .line-hover. Outline rather than
+   background tint so it doesn't fight with the added/removed coloring already
+   on those lines. */
+.conflict-line-hover,
+.line-hover:hover {
   /* Inset shadow rather than a border/outline: top+bottom only, no layout
      shift, and box-shadow is outside transition-colors so it snaps on. */
   box-shadow:
