@@ -341,3 +341,70 @@ export interface GitIdentity {
   email: string;
   source: IdentitySource;
 }
+
+/** Change Brief — the intent behind a set of changes (see `git/brief.rs`). */
+export interface Brief {
+  version: number;
+  /** Draft file stem; identifies the agent session. */
+  session: string;
+  /** Lead intent. Its `files` are unused. */
+  intent: BriefIntent;
+  intents: BriefIntent[];
+  /** Optional tracker issues; empty when the repo uses none. */
+  issues: BriefIssue[];
+  /** Written by Prefetch from the diff alone, not by the agent that did the work. */
+  inferred?: boolean;
+}
+
+export interface BriefIntent {
+  title: string;
+  why: string;
+  /** `sub` | `enabling` | `unrelated` — free-form from the agent, unknown reads as `sub`. */
+  kind: string;
+  /** Repo-relative paths. */
+  files: string[];
+  /** Conventional-commit type (`fix`, `feat`, ...), when the agent gave one. */
+  type?: string;
+  risk?: BriefRisk;
+  /** Derived by Prefetch from `risk` and `.prefetch/risk.json`; absent when unassessed. */
+  tier?: RiskTier;
+}
+
+export type RiskTier = "low" | "mid" | "high";
+
+/** One intent of a commit's brief note, as the graph needs it for heat. */
+export interface IntentMark {
+  tier: RiskTier | null;
+  oneWay: boolean;
+}
+
+/** The agent's yes/no answers to the skill's risk questions. */
+export interface BriefRisk {
+  shared: boolean;
+  data: boolean;
+  external: boolean;
+  contract: boolean;
+  tested: boolean;
+  /** `git revert` would not fully undo it. */
+  oneWay: boolean;
+  why: string;
+}
+
+export interface BriefIssue {
+  id: string;
+  title: string;
+  url: string;
+  criteria: string[];
+}
+
+export interface WipBriefs {
+  briefs: Brief[];
+  /** `file.json: reason` for drafts that didn't parse. */
+  errors: string[];
+}
+
+export interface CommitSuggestion {
+  subject: string;
+  /** Empty unless a Change Brief supplied the intent. */
+  body: string;
+}

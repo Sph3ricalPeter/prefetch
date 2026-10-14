@@ -184,6 +184,15 @@ pub fn run() {
             // AI
             commands::ai::ai_available,
             commands::ai::suggest_commit_message,
+            // Change Brief
+            commands::brief::get_wip_briefs,
+            commands::brief::get_commit_brief,
+            commands::brief::attach_commit_brief,
+            commands::brief::get_brief_marks,
+            commands::ai::generate_brief,
+            commands::brief::get_brief_sync,
+            commands::brief::set_brief_sync,
+            commands::brief::sync_briefs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

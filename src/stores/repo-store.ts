@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import type {
   BranchInfo,
+  Brief,
   CiJob,
   CommitInfo,
   ConflictContents,
@@ -21,7 +22,9 @@ import type {
   StashInfo,
   TagInfo,
   UndoAction,
+  WipBriefs,
   WorktreeInfo,
+  IntentMark,
 } from "@/types/git";
 import type { GraphColumnVisibility } from "@/components/graph/commit-graph-canvas";
 import type { GraphDensity } from "@/lib/graph-density";
@@ -64,6 +67,12 @@ import {
   rewordCommit as rewordCommitCmd,
   getCommitFiles,
   getCommitFileDiff,
+  getWipBriefs,
+  getCommitBrief,
+  attachCommitBrief,
+  getBriefMarks,
+  generateBrief as generateBriefCmd,
+  syncBriefs,
   getStashes,
   stashPush as stashPushCmd,
   stashPop as stashPopCmd,
@@ -250,6 +259,12 @@ async function analyzeConflictFiles(
  * continue / abort) is deliberately not guarded, and neither are read-only or
  * ref-only actions like fetch.
  */
+/** Exchange brief notes with origin after a network op; no-op unless the repo
+ *  opted in, and never fails the op that triggered it. */
+function syncBriefNotes(push: boolean) {
+  syncBriefs(push).catch((e) => showError("Sync Change Briefs", e));
+}
+
 function blockedByOperation(get: () => RepoState, label: string): boolean {
   const conflict = get().conflictState;
   if (!conflict?.in_progress) return false;
@@ -366,6 +381,16 @@ interface RepoState {
   commitFiles: FileStatus[];
   commitFilesLoading: boolean;
 
+  /** Agent Change Brief drafts for the working tree (#84). */
+  wipBriefs: WipBriefs;
+  /** Change Brief note on the selected commit; null when none (or loading). */
+  commitBrief: Brief[] | null;
+  /** Right-column view when a brief exists. */
+  detailTab: "brief" | "files";
+  setDetailTab: (tab: "brief" | "files") => void;
+  /** Infer a brief with Claude for the working changes (null) or a commit. */
+  generateBrief: (commitId: string | null) => Promise<void>;
+
   commitMessage: string;
   commitDescription: string;
 
@@ -381,6 +406,9 @@ interface RepoState {
 
   // Worktrees
   worktrees: WorktreeInfo[];
+
+  /** Commits with a Change Brief note, to their intents' risk (graph heat). */
+  briefMarks: Record<string, IntentMark[]>;
 
   // Force push
   forcePushPending: boolean;
@@ -624,7 +652,7 @@ let repoReadSeq = 0;
 /** Fetch commits + branches + ref MRU without calling set(). Callers merge into their own set(). */
 async function fetchRepoData(): Promise<Partial<RepoState>> {
   repoReadSeq++;
-  const [data, branchList, mruList, worktreeList] = await Promise.all([
+  const [data, branchList, mruList, worktreeList, marks] = await Promise.all([
     getCommits(),
     getBranches(),
     getRefMru().catch(() => [] as Array<[string, number]>),
@@ -632,6 +660,7 @@ async function fetchRepoData(): Promise<Partial<RepoState>> {
     // .git watch never sees — so worktrees refresh with every other ref read
     // rather than waiting on a file event.
     getWorktrees().catch(() => [] as WorktreeInfo[]),
+    getBriefMarks().catch(() => ({})),
   ]);
   const head = branchList.find((b) => b.is_head);
   return {
@@ -643,6 +672,7 @@ async function fetchRepoData(): Promise<Partial<RepoState>> {
     refMru: new Map(mruList),
     currentBranch: head?.name ?? null,
     worktrees: worktreeList,
+    briefMarks: marks,
   };
 }
 
@@ -751,6 +781,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   largeDiffPending: null,
   commitFiles: [],
   commitFilesLoading: false,
+  wipBriefs: { briefs: [], errors: [] },
+  commitBrief: null,
+  detailTab: "brief",
   filterInput: "",
   filterQuery: "",
   commitMessage: "",
@@ -760,6 +793,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   selectedStashIndex: null,
   tags: [],
   worktrees: [],
+  briefMarks: {},
   forcePushPending: false,
   conflictState: null,
   conflictContents: null,
@@ -820,6 +854,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       stashes: [],
       tags: [],
       worktrees: [],
+      briefMarks: {},
       selectedCommitId: null,
       selectedStashIndex: null,
       selectedFilePath: null,
@@ -828,6 +863,8 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       diffLoading: false,
       commitFiles: [],
       commitFilesLoading: false,
+      wipBriefs: { briefs: [], errors: [] },
+      commitBrief: null,
       commitMessage: "",
       commitDescription: "",
       amendMode: false,
@@ -857,7 +894,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // Previously these ran as two sequential rounds (commits/branches first,
       // then status/stashes/tags), adding 200-500ms of dead wait time.
       repoReadSeq++; // drops any in-flight background reload of the previous repo
-      const [, data, branchList, statuses, stashList, tagList, undoAction, conflict, worktreeList] = await Promise.all([
+      const [, data, branchList, statuses, stashList, tagList, undoAction, conflict, worktreeList, marks] = await Promise.all([
         useProfileStore.getState().autoSwitchForRepo(path),
         getCommits(),
         getBranches(),
@@ -867,6 +904,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         getUndoAction(),
         getConflictState(),
         getWorktrees().catch(() => [] as WorktreeInfo[]),
+        getBriefMarks().catch(() => ({})),
       ]);
       const head = branchList.find((b) => b.is_head);
 
@@ -884,6 +922,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         stashes: stashList,
         tags: tagList,
         worktrees: worktreeList,
+        briefMarks: marks,
         undoInfo: undoAction,
         conflictState: conflict,
       });
@@ -982,7 +1021,12 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   loadStatus: async () => {
     try {
-      const statuses = await getFileStatus();
+      const [statuses, wip] = await Promise.all([getFileStatus(), getWipBriefs()]);
+      // Drafts change independently of the file list (an agent rewrites its
+      // draft after the edits), so they're compared on their own.
+      if (JSON.stringify(wip) !== JSON.stringify(get().wipBriefs)) {
+        set({ wipBriefs: wip });
+      }
       // Refresh the active diff even when the file list hasn't changed — an
       // in-place edit (typo fix etc.) leaves additions/deletions unchanged but
       // still mutates content, and the diff viewer needs to reflect it.
@@ -1260,6 +1304,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, tags: tagList, isLoading: false, prCache: {} }); // invalidate PR cache after fetch
       clearPrCacheCmd().catch(() => {});
       showSuccess("Fetch", "Fetch complete", { id: toastId });
+      syncBriefNotes(false);
     } catch (e) {
       set({ isLoading: false });
       showError("Fetch", e, { id: toastId });
@@ -1286,6 +1331,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, isLoading: false, fileStatuses: statuses, prCache: {} }); // invalidate PR cache
       clearPrCacheCmd().catch(() => {});
       showSuccess("Pull", "Pull complete", { id: toastId });
+      syncBriefNotes(false);
     } catch (e) {
       set({ isLoading: false });
       const { hookName, message } = parseError(e);
@@ -1321,6 +1367,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, isLoading: false });
       ms.completeStep(1);
       ms.finish();
+      syncBriefNotes(true);
 
       // Kick off CI polling after successful push
       get().startCiPolling();
@@ -1357,6 +1404,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       set({ ...repoData, isLoading: false });
       ms.completeStep(1);
       ms.finish();
+      syncBriefNotes(true);
     } catch (e) {
       // Refetch even on failure — the graph may be stale from a prior
       // rebase or reset that never triggered a refresh.
@@ -1377,10 +1425,16 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       activeDiff: null,
       commitFiles: [],
       commitFilesLoading: !!id,
+      commitBrief: null,
       ciSelectedJobId: null,
       ciJobLog: null,
     });
     if (id) {
+      getCommitBrief(id)
+        .then((brief) => {
+          if (get().selectedCommitId === id) set({ commitBrief: brief });
+        })
+        .catch((e) => showError("Load Change Brief", e));
       try {
         const files = await getCommitFiles(id);
         if (get().selectedCommitId === id) {
@@ -1677,16 +1731,23 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     set({ isLoading: true });
     try {
       await createCommit(fullMessage, amend);
+      // The commit landed either way; a failed note is its own error.
+      await attachCommitBrief().catch((e) => showError("Save Change Brief", e));
       // Clear the draft from localStorage before the state update, because
       // setting fileStatuses to [] may unmount CommitBox before its persist
       // effect can fire.
       const rp = get().repoPath;
       if (rp) localStorage.removeItem(`prefetch:commit_draft:${rp}`);
-      const [repoData, statuses] = await Promise.all([fetchRepoData(), getFileStatus()]);
+      const [repoData, statuses, wip] = await Promise.all([
+        fetchRepoData(),
+        getFileStatus(),
+        getWipBriefs(),
+      ]);
       set({
         ...repoData,
         isLoading: false,
         fileStatuses: statuses,
+        wipBriefs: wip,
         commitMessage: "",
         commitDescription: "",
         amendMode: false,
@@ -2465,6 +2526,31 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   // ── UI settings (persisted) ──────────────────────────────────────────────
+
+  setDetailTab: (tab) => set({ detailTab: tab }),
+
+  generateBrief: async (commitId) => {
+    const { repoPath, aiModel } = get();
+    const toastId = toast.loading("Writing Change Brief…");
+    try {
+      await generateBriefCmd(aiModel, commitId ?? undefined);
+      if (get().repoPath !== repoPath) return;
+      const [wip, marks, brief] = await Promise.all([
+        getWipBriefs(),
+        getBriefMarks(),
+        commitId ? getCommitBrief(commitId) : Promise.resolve(null),
+      ]);
+      set({
+        wipBriefs: wip,
+        briefMarks: marks,
+        detailTab: "brief",
+        ...(commitId && get().selectedCommitId === commitId ? { commitBrief: brief } : {}),
+      });
+      showSuccess("Generate brief", "Change Brief written", { id: toastId });
+    } catch (e) {
+      showError("Generate brief", e, { id: toastId });
+    }
+  },
 
   setFileViewMode: (mode) => {
     set({ fileViewMode: mode });

@@ -27,6 +27,7 @@ import { getInitials as authorInitials, getAvatarColor as authorColor, getContra
 import { AuthorAvatar } from "@/components/ui/avatar";
 import { useThemeStore, FONT_FAMILIES, BASE_TEXT_SIZES } from "@/stores/theme-store";
 import { useProfileStore } from "@/stores/profile-store";
+import { HEAT_COLOR, TIER_META, heatOf, matchBriefs, type Heat } from "@/lib/brief";
 import { useRepoStore } from "@/stores/repo-store";
 
 // ROW_HEIGHT / NODE_RADIUS / LABEL_HEIGHT are reassigned per draw() from the
@@ -526,6 +527,32 @@ function drawCommitSubject(
   }
 }
 
+// -- Change Brief heat mark ---------------------------------------------------
+
+/** Room reserved at the message column's right end for the heat mark. */
+const HEAT_MARK_W = 40;
+
+/** Tier icon + score, right-aligned to `right`; just the icon when unassessed. */
+function drawHeatMark(
+  ctx: CanvasRenderingContext2D,
+  heat: Heat,
+  right: number,
+  y: number,
+  fontSize: number,
+): void {
+  const meta = TIER_META[heat.tier];
+  let x = right;
+  if (heat.score !== null) {
+    ctx.font = `600 ${fontSize}px ${fontCfg.sans}`;
+    const text = String(heat.score);
+    x -= ctx.measureText(text).width;
+    ctx.fillStyle = meta.color;
+    ctx.fillText(text, x, y);
+    x -= 3;
+  }
+  drawLucideIcon(ctx, meta.icon, x - TYPE_ICON_SIZE, y, TYPE_ICON_SIZE, meta.color);
+}
+
 // -- Icon wrappers (same signatures as before, backed by lucide data) ---------
 
 function drawTagIcon(
@@ -948,6 +975,21 @@ export function CommitGraphCanvas({
   const activeProfile = useProfileStore((s) => s.activeProfile);
   const filterQuery = useRepoStore((s) => s.filterQuery);
   const repoPath = useRepoStore((s) => s.repoPath) ?? "";
+  const briefMarks = useRepoStore((s) => s.briefMarks);
+  const wipBriefs = useRepoStore((s) => s.wipBriefs);
+  const wipFiles = useRepoStore((s) => s.fileStatuses);
+  // Heat per commit with a brief note, and for the working changes.
+  const heatById = useMemo(
+    () => new Map(Object.entries(briefMarks).map(([id, intents]) => [id, heatOf(intents)])),
+    [briefMarks],
+  );
+  const wipHeat = useMemo<Heat | null>(() => {
+    const shown = matchBriefs(wipBriefs.briefs, wipFiles).shown;
+    if (shown.length === 0) return null;
+    return heatOf(
+      shown.flatMap((s) => s.intents.map(({ intent }) => ({ tier: intent.tier ?? null, oneWay: !!intent.risk?.oneWay }))),
+    );
+  }, [wipBriefs, wipFiles]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1187,6 +1229,22 @@ export function CommitGraphCanvas({
     return idx >= 0 ? idx + rowOffset : -1;
   }, [selectedCommitId, commits, rowOffset]);
 
+  // Scrollbar heat ticks: hot and warm commits anywhere in the history.
+  const heatTicks = useMemo(() => {
+    const ticks: { id: string; top: number; color: string }[] = [];
+    commits.forEach((c, i) => {
+      const heat = heatById.get(c.id);
+      if (heat && (heat.level === "hot" || heat.level === "warm")) {
+        ticks.push({
+          id: c.id,
+          top: ((i + rowOffset) / Math.max(totalRows, 1)) * 100,
+          color: HEAT_COLOR[heat.level],
+        });
+      }
+    });
+    return ticks;
+  }, [commits, heatById, rowOffset, totalRows]);
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const scroll = scrollRef.current;
@@ -1349,6 +1407,40 @@ export function CommitGraphCanvas({
       }
     }
 
+    // --- Heat: strip just left of the graph column, hot rows also tinted ---
+    const boxH = Math.min(ROW_CONTENT_HEIGHT, ROW_HEIGHT - ROW_INSET * 2);
+    // Like the intent cards: a row box tinted by its heat color, fading out to
+    // the right, with a solid strip as its left edge. It starts in the badge
+    // column's empty right gutter so the strip stays clear of lane-0 nodes.
+    const drawHeat = (visRow: number, heat: Heat) => {
+      const top = visRow * ROW_HEIGHT - scrollTop + (ROW_HEIGHT - boxH) / 2;
+      const left = columnWidths.badge - 5;
+      const color = HEAT_COLOR[heat.level];
+      const alpha = (a: number) => color + Math.round(a * 255).toString(16).padStart(2, "0");
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(left, top, width - ROW_PAD_RIGHT - left, boxH, ROW_RADIUS);
+      ctx.clip();
+      const g = ctx.createLinearGradient(left, 0, width * 0.6, 0);
+      g.addColorStop(0, alpha(heat.level === "hot" ? 0.12 : 0.07));
+      g.addColorStop(1, alpha(0));
+      ctx.fillStyle = g;
+      ctx.fillRect(left, top, width - left, boxH);
+      ctx.globalAlpha *= { hot: 1, warm: 0.8, calm: 0.6, none: 0.45 }[heat.level];
+      ctx.fillStyle = color;
+      ctx.fillRect(left, top, 3, boxH);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    };
+    if (hasWip && wipHeat && firstVisibleRow === 0) {
+      ctx.globalAlpha = 0.7;
+      drawHeat(0, wipHeat);
+    }
+    for (let visRow = Math.max(firstVisibleRow, rowOffset); visRow <= lastVisibleRow; visRow++) {
+      const heat = heatById.get(commits[visRow - rowOffset]?.id ?? "");
+      if (heat) drawHeat(visRow, heat);
+    }
+
     // --- Edges (offset by rowOffset) — batched by color to minimize stroke() calls ---
     ctx.lineWidth = 2;
     const edgesByColor = new Map<string, { fX: number; fY: number; tX: number; tY: number; sameLane: boolean; isMerge: boolean }[]>();
@@ -1477,6 +1569,18 @@ export function CommitGraphCanvas({
       const changeText =
         fileStatusCount === 1 ? "1 change" : `${fileStatusCount} changes`;
       ctx.fillText(changeText, msgLeft + wipIconW, wipY);
+
+      if (wipHeat) {
+        const wipRightCols =
+          (columnVisibility.author ? columnWidths.author : 0) +
+          (columnVisibility.date ? columnWidths.date : 0) +
+          (columnVisibility.sha ? columnWidths.sha : 0);
+        const wipColRight =
+          wipRightCols > 0 ? width - SCROLLBAR_PAD_RIGHT - wipRightCols - 8 : width - 16;
+        ctx.globalAlpha = 0.7;
+        drawHeatMark(ctx, wipHeat, wipColRight, wipY, fontCfg.sizeLabel);
+        ctx.globalAlpha = 1;
+      }
     }
 
     // --- Commit rows ---
@@ -1849,9 +1953,13 @@ export function CommitGraphCanvas({
       const dateColLeft = authorColLeft + authorEffW;
       const shaColLeft = dateColLeft + dateEffW;
 
-      // Message + Body
-      const msgRight = rightColsW > 0 ? authorColLeft - 8 : width - 16;
+      // Message + Body. A Change Brief marker takes the message's right end,
+      // so marks line up in one column next to author/date/sha.
+      const colRight = rightColsW > 0 ? authorColLeft - 8 : width - 16;
+      const heat = heatById.get(commit.id);
+      const msgRight = heat ? colRight - HEAT_MARK_W : colRight;
       const msgAvail = Math.max(0, msgRight - msgLeft);
+      if (heat && msgAvail > 0) drawHeatMark(ctx, heat, colRight, y, fontCfg.sizeLabel);
       ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
 
       // Conventional-commit types: icon + tinted prefix for EVERY prefix in the
@@ -1982,7 +2090,7 @@ export function CommitGraphCanvas({
 
     badgeHitAreasRef.current = hitAreas;
     rowTooltipAreasRef.current = rowTooltipAreas;
-  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, filterQuery, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, dm, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile]);
+  }, [commits, edges, headInfo, selectedRowIdx, msgLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, filterQuery, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, dm, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile, heatById, wipHeat]);
 
   const requestDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -2366,6 +2474,16 @@ export function CommitGraphCanvas({
         ref={canvasRef}
         className="pointer-events-none absolute inset-0"
       />
+      {/* Heat ticks beside the scrollbar: hot and warm commits anywhere in history. */}
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-[3px]">
+        {heatTicks.map((t) => (
+          <span
+            key={t.id}
+            className="absolute inset-x-0 h-[3px] rounded-sm"
+            style={{ top: `${t.top}%`, backgroundColor: t.color }}
+          />
+        ))}
+      </div>
 
       {showScrollTop && (
         <button

@@ -328,6 +328,14 @@ pub async fn cancel_oauth_flow() -> Result<(), AppError> {
 /// Open a URL in the system default browser.
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), AppError> {
+    // Web links only: URLs can come from synced brief notes, and `open::that`
+    // would happily launch a `file://` or UNC path.
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err(AppError::Other(format!(
+            "Refusing to open non-web URL: {url}"
+        )));
+    }
     open::that(&url).map_err(|e| AppError::Other(format!("Failed to open URL: {e}")))?;
     Ok(())
 }

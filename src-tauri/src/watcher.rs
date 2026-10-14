@@ -53,6 +53,14 @@ impl RepoWatcher {
                 .map_err(|e| format!("Failed to watch .git/refs: {e}"))?;
         }
 
+        // Change Brief drafts. Created up front: a dir that appears later isn't watched.
+        let wip_dir = git_dir.join("prefetch").join("wip");
+        if git_dir.is_dir() && std::fs::create_dir_all(&wip_dir).is_ok() {
+            watcher
+                .watch(&wip_dir, RecursiveMode::NonRecursive)
+                .map_err(|e| format!("Failed to watch .git/prefetch/wip: {e}"))?;
+        }
+
         let git_dir_owned = git_dir.to_path_buf();
         thread::spawn(move || {
             Self::debounce_loop(rx, &git_dir_owned, &app_handle);
@@ -136,7 +144,7 @@ impl RepoWatcher {
                     debug!(file = %rel_str, "watcher: detected Refs change");
                     return Some(ChangeType::Refs);
                 }
-                if rel_str == "index" {
+                if rel_str == "index" || rel_str.starts_with("prefetch") {
                     debug!(file = %rel_str, "watcher: detected Status change");
                     return Some(ChangeType::Status);
                 }

@@ -39,6 +39,7 @@ tracing = { version = "0.1", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt", "ansi"] }
 tracing-chrome = "0.7"
 chrono = { version = "0.4.44", default-features = false }
+glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

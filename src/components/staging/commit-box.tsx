@@ -169,7 +169,7 @@ export function CommitBox() {
     setIsSuggesting(true);
     const before = { repoPath, commitMessage, commitDescription, headCommitId };
     try {
-      const subject = await suggestCommitMessage(aiModel);
+      const { subject, body } = await suggestCommitMessage(aiModel);
       // Repo switched, user typed, or HEAD moved while claude ran — the result is stale.
       const now = useRepoStore.getState();
       if (
@@ -178,8 +178,10 @@ export function CommitBox() {
         now.commitDescription !== before.commitDescription ||
         now.headCommitId !== before.headCommitId
       ) return;
+      const description = body || commitDescription;
       setCommitMessage(subject);
-      persistDraft(subject, commitDescription);
+      setCommitDescription(description);
+      persistDraft(subject, description);
     } catch (e) {
       showError("Suggest commit message", e);
     } finally {
@@ -345,7 +347,7 @@ export function CommitBox() {
                   <TooltipContent side="top">
                     <p className="text-xs">Suggest message with Claude</p>
                     <p className="text-label text-dim">
-                      Sends the staged diff to Anthropic via your Claude Code login
+                      Written from the Change Brief; writes one first if the staged files have none. Sends your uncommitted diff to Anthropic via your Claude Code login
                     </p>
                   </TooltipContent>
                 </Tooltip>

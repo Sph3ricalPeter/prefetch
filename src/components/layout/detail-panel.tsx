@@ -15,6 +15,8 @@ import {
   Pencil,
   ArrowRightLeft,
   HelpCircle,
+  Loader2,
+  Sparkles,
 } from "lucide-react";
 import { CommitMessageText } from "@/components/ui/commit-message-text";
 import { FileIcon } from "@/components/ui/file-icon";
@@ -44,6 +46,8 @@ import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { IconButton } from "@/components/ui/icon-button";
 import { CommitBox } from "@/components/staging/commit-box";
+import { BriefView } from "@/components/layout/brief-view";
+import { matchBriefs } from "@/lib/brief";
 import { AuthorAvatar } from "@/components/ui/avatar";
 import type { FileStatus } from "@/types/git";
 
@@ -63,6 +67,9 @@ export function DetailPanel() {
   const conflictState = useRepoStore((s) => s.conflictState);
   const fileViewMode = useRepoStore((s) => s.fileViewMode);
   const setFileViewMode = useRepoStore((s) => s.setFileViewMode);
+  const wipBriefs = useRepoStore((s) => s.wipBriefs);
+  const detailTab = useRepoStore((s) => s.detailTab);
+  const selectFile = useRepoStore((s) => s.selectFile);
 
   const [showDiscardAll, setShowDiscardAll] = useState(false);
 
@@ -102,6 +109,9 @@ export function DetailPanel() {
   }
 
   if (fileStatuses.length > 0 || operationInProgress) {
+    const hasBrief =
+      wipBriefs.errors.length > 0 || matchBriefs(wipBriefs.briefs, fileStatuses).shown.length > 0;
+    const showBrief = hasBrief && detailTab === "brief";
     return (
       <div className="relative flex h-full flex-col bg-background">
         {/* Extended topbar — continues the commit-graph header across the detail column */}
@@ -112,6 +122,8 @@ export function DetailPanel() {
           <span className="text-xs text-faint">{fileStatuses.length}</span>
           <DiffStat files={fileStatuses} />
           <div className="ml-auto flex items-center gap-2">
+            <GenerateBriefButton commitId={null} hasBrief={hasBrief} />
+            {hasBrief && <DetailTabs />}
             <div className="flex items-center gap-1">
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -148,7 +160,19 @@ export function DetailPanel() {
 
         {/* Section cards (Unstaged / Staged) + commit box */}
         <div className="flex min-h-0 flex-1 flex-col pt-1 pr-1 pb-1 pl-1">
-          <FileList />
+          {showBrief ? (
+            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+              <BriefView
+                briefs={wipBriefs.briefs}
+                errors={wipBriefs.errors}
+                files={fileStatuses}
+                selectedFilePath={selectedFilePath}
+                onFileClick={(f) => selectFile(f.path, f.is_staged)}
+              />
+            </div>
+          ) : (
+            <FileList />
+          )}
           {/* CommitBox renders its own drag handle + card (the handle doubles
               as the gap, matching the unstaged/staged split). */}
           <CommitBox />
@@ -317,6 +341,9 @@ function CommitDetailView({
   // Filter dims non-matching files (by path) rather than hiding them.
   const filterQuery = useRepoStore((s) => s.filterQuery);
   const fileQuery = filterQuery.trim().toLowerCase();
+  const commitBrief = useRepoStore((s) => s.commitBrief);
+  const detailTab = useRepoStore((s) => s.detailTab);
+  const showBrief = commitBrief !== null && detailTab === "brief";
 
   const hasFiles = showSkeleton || commitFiles.length > 0;
   const filesExpand = filesOpen && hasFiles;
@@ -342,6 +369,8 @@ function CommitDetailView({
             No diffstat: the Changed Files card header already carries it. */}
         <span className="text-xs text-faint">{commit.short_id}</span>
         <div className="ml-auto flex items-center gap-2">
+          <GenerateBriefButton commitId={commit.id} hasBrief={commitBrief !== null} />
+          {commitBrief && <DetailTabs />}
           <Tooltip>
             <TooltipTrigger asChild>
               <IconButton
@@ -453,8 +482,19 @@ function CommitDetailView({
           <div className="h-2 shrink-0" aria-hidden="true" />
         )}
 
+        {showBrief && (
+          <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+            <BriefView
+              briefs={commitBrief}
+              files={commitFiles}
+              selectedFilePath={selectedFilePath}
+              onFileClick={(f) => onFileClick(f.path)}
+            />
+          </div>
+        )}
+
         {/* Changed files section */}
-        {hasFiles && (
+        {!showBrief && hasFiles && (
           <CollapsibleSection
             label={changedFilesLabel(commitFiles, showSkeleton)}
             isOpen={filesOpen}
@@ -680,7 +720,57 @@ function commitFileStatusIcon(type: string): React.ReactNode {
   }
 }
 
-function CommitFileRow({
+/** Topbar ✦ that has Claude write (or rewrite) the Change Brief. */
+function GenerateBriefButton({ commitId, hasBrief }: { commitId: string | null; hasBrief: boolean }) {
+  const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
+  const generateBrief = useRepoStore((s) => s.generateBrief);
+  const [busy, setBusy] = useState(false);
+  if (!claudeAvailable) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <IconButton
+          variant="faint"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await generateBrief(commitId);
+            setBusy(false);
+          }}
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+        </IconButton>
+      </TooltipTrigger>
+      <TooltipContent>{hasBrief ? "Regenerate brief with Claude" : "Generate brief with Claude"}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Brief | Files switch in the panel topbar — only shown when a brief exists. */
+function DetailTabs() {
+  const detailTab = useRepoStore((s) => s.detailTab);
+  const setDetailTab = useRepoStore((s) => s.setDetailTab);
+  return (
+    <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+      {(["brief", "files"] as const).map((tab) => (
+        <button
+          key={tab}
+          onClick={() => setDetailTab(tab)}
+          className={cn(
+            "rounded-md px-2 text-xs capitalize transition-colors",
+            detailTab === tab
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {tab}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function CommitFileRow({
   file,
   isSelected,
   dimmed,
@@ -734,7 +824,7 @@ function CommitFileRow({
   );
 }
 
-function CommitFileTreeView({
+export function CommitFileTreeView({
   files,
   selectedFilePath,
   fileQuery,

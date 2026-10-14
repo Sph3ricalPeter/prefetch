@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,7 +24,8 @@ export function SectionHeader({
 }: {
   label: ReactNode;
   isOpen: boolean;
-  onToggle: () => void;
+  /** Gets the click so callers can treat alt-click as "whole subtree". */
+  onToggle: (e: MouseEvent) => void;
   /** Faint count after the label. Pass `undefined` to hide it entirely. */
   count?: number;
   /** Inline content between label and count (e.g. a status dot/icon), inside the toggle. */

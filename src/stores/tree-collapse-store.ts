@@ -23,6 +23,8 @@ interface TreeCollapseStore {
   // e.g. `commit:<sha>` / `stash:<index>`. Arrays, not Sets, so state stays plain.
   byKey: Record<string, string[]>;
   toggle: (key: string, path: string, dirs: string[], subtree: boolean) => void;
+  /** Replace a tree's collapsed set, e.g. collapse or expand all of it at once. */
+  setCollapsed: (key: string, paths: string[]) => void;
 }
 
 export const useTreeCollapseStore = create<TreeCollapseStore>((set) => ({
@@ -32,4 +34,5 @@ export const useTreeCollapseStore = create<TreeCollapseStore>((set) => ({
       const next = applyCollapseToggle(new Set(state.byKey[key] ?? []), path, dirs, subtree);
       return { byKey: { ...state.byKey, [key]: [...next] } };
     }),
+  setCollapsed: (key, paths) => set((state) => ({ byKey: { ...state.byKey, [key]: paths } })),
 }));

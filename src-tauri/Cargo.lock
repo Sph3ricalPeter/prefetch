@@ -3257,6 +3257,7 @@ dependencies = [
  "dotenvy",
  "dunce",
  "git2",
+ "glob",
  "keyring",
  "notify",
  "open",

@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Archive,
+  Sparkles,
   ArchiveRestore,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -60,6 +61,7 @@ export const ACTION_ICONS = {
   // ── History ──────────────────────────────────────────────────────
   Commit: GitCommit,
   "Reword Commit": Pencil,
+  "Generate brief": Sparkles,
   Merge: GitMerge,
   Rebase: FastForward,
   "Fast-forward": FastForward,

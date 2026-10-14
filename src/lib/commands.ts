@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BranchInfo,
+  Brief,
+  IntentMark,
   CiJob,
+  CommitSuggestion,
   ConflictContents,
   ConflictState,
   FileDiff,
@@ -19,6 +22,7 @@ import type {
   TagInfo,
   UndoAction,
   UnityObjectChange,
+  WipBriefs,
   WorktreeInfo,
 } from "@/types/git";
 import type { ActiveProfileConfig } from "@/types/profile";
@@ -516,6 +520,46 @@ export async function aiAvailable(): Promise<boolean> {
 }
 
 /** Ask Claude Code for a commit message describing the staged diff. */
-export async function suggestCommitMessage(model: string): Promise<string> {
-  return tracedInvoke<string>("suggest_commit_message", { model });
+export async function suggestCommitMessage(model: string): Promise<CommitSuggestion> {
+  return tracedInvoke<CommitSuggestion>("suggest_commit_message", { model });
+}
+
+/** Agent-written Change Brief drafts for the working tree. */
+export async function getWipBriefs(): Promise<WipBriefs> {
+  return tracedInvoke<WipBriefs>("get_wip_briefs");
+}
+
+/** The Change Brief note on a commit, or null when it has none. */
+export async function getCommitBrief(commitId: string): Promise<Brief[] | null> {
+  return tracedInvoke<Brief[] | null>("get_commit_brief", { commitId });
+}
+
+/** Commit id of every commit with a brief note, to its intents' risk. */
+export async function getBriefMarks(): Promise<Record<string, IntentMark[]>> {
+  return tracedInvoke<Record<string, IntentMark[]>>("get_brief_marks");
+}
+
+/** Have Claude infer a Change Brief from the diff of the working changes
+ *  (no `commitId`) or a commit, replacing the brief that was there. */
+export async function generateBrief(model: string, commitId?: string): Promise<void> {
+  return tracedInvoke<void>("generate_brief", { model, commitId: commitId ?? null });
+}
+
+/** Store the drafts covering HEAD as its brief note. Call right after a commit. */
+export async function attachCommitBrief(): Promise<void> {
+  return tracedInvoke<void>("attach_commit_brief");
+}
+
+/** Whether this repo shares brief notes with origin (per-clone git config). */
+export async function getBriefSync(): Promise<boolean> {
+  return tracedInvoke<boolean>("get_brief_sync");
+}
+
+export async function setBriefSync(enabled: boolean): Promise<void> {
+  return tracedInvoke<void>("set_brief_sync", { enabled });
+}
+
+/** Fetch brief notes from origin, and publish ours when `push`. No-op unless opted in. */
+export async function syncBriefs(push: boolean): Promise<void> {
+  return tracedInvoke<void>("sync_briefs", { push });
 }
