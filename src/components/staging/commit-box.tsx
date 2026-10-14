@@ -26,9 +26,6 @@ const SOURCE_LABELS: Record<string, string> = {
   unknown: "Unknown source",
 };
 
-/** localStorage key for whether suggestions fill the description too. */
-const SUGGEST_BODY_KEY = "prefetch:suggest_body";
-
 /** localStorage key for the commit message draft, scoped to the repo path. */
 function draftKey(repoPath: string) {
   return `prefetch:commit_draft:${repoPath}`;
@@ -59,16 +56,8 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
   const stage = useRepoStore((s) => s.stage);
   const loadStatus = useRepoStore((s) => s.loadStatus);
   const [isSuggesting, setIsSuggesting] = useState(false);
-  // Off by default: a suggestion is just the subject line.
-  const [suggestBody, setSuggestBody] = useState(() => localStorage.getItem(SUGGEST_BODY_KEY) === "1");
-  const toggleSuggestBody = (on: boolean) => {
-    setSuggestBody(on);
-    try {
-      localStorage.setItem(SUGGEST_BODY_KEY, on ? "1" : "0");
-    } catch {
-      // localStorage unavailable — the choice just won't stick
-    }
-  };
+  const suggestBody = useRepoStore((s) => s.suggestBody);
+  const setSuggestBody = useRepoStore((s) => s.setSuggestBody);
 
   // Drag handle above the card resizes the merged commit field — the
   // description part when it's shown, the subject otherwise.
@@ -178,21 +167,26 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
 
   const stagedCount = fileStatuses.filter((f) => f.is_staged).length;
   const canCommit =
-    stagedCount > 0 && commitMessage.trim().length > 0 && !isLoading;
+    stagedCount > 0 && commitMessage.trim().length > 0 && !isLoading && !isSuggesting;
   const canContinue = unresolvedCount === 0 && !isLoading;
   const canSuggest = claudeAvailable && stagedCount > 0 && !isOperationInProgress && !amendMode;
 
-  const summarizing = briefMode && !isOperationInProgress;
-  const canSummarize = claudeAvailable && fileStatuses.length > 0 && !amendMode;
+  // Without Claude there's no Summarize, so the Brief tab keeps the typed message.
+  const summarizing = briefMode && claudeAvailable && !isOperationInProgress;
+  // Conflicts need resolving first: staging them would mark them resolved.
+  const canSummarize =
+    fileStatuses.length > 0 && unresolvedCount === 0 && !amendMode && !isLoading;
 
   const handleSuggest = async (writeBrief: boolean) => {
     setIsSuggesting(true);
     try {
-      if (writeBrief) {
-        const unstaged = [...new Set(fileStatuses.filter((f) => !f.is_staged).map((f) => f.path))];
-        if (unstaged.length > 0) await stage(unstaged);
-      }
+      const unstaged = writeBrief
+        ? [...new Set(fileStatuses.filter((f) => !f.is_staged).map((f) => f.path))]
+        : [];
+      if (unstaged.length > 0) await stage(unstaged);
       const s = useRepoStore.getState();
+      // stage() toasts its own failure; don't summarize a subset as if it were everything.
+      if (s.fileStatuses.some((f) => !f.is_staged && unstaged.includes(f.path))) return;
       if (!s.fileStatuses.some((f) => f.is_staged)) return;
       const before = {
         repoPath: s.repoPath,
@@ -324,10 +318,11 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
         </Tooltip>
       )}
 
-      {/* Brief tab: the summary, read-only. Otherwise the merged commit field — subject on top (bright), extended description
-          below the rule (dim). Two textareas styled as one box: a single
-          textarea can't paint two colours or hold a divider, and an overlay
-          mirror would have to keep caret metrics in sync. */}
+      {/* Brief tab: the summary, read-only. Otherwise the merged commit
+          field — subject on top (bright), extended description below the
+          rule (dim). Two textareas styled as one box: a single textarea
+          can't paint two colours or hold a divider, and an overlay mirror
+          would have to keep caret metrics in sync. */}
       {summarizing ? (
         <>
           <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-field px-3 py-2 text-xs">
@@ -342,16 +337,14 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
               <p className="text-faint">Summarize stages every change, then writes the brief and the commit message.</p>
             )}
           </div>
-          {claudeAvailable && (
-            <button
-              onClick={() => handleSuggest(true)}
-              disabled={!canSummarize || isSuggesting}
-              className="flex min-h-8 w-full items-center justify-center gap-2 rounded-md border border-border px-3 text-xs font-semibold text-foreground transition-colors hover:bg-card-hover disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {isSuggesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              {isSuggesting ? "Summarizing…" : commitMessage ? "Summarize again" : "Summarize changes"}
-            </button>
-          )}
+          <button
+            onClick={() => handleSuggest(true)}
+            disabled={!canSummarize || isSuggesting}
+            className="flex min-h-8 w-full items-center justify-center gap-2 rounded-md border border-border px-3 text-xs font-semibold text-foreground transition-colors hover:bg-card-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isSuggesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            {isSuggesting ? "Summarizing…" : commitMessage ? "Summarize again" : "Summarize changes"}
+          </button>
         </>
       ) : (
         <div
@@ -446,14 +439,7 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             {/* Amend last commit toggle */}
             {headCommitId && (
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <Checkbox
-                  checked={amendMode}
-                  onCheckedChange={(v) => setAmendMode(v === true)}
-                />
-                <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
-                  Amend last commit
-                </span>
+              <CheckboxLabel checked={amendMode} onCheckedChange={setAmendMode} label="Amend last commit">
                 {amendMode && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -467,17 +453,12 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
                     </TooltipContent>
                   </Tooltip>
                 )}
-              </label>
+              </CheckboxLabel>
             )}
             {claudeAvailable && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <label className="flex items-center gap-2 cursor-pointer group">
-                    <Checkbox checked={suggestBody} onCheckedChange={(v) => toggleSuggestBody(v === true)} />
-                    <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
-                      Suggest description
-                    </span>
-                  </label>
+                  <CheckboxLabel checked={suggestBody} onCheckedChange={setSuggestBody} label="Suggest description" />
                 </TooltipTrigger>
                 <TooltipContent side="top">
                   <p className="text-xs">Off: Claude suggests the subject line only</p>
@@ -543,6 +524,31 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
   );
 }
 
+/** A checkbox and its label in the commit box's toggle row. Other props
+ *  (a TooltipTrigger's handlers and ref) land on the label; children follow
+ *  the text. */
+function CheckboxLabel({
+  checked,
+  onCheckedChange,
+  label,
+  children,
+  ...rest
+}: {
+  checked: boolean;
+  onCheckedChange: (on: boolean) => void;
+  label: string;
+} & React.ComponentPropsWithRef<"label">) {
+  return (
+    <label {...rest} className="flex items-center gap-2 cursor-pointer group">
+      <Checkbox checked={checked} onCheckedChange={(v) => onCheckedChange(v === true)} />
+      <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
 /** Per-repo opt-in for sharing brief notes with origin. Off by default:
  *  briefs can hold reasoning that shouldn't leave this machine. */
 function SyncToggle() {
@@ -568,12 +574,7 @@ function SyncToggle() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <label className="flex items-center gap-2 cursor-pointer group">
-          <Checkbox checked={enabled} onCheckedChange={(v) => toggle(v === true)} />
-          <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
-            Sync briefs
-          </span>
-        </label>
+        <CheckboxLabel checked={enabled} onCheckedChange={toggle} label="Sync briefs" />
       </TooltipTrigger>
       <TooltipContent side="top">
         <p className="text-xs">Share Change Briefs with origin on push, fetch and pull</p>

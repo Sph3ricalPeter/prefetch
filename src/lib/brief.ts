@@ -86,8 +86,6 @@ export function intentType(intent: BriefIntent): CommitType | null {
 const TIER_RANK: Record<string, number> = { high: 0, mid: 1 };
 const TYPE_RANK: Record<string, number> = { fix: 0, feat: 1 };
 
-/** Reading order: high risk, then medium, then fix › feat › the rest;
- *  unrelated intents last. Stable otherwise, so the agent's order holds. */
 /** Why an intent is flagged mid or high, as short phrases, worst first. */
 export function riskReasons(intent: BriefIntent): string[] {
   if (intent.tier !== "high" && intent.tier !== "mid") return [];
@@ -104,6 +102,8 @@ export function riskReasons(intent: BriefIntent): string[] {
   return reasons;
 }
 
+/** Reading order: high risk, then medium, then fix › feat › the rest;
+ *  unrelated intents last. Stable otherwise, so the agent's order holds. */
 export function sortIntents<T extends { intent: BriefIntent }>(list: T[]): T[] {
   const key = ({ intent }: T) => [
     intent.kind === "unrelated" ? 1 : 0,

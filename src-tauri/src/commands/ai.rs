@@ -12,20 +12,20 @@ pub async fn ai_available() -> Result<bool, AppError> {
     offload(|| Ok(ai::claude_path().is_some())).await
 }
 
-/// Infer a Change Brief with `claude -p` for the working changes (`commit_id`
-/// None) or a commit, replacing whatever brief was there.
+/// Infer a commit's Change Brief with `claude -p`, replacing whatever brief
+/// was there.
 #[tauri::command]
 pub async fn generate_brief(
     state: State<'_, AppState>,
     model: String,
-    commit_id: Option<String>,
+    commit_id: String,
 ) -> Result<(), AppError> {
     let path = repo_path(&state)?;
     let env = get_profile_env(&state);
     offload(move || {
         let claude =
             ai::claude_path().ok_or_else(|| AppError::Other("Claude Code CLI not found".into()))?;
-        ai::generate_brief(&path, &claude, &model, commit_id.as_deref(), &env)
+        ai::generate_brief(&path, &claude, &model, &commit_id, &env)
     })
     .await
 }

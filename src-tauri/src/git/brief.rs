@@ -364,21 +364,17 @@ pub fn read_wip(path: &str) -> Result<WipBriefs, AppError> {
     Ok(wip)
 }
 
-/// Drafts narrowed to the staged files (the context for a commit message),
-/// and whether they claim every staged file.
-pub fn staged_briefs(path: &str) -> Result<(Vec<Brief>, bool), AppError> {
+/// Drafts narrowed to the staged files: the context for a commit message.
+pub fn staged_briefs(path: &str) -> Result<Vec<Brief>, AppError> {
     let repo = Repository::open(path)?;
     let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
     let diff = repo.diff_tree_to_index(head.as_ref(), None, None)?;
     let staged = diff_paths(&diff);
-    let briefs: Vec<Brief> = read_wip_dir(&wip_dir(&repo))
+    Ok(read_wip_dir(&wip_dir(&repo))
         .briefs
         .iter()
         .filter_map(|b| b.restricted_to(&staged))
-        .collect();
-    let claimed: HashSet<&String> = briefs.iter().flat_map(|b| b.files()).collect();
-    let covered = staged.iter().all(|f| claimed.contains(f));
-    Ok((briefs, covered))
+        .collect())
 }
 
 /// The brief note on a commit, if any. A note that doesn't parse is an error so
@@ -459,6 +455,11 @@ pub fn attach_wip(path: &str, env: &[(String, String)]) -> Result<(), AppError> 
     let repo = Repository::open(path)?;
     let dir = wip_dir(&repo);
     let (drafts, _) = read_wip_files(&dir);
+    // An inferred draft agents fully shadow is never shown; drop it so it
+    // can't come back stale once their drafts are gone.
+    if !drafts.iter().any(|(_, b)| b.session == INFERRED) {
+        let _ = fs::remove_file(dir.join(format!("{INFERRED}.json")));
+    }
     if drafts.is_empty() {
         return Ok(());
     }
@@ -822,8 +823,7 @@ mod tests {
         assert_eq!(read_wip(path).unwrap().errors.len(), 1);
 
         git(dir, &["add", "a.rs"]);
-        let (staged, covered) = staged_briefs(path).unwrap();
-        assert!(covered);
+        let staged = staged_briefs(path).unwrap();
         assert_eq!(staged.len(), 2);
         assert!(prompt_context(&staged).contains("(a.rs)"));
         git(dir, &["commit", "-qm", "c1"]);
@@ -979,6 +979,15 @@ mod tests {
         // The agent claims b.rs afterwards: the stale inferred draft gives way.
         fs::write(wip.join("agent.json"), draft("agent", &[&["a.rs", "b.rs"]])).unwrap();
         assert_eq!(read_wip(path).unwrap().briefs.len(), 1);
+        fs::write(wip.join("agent.json"), draft("agent", &[&["a.rs"]])).unwrap();
+
+        // Shadowed entirely, it's deleted on the next commit rather than kept.
+        fs::write(wip.join("agent.json"), draft("agent", &[&["a.rs", "b.rs"]])).unwrap();
+        git(tmp.path(), &["add", "."]);
+        git(tmp.path(), &["commit", "-qm", "c1"]);
+        attach_wip(path, &[]).unwrap();
+        assert!(!wip.join("inferred.json").exists());
+        write_inferred(path, &both, &["b.rs".into()]).unwrap();
         fs::write(wip.join("agent.json"), draft("agent", &[&["a.rs"]])).unwrap();
 
         // Nothing unclaimed: the inferred draft goes away.

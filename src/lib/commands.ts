@@ -540,10 +540,10 @@ export async function getBriefMarks(): Promise<Record<string, IntentMark[]>> {
   return tracedInvoke<Record<string, IntentMark[]>>("get_brief_marks");
 }
 
-/** Have Claude infer a Change Brief from the diff of the working changes
- *  (no `commitId`) or a commit, replacing the brief that was there. */
-export async function generateBrief(model: string, commitId?: string): Promise<void> {
-  return tracedInvoke<void>("generate_brief", { model, commitId: commitId ?? null });
+/** Have Claude infer a commit's Change Brief from its diff, replacing the
+ *  brief that was there. */
+export async function generateBrief(model: string, commitId: string): Promise<void> {
+  return tracedInvoke<void>("generate_brief", { model, commitId });
 }
 
 /** Store the drafts covering HEAD as its brief note. Call right after a commit. */

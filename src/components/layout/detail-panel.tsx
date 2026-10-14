@@ -111,11 +111,13 @@ export function DetailPanel() {
 
   if (fileStatuses.length > 0 || operationInProgress) {
     // With Claude the Brief tab is always there: its Summarize writes the first brief.
-    const hasBrief =
+    const briefTab =
       claudeAvailable ||
       wipBriefs.errors.length > 0 ||
       matchBriefs(wipBriefs.briefs, fileStatuses).shown.length > 0;
-    const showBrief = hasBrief && detailTab === "brief";
+    // Conflicts show the file list: only it has the resolve actions.
+    const showBrief =
+      briefTab && detailTab === "brief" && !fileStatuses.some((f) => f.is_conflicted);
     return (
       <div className="relative flex h-full flex-col bg-background">
         {/* Extended topbar — continues the commit-graph header across the detail column */}
@@ -126,7 +128,7 @@ export function DetailPanel() {
           <span className="text-xs text-faint">{fileStatuses.length}</span>
           <DiffStat files={fileStatuses} />
           <div className="ml-auto flex items-center gap-2">
-            {hasBrief && <DetailTabs />}
+            {briefTab && <DetailTabs />}
             <div className="flex items-center gap-1">
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -723,7 +725,7 @@ function commitFileStatusIcon(type: string): React.ReactNode {
   }
 }
 
-/** Topbar ✦ that has Claude write (or rewrite) the Change Brief. */
+/** Topbar ✦ that has Claude write (or rewrite) the commit's Change Brief. */
 function GenerateBriefButton({ commitId, hasBrief }: { commitId: string; hasBrief: boolean }) {
   const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
   const generateBrief = useRepoStore((s) => s.generateBrief);
@@ -749,7 +751,7 @@ function GenerateBriefButton({ commitId, hasBrief }: { commitId: string; hasBrie
   );
 }
 
-/** Brief | Files switch in the panel topbar — only shown when a brief exists. */
+/** Brief | Files switch in the panel topbar — shown when a brief exists or Claude can write one. */
 function DetailTabs() {
   const detailTab = useRepoStore((s) => s.detailTab);
   const setDetailTab = useRepoStore((s) => s.setDetailTab);

@@ -388,8 +388,8 @@ interface RepoState {
   /** Right-column view when a brief exists. */
   detailTab: "brief" | "files";
   setDetailTab: (tab: "brief" | "files") => void;
-  /** Infer a brief with Claude for the working changes (null) or a commit. */
-  generateBrief: (commitId: string | null) => Promise<void>;
+  /** Infer a commit's brief with Claude. */
+  generateBrief: (commitId: string) => Promise<void>;
 
   commitMessage: string;
   commitDescription: string;
@@ -453,6 +453,8 @@ interface RepoState {
   claudeAvailable: boolean;
   /** `claude --model` value for commit suggestions (alias or full id). */
   aiModel: string;
+  /** Commit suggestions fill the description too; off means subject only. */
+  suggestBody: boolean;
 
   // Git identity
   gitIdentity: GitIdentity | null;
@@ -634,6 +636,7 @@ interface RepoState {
   loadLfsInfo: (full?: boolean) => Promise<void>;
   loadClaudeAvailable: () => Promise<void>;
   setAiModel: (model: string) => void;
+  setSuggestBody: (on: boolean) => void;
   initializeLfs: () => Promise<void>;
   trackLfsPattern: (pattern: string) => Promise<void>;
   untrackLfsPattern: (pattern: string) => Promise<void>;
@@ -809,6 +812,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   lfsInfo: null,
   claudeAvailable: false,
   aiModel: "opus",
+  suggestBody: false,
   gitIdentity: null,
   forgeStatus: null,
   prCache: {},
@@ -2533,18 +2537,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     const { repoPath, aiModel } = get();
     const toastId = toast.loading("Writing Change Brief…");
     try {
-      await generateBriefCmd(aiModel, commitId ?? undefined);
+      await generateBriefCmd(aiModel, commitId);
       if (get().repoPath !== repoPath) return;
-      const [wip, marks, brief] = await Promise.all([
-        getWipBriefs(),
-        getBriefMarks(),
-        commitId ? getCommitBrief(commitId) : Promise.resolve(null),
-      ]);
+      const [marks, brief] = await Promise.all([getBriefMarks(), getCommitBrief(commitId)]);
       set({
-        wipBriefs: wip,
         briefMarks: marks,
         detailTab: "brief",
-        ...(commitId && get().selectedCommitId === commitId ? { commitBrief: brief } : {}),
+        ...(get().selectedCommitId === commitId ? { commitBrief: brief } : {}),
       });
       showSuccess("Generate brief", "Change Brief written", { id: toastId });
     } catch (e) {
@@ -2883,16 +2882,22 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   },
 
   loadClaudeAvailable: async () => {
-    const [available, model] = await Promise.all([
+    const [available, model, body] = await Promise.all([
       aiAvailable().catch(() => false),
       getUiState("ai_model").catch(() => null),
+      getUiState("suggest_body").catch(() => null),
     ]);
-    set({ claudeAvailable: available, ...(model ? { aiModel: model } : {}) });
+    set({ claudeAvailable: available, suggestBody: body === "1", ...(model ? { aiModel: model } : {}) });
   },
 
   setAiModel: (model) => {
     set({ aiModel: model });
     setUiState("ai_model", model).catch(() => {});
+  },
+
+  setSuggestBody: (on) => {
+    set({ suggestBody: on });
+    setUiState("suggest_body", on ? "1" : "0").catch(() => {});
   },
 
   initializeLfs: async () => {

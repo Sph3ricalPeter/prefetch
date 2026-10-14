@@ -89,12 +89,10 @@ pub fn suggest_commit_message(
     }
 
     let branch = current_branch(repo_path);
-    let split = brief::wip_split(repo_path)?;
-    let stdout = if !write_brief || split.unclaimed.is_empty() {
-        let (briefs, _) = brief::staged_briefs(repo_path)?;
-        let prompt = intent_prompt(&branch, &brief::prompt_context(&briefs));
-        run_claude(repo_path, claude, model, &prompt, SYSTEM_PROMPT, staged)?
-    } else {
+    let split = write_brief
+        .then(|| brief::wip_split(repo_path))
+        .transpose()?;
+    let stdout = if let Some(split) = split.filter(|s| !s.unclaimed.is_empty()) {
         let unstaged = capture(repo_path, &["diff", "--stat=1000", "--patch"], &[])?;
         let input = format!(
             "=== STAGED (this commit) ===\n{staged}\n\
@@ -122,6 +120,10 @@ pub fn suggest_commit_message(
         let (generated, message) = brief::parse_generated_with_message(&raw)?;
         brief::write_inferred(repo_path, &generated, &split.unclaimed)?;
         message
+    } else {
+        let briefs = brief::staged_briefs(repo_path)?;
+        let prompt = intent_prompt(&branch, &brief::prompt_context(&briefs));
+        run_claude(repo_path, claude, model, &prompt, SYSTEM_PROMPT, staged)?
     };
     let (subject, body) = parse_suggestion(&stdout)
         .ok_or_else(|| AppError::Other("Claude returned an empty message".into()))?;
@@ -305,71 +307,30 @@ const BRIEF_SPEC: &str = include_str!("../../../docs/skills/prefetch-brief/SKILL
 const BRIEF_SYSTEM_PROMPT: &str =
     "You write Prefetch Change Briefs. Reply with one JSON object only.";
 
-/// Infer a Change Brief from a diff and store it. On a commit it replaces the
-/// note. Over the working changes (`commit` = None) it covers only the files
-/// no agent draft claims, so sessions sharing the tree keep their own drafts.
-/// Whatever brief already exists is passed in as a starting point.
+/// Infer a Change Brief for a commit and store it as the commit's note. Agent
+/// briefs in the note are kept as they are; only the inferred one is
+/// rewritten, for the files they don't cover, with the old one as a start.
 pub fn generate_brief(
     repo_path: &str,
     claude: &Path,
     model: &str,
-    commit: Option<&str>,
+    sha: &str,
     env: &[(String, String)],
 ) -> Result<(), AppError> {
-    let (subject, diff, previous, others, only) = match commit {
-        Some(sha) => {
-            if !sha.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(AppError::Other("Invalid commit id".into()));
-            }
-            // Agent briefs in the note are kept as they are; only the inferred
-            // one is rewritten, for the files they don't cover.
-            let split = brief::commit_split(repo_path, sha)?;
-            let diff = capture(
-                repo_path,
-                &["show", "--format=%B", "--stat=1000", "--patch", sha],
-                &[],
-            )?;
-            (
-                "the commit in the input (its message, a diffstat, then the diff)",
-                diff,
-                split.inferred.into_iter().collect::<Vec<_>>(),
-                split.agents,
-                split.unclaimed,
-            )
-        }
-        None => {
-            let split = brief::wip_split(repo_path)?;
-            // A repo with no commits yet diffs against the empty tree.
-            let base = if capture(repo_path, &["rev-parse", "--verify", "-q", "HEAD"], &[]).is_ok()
-            {
-                "HEAD"
-            } else {
-                EMPTY_TREE
-            };
-            // ponytail: one pathspec arg per file; batch if a huge tree hits argv limits.
-            let mut args = vec![
-                "--literal-pathspecs",
-                "diff",
-                base,
-                "--stat=1000",
-                "--patch",
-                "--",
-            ];
-            args.extend(split.unclaimed.iter().map(String::as_str));
-            let diff = if split.unclaimed.is_empty() {
-                String::new()
-            } else {
-                capture(repo_path, &args, &[])? + &untracked_text(repo_path, &split.unclaimed)?
-            };
-            (
-                "the uncommitted changes in the input (a diffstat, then the diff)",
-                diff,
-                split.inferred.into_iter().collect(),
-                split.agents,
-                split.unclaimed,
-            )
-        }
-    };
+    if !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::Other("Invalid commit id".into()));
+    }
+    let split = brief::commit_split(repo_path, sha)?;
+    let diff = capture(
+        repo_path,
+        &["show", "--format=%B", "--stat=1000", "--patch", sha],
+        &[],
+    )?;
+    let (previous, others, only) = (
+        split.inferred.into_iter().collect::<Vec<_>>(),
+        split.agents,
+        split.unclaimed,
+    );
     if only.is_empty() {
         return Err(AppError::Other(if others.is_empty() {
             "No changes to describe".into()
@@ -380,7 +341,7 @@ pub fn generate_brief(
 
     let mut instructions = brief_prompt(
         repo_path,
-        subject,
+        "the commit in the input (its message, a diffstat, then the diff)",
         &BriefScope {
             previous: &previous,
             others: &others,
@@ -398,19 +359,11 @@ pub fn generate_brief(
         with_instructions(&instructions, diff),
     )?;
     let generated = brief::parse_generated(&raw)?;
-    match commit {
-        Some(sha) => {
-            let allowed: HashSet<String> = only.into_iter().collect();
-            let mut briefs = others;
-            briefs.extend(generated.restricted_to(&allowed));
-            brief::write_note(repo_path, sha, &briefs, env)
-        }
-        None => brief::write_inferred(repo_path, &generated, &only),
-    }
+    let allowed: HashSet<String> = only.into_iter().collect();
+    let mut briefs = others;
+    briefs.extend(generated.restricted_to(&allowed));
+    brief::write_note(repo_path, sha, &briefs, env)
 }
-
-/// git's well-known empty tree, the base for diffs before the first commit.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Commit-message prompt, with the Change Brief context when there is one.
 fn intent_prompt(branch: &str, intent: &str) -> String {
@@ -498,11 +451,12 @@ mod tests {
         let Some(claude) = claude_path() else { return };
         let tmp = live_repo();
         let path = tmp.path().to_str().unwrap();
-        generate_brief(path, &claude, "haiku", None, &[]).unwrap();
-        let wip = brief::read_wip(path).unwrap();
-        println!("{}", serde_json::to_string_pretty(&wip.briefs).unwrap());
-        assert_eq!(wip.briefs.len(), 1);
-        assert!(wip.briefs[0].inferred);
+        let sha = capture(path, &["rev-parse", "HEAD"], &[]).unwrap();
+        let sha = sha.trim();
+        generate_brief(path, &claude, "haiku", sha, &[]).unwrap();
+        let note = brief::read_note(path, sha).unwrap().unwrap();
+        println!("{}", serde_json::to_string_pretty(&note).unwrap());
+        assert!(note[0].inferred);
     }
 
     /// No brief yet: one call writes the brief for everything and the message
@@ -519,9 +473,6 @@ mod tests {
         println!("{}", serde_json::to_string_pretty(&wip.briefs).unwrap());
         assert!(!s.body.is_empty());
         assert!(wip.briefs[0].inferred);
-        // Now covered: the second suggestion comes from the stored brief.
-        let (_, covered) = brief::staged_briefs(path).unwrap();
-        assert!(covered);
     }
 
     #[test]
