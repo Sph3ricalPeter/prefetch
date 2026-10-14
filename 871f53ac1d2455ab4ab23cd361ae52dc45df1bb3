@@ -1,0 +1,50 @@
+{
+  "intent": {
+    "title": "Fix what the release review found in Summarize",
+    "why": "Before shipping, two reviewers checked the new one-click Summarize. They found it could mark merge conflicts as resolved, leave a hidden Prefetch brief behind that later comes back stale, and keep going after staging failed."
+  },
+  "intents": [
+    {
+      "title": "Keep conflicts and failed staging out of Summarize",
+      "why": "Summarize staged files with unresolved conflicts, which marks them resolved, and the Brief tab hid the resolve buttons. Conflicts now show the file list, Summarize stops if staging fails, and commit and Summarize can no longer run at the same time. Without Claude, the Brief tab keeps the normal message box.",
+      "kind": "sub",
+      "type": "fix",
+      "files": ["src/components/staging/commit-box.tsx", "src/components/layout/detail-panel.tsx"],
+      "risk": {
+        "shared": true,
+        "why": "Changes when the Brief tab and Summarize are offered."
+      }
+    },
+    {
+      "title": "Delete a Prefetch brief that agents fully replaced",
+      "why": "A Prefetch brief whose files all belong to agents was hidden but never deleted, so it came back stale on later edits and could land in a commit note. It is now removed when you commit.",
+      "kind": "sub",
+      "type": "fix",
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": {
+        "shared": true,
+        "tested": true,
+        "why": "Runs after every commit."
+      }
+    },
+    {
+      "title": "Remove the unused working-changes brief path",
+      "why": "Only commits can ask Claude for a brief from the header now, so the old working-changes path and its leftovers went. The description setting moves into the app's saved settings like the model choice.",
+      "kind": "enabling",
+      "type": "refactor",
+      "files": [
+        "src-tauri/src/git/ai.rs",
+        "src-tauri/src/commands/ai.rs",
+        "src/lib/commands.ts",
+        "src/stores/repo-store.ts",
+        "src/lib/brief.ts"
+      ],
+      "risk": {
+        "shared": true,
+        "contract": true,
+        "tested": true,
+        "why": "The generate-brief command now requires a commit."
+      }
+    }
+  ]
+}
