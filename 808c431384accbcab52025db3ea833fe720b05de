@@ -1,0 +1,66 @@
+{
+  "intent": {
+    "title": "One-click Summarize on the Brief tab",
+    "why": "Committing from a brief meant going to Files to stage, back to Brief, then asking for a message, and an out-of-date Prefetch brief showed up twice next to the agent's. Now the Brief tab summarizes everything in one click, and the Files tab suggests a message for the staged changes only."
+  },
+  "intents": [
+    {
+      "title": "Agent briefs win over Prefetch's own brief",
+      "why": "An agent can describe files after Prefetch already guessed at them. Prefetch's guess now drops those files everywhere it is read, so nothing appears twice. Intents also record when a project rule raised their tier.",
+      "kind": "sub",
+      "type": "fix",
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": {
+        "shared": true,
+        "tested": true,
+        "why": "Every reader of working-tree briefs now sees the trimmed Prefetch brief."
+      }
+    },
+    {
+      "title": "Message suggestion with or without rewriting the brief",
+      "why": "The Files tab only writes a message from what is staged. Summarize also rewrites Prefetch's brief for changes no agent describes.",
+      "kind": "sub",
+      "type": "feat",
+      "files": ["src-tauri/src/git/ai.rs", "src-tauri/src/commands/ai.rs", "src/lib/commands.ts"],
+      "risk": {
+        "contract": true,
+        "external": true,
+        "why": "The app's internal command gains a required argument; the Claude prompts were not run in tests."
+      }
+    },
+    {
+      "title": "Summarize card, grouped briefs, subject-only suggestions",
+      "why": "The Brief tab's commit card shows the message read-only with one Summarize button, plus amend and commit. Each brief is one collapsible card holding its intents, and an intent's title and reason stay pinned at the top while you scroll its files. A new checkbox, off by default, decides whether suggestions also fill the description; the brief-sync checkbox moves next to it.",
+      "kind": "sub",
+      "type": "feat",
+      "files": [
+        "src/components/staging/commit-box.tsx",
+        "src/components/layout/detail-panel.tsx",
+        "src/components/layout/brief-view.tsx"
+      ],
+      "risk": {
+        "shared": true,
+        "why": "Summarize stages every working change, including ones an agent is still editing."
+      }
+    },
+    {
+      "title": "Show why an intent is flagged",
+      "why": "A highlighted intent only showed the agent's one-line concern, not what made it risky. It now starts with the reasons, such as acting outside the repo, not tested, or a project risk rule. Rust also marks intents whose tier a project rule raised.",
+      "kind": "sub",
+      "type": "feat",
+      "files": ["src/lib/brief.ts", "src/types/git.ts"],
+      "risk": {}
+    },
+    {
+      "title": "Ask for plain-language briefs",
+      "why": "Brief titles and reasons were full of code names and ticket numbers. The brief spec, which agents and Prefetch both follow, now asks for everyday wording.",
+      "kind": "sub",
+      "type": "docs",
+      "files": ["docs/skills/prefetch-brief/SKILL.md"],
+      "risk": {
+        "shared": true,
+        "why": "Changes the wording every agent and Prefetch's own briefs aim for."
+      }
+    }
+  ]
+}
