@@ -64,10 +64,10 @@ pub struct CommitSuggestion {
     pub body: String,
 }
 
-/// Commit message for the staged diff, always written from a Change Brief:
-/// when the drafts already claim every staged file the message is written from
-/// them; otherwise one call writes the brief for all working changes (stored as
-/// the draft, earlier drafts as input) together with the message.
+/// Commit message for the staged diff. With `write_brief` (the Brief tab), one
+/// call also writes the inferred brief for every change no agent describes
+/// (stored as the draft, the earlier one as input). Otherwise, or when agents
+/// describe everything, the briefs covering the staged files are context only.
 ///
 /// Deliberately takes no git lock: the diff is captured up front and the
 /// model call can run for several seconds.
@@ -75,6 +75,7 @@ pub fn suggest_commit_message(
     repo_path: &str,
     claude: &Path,
     model: &str,
+    write_brief: bool,
 ) -> Result<CommitSuggestion, AppError> {
     // Stat first so every file stays visible even if the diff gets truncated.
     // Wide stat: without a TTY git shortens long paths to ".../tail".
@@ -88,12 +89,12 @@ pub fn suggest_commit_message(
     }
 
     let branch = current_branch(repo_path);
-    let (briefs, covered) = brief::staged_briefs(repo_path)?;
-    let stdout = if covered {
+    let split = brief::wip_split(repo_path)?;
+    let stdout = if !write_brief || split.unclaimed.is_empty() {
+        let (briefs, _) = brief::staged_briefs(repo_path)?;
         let prompt = intent_prompt(&branch, &brief::prompt_context(&briefs));
         run_claude(repo_path, claude, model, &prompt, SYSTEM_PROMPT, staged)?
     } else {
-        let split = brief::wip_split(repo_path)?;
         let unstaged = capture(repo_path, &["diff", "--stat=1000", "--patch"], &[])?;
         let input = format!(
             "=== STAGED (this commit) ===\n{staged}\n\
@@ -411,15 +412,21 @@ pub fn generate_brief(
 /// git's well-known empty tree, the base for diffs before the first commit.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-/// Commit-message prompt when a Change Brief supplies the intent.
+/// Commit-message prompt, with the Change Brief context when there is one.
 fn intent_prompt(branch: &str, intent: &str) -> String {
+    let context = if intent.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "The Change Brief below records the intent behind them. Trust it for WHY; \
+             trust the diff for WHAT. Lead with the lead intent, not a list of files.\n\n\
+             <intent>\n{intent}\n</intent>\n\n"
+        )
+    };
     format!(
         "Write a git commit message for the staged changes on stdin (branch: {branch}); \
          a diffstat comes first, then the diff.\n\n\
-         The Change Brief below records the intent behind them. Trust it for WHY; \
-         trust the diff for WHAT. Lead with the lead intent, not a list of files.\n\n\
-         <intent>\n{intent}\n</intent>\n\n\
-         Format: line 1 is the subject: imperative mood, the conventional-commit prefix \
+         {context}Format: line 1 is the subject: imperative mood, the conventional-commit prefix \
          of the most important intent (fix over feat over the rest), <=72 chars, no trailing period. \
          Then a blank line, then a body of 1-4 short plain-text lines explaining why, \
          wrapped at 72 chars. If an issue is listed, end the body with `Refs: <ID>`. \
@@ -506,7 +513,7 @@ mod tests {
         let Some(claude) = claude_path() else { return };
         let tmp = live_repo();
         let path = tmp.path().to_str().unwrap();
-        let s = suggest_commit_message(path, &claude, "haiku").unwrap();
+        let s = suggest_commit_message(path, &claude, "haiku", true).unwrap();
         println!("{}\n\n{}", s.subject, s.body);
         let wip = brief::read_wip(path).unwrap();
         println!("{}", serde_json::to_string_pretty(&wip.briefs).unwrap());

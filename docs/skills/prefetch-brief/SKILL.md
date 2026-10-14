@@ -39,12 +39,12 @@ Several agents can work in the same working tree at once. Each one keeps its own
 {
   "intent": {
     "title": "Never destroy uncommitted work on Reset to Remote",
-    "why": "reset --hard ran over a dirty tree; double-clicking the remote twin of the current branch lost edits."
+    "why": "Resetting a branch to its remote copy threw away uncommitted edits without any warning."
   },
   "intents": [
     {
-      "title": "Route dirty resets through autostash",
-      "why": "Stash, reset, then pop. Pop back if the reset fails.",
+      "title": "Set edits aside before a reset",
+      "why": "Uncommitted edits are stashed first and restored afterwards, even when the reset fails.",
       "kind": "sub",
       "type": "fix",
       "files": ["src/stores/repo-store.ts"],
@@ -55,7 +55,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
       }
     },
     {
-      "title": "Extract resolveDiffRevs helper",
+      "title": "Share the diff-range logic between views",
       "kind": "enabling",
       "type": "refactor",
       "files": ["src/lib/utils.ts"],
@@ -93,6 +93,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
   - `oneWay`: `git revert` would not fully undo it (data already migrated or sent, published releases, deleted remote state).
   - `why`: one line naming the main concern. Leave it out when every answer is `false`.
 - **Project rules.** If the repo has `.prefetch/risk.json`, read its `guidance` before you answer. Its `rules` pin tiers for paths; you do not apply them yourself.
+- **Plain language.** Write every title and `why` for a teammate who has not seen the code or this conversation. Use everyday words and full sentences. Say what changes and why it matters, not how the code does it. Leave out function, file and variable names, ticket numbers and internal shorthand unless the reader needs them.
 - **Keep it short.** Titles are about 8 words. A `why` is one or two sentences.
 - **`issues`** is optional. Add an issue only if the work is tied to a tracker issue that you saw: one the user gave you, one in the branch name, or one from a tracker tool. Never invent IDs. If there is no issue, leave out the field. Add `criteria` only if you have the acceptance criteria.
 

@@ -368,6 +368,8 @@ export interface BriefIntent {
   risk?: BriefRisk;
   /** Derived by Prefetch from `risk` and `.prefetch/risk.json`; absent when unassessed. */
   tier?: RiskTier;
+  /** The tier was raised by a `.prefetch/risk.json` rule, not the risk answers. */
+  pinned?: boolean;
 }
 
 export type RiskTier = "low" | "mid" | "high";

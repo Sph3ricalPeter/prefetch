@@ -88,6 +88,22 @@ const TYPE_RANK: Record<string, number> = { fix: 0, feat: 1 };
 
 /** Reading order: high risk, then medium, then fix › feat › the rest;
  *  unrelated intents last. Stable otherwise, so the agent's order holds. */
+/** Why an intent is flagged mid or high, as short phrases, worst first. */
+export function riskReasons(intent: BriefIntent): string[] {
+  if (intent.tier !== "high" && intent.tier !== "mid") return [];
+  const r = intent.risk;
+  const reasons = [
+    r?.oneWay && "can't be undone by revert",
+    r?.data && "touches stored data or config",
+    r?.external && "acts outside the repo",
+    r?.contract && "changes a public interface",
+    (r?.data || r?.external || r?.contract) && !r?.tested && "not tested",
+    intent.pinned && "project risk rule",
+  ].filter((x): x is string => !!x);
+  if (reasons.length === 0 && r?.shared) reasons.push("used by other code");
+  return reasons;
+}
+
 export function sortIntents<T extends { intent: BriefIntent }>(list: T[]): T[] {
   const key = ({ intent }: T) => [
     intent.kind === "unrelated" ? 1 : 0,

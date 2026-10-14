@@ -70,6 +70,7 @@ export function DetailPanel() {
   const wipBriefs = useRepoStore((s) => s.wipBriefs);
   const detailTab = useRepoStore((s) => s.detailTab);
   const selectFile = useRepoStore((s) => s.selectFile);
+  const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
 
   const [showDiscardAll, setShowDiscardAll] = useState(false);
 
@@ -109,8 +110,11 @@ export function DetailPanel() {
   }
 
   if (fileStatuses.length > 0 || operationInProgress) {
+    // With Claude the Brief tab is always there: its Summarize writes the first brief.
     const hasBrief =
-      wipBriefs.errors.length > 0 || matchBriefs(wipBriefs.briefs, fileStatuses).shown.length > 0;
+      claudeAvailable ||
+      wipBriefs.errors.length > 0 ||
+      matchBriefs(wipBriefs.briefs, fileStatuses).shown.length > 0;
     const showBrief = hasBrief && detailTab === "brief";
     return (
       <div className="relative flex h-full flex-col bg-background">
@@ -122,7 +126,6 @@ export function DetailPanel() {
           <span className="text-xs text-faint">{fileStatuses.length}</span>
           <DiffStat files={fileStatuses} />
           <div className="ml-auto flex items-center gap-2">
-            <GenerateBriefButton commitId={null} hasBrief={hasBrief} />
             {hasBrief && <DetailTabs />}
             <div className="flex items-center gap-1">
               <Tooltip>
@@ -175,7 +178,7 @@ export function DetailPanel() {
           )}
           {/* CommitBox renders its own drag handle + card (the handle doubles
               as the gap, matching the unstaged/staged split). */}
-          <CommitBox />
+          <CommitBox briefMode={showBrief} />
         </div>
 
         {/* Discard all confirmation */}
@@ -721,7 +724,7 @@ function commitFileStatusIcon(type: string): React.ReactNode {
 }
 
 /** Topbar ✦ that has Claude write (or rewrite) the Change Brief. */
-function GenerateBriefButton({ commitId, hasBrief }: { commitId: string | null; hasBrief: boolean }) {
+function GenerateBriefButton({ commitId, hasBrief }: { commitId: string; hasBrief: boolean }) {
   const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
   const generateBrief = useRepoStore((s) => s.generateBrief);
   const [busy, setBusy] = useState(false);

@@ -519,9 +519,10 @@ export async function aiAvailable(): Promise<boolean> {
   return tracedInvoke<boolean>("ai_available");
 }
 
-/** Ask Claude Code for a commit message describing the staged diff. */
-export async function suggestCommitMessage(model: string): Promise<CommitSuggestion> {
-  return tracedInvoke<CommitSuggestion>("suggest_commit_message", { model });
+/** Ask Claude Code for a commit message describing the staged diff; with
+ *  `writeBrief` it also rewrites the inferred Change Brief in the same call. */
+export async function suggestCommitMessage(model: string, writeBrief: boolean): Promise<CommitSuggestion> {
+  return tracedInvoke<CommitSuggestion>("suggest_commit_message", { model, writeBrief });
 }
 
 /** Agent-written Change Brief drafts for the working tree. */

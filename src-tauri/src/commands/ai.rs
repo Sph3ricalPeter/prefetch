@@ -30,17 +30,19 @@ pub async fn generate_brief(
     .await
 }
 
-/// Suggest a commit message for the staged diff via `claude -p`.
+/// Suggest a commit message for the staged diff via `claude -p`; with
+/// `write_brief` it also rewrites the inferred Change Brief.
 #[tauri::command]
 pub async fn suggest_commit_message(
     state: State<'_, AppState>,
     model: String,
+    write_brief: bool,
 ) -> Result<ai::CommitSuggestion, AppError> {
     let path = repo_path(&state)?;
     offload(move || {
         let claude =
             ai::claude_path().ok_or_else(|| AppError::Other("Claude Code CLI not found".into()))?;
-        ai::suggest_commit_message(&path, &claude, &model)
+        ai::suggest_commit_message(&path, &claude, &model, write_brief)
     })
     .await
 }

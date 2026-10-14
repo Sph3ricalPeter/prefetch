@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import { useRepoStore } from "@/stores/repo-store";
 import { useProfileStore } from "@/stores/profile-store";
-import { getTokenInfo, suggestCommitMessage } from "@/lib/commands";
+import { getBriefSync, getTokenInfo, setBriefSync, suggestCommitMessage, syncBriefs } from "@/lib/commands";
 import { showError } from "@/lib/toast";
 import type { TokenInfo } from "@/lib/commands";
 import {
@@ -26,12 +26,17 @@ const SOURCE_LABELS: Record<string, string> = {
   unknown: "Unknown source",
 };
 
+/** localStorage key for whether suggestions fill the description too. */
+const SUGGEST_BODY_KEY = "prefetch:suggest_body";
+
 /** localStorage key for the commit message draft, scoped to the repo path. */
 function draftKey(repoPath: string) {
   return `prefetch:commit_draft:${repoPath}`;
 }
 
-export function CommitBox() {
+/** `briefMode`: the Brief tab is showing, so the message comes from
+ *  Summarize (stage everything, write brief + message) and isn't typed. */
+export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
   const commitMessage = useRepoStore((s) => s.commitMessage);
   const setCommitMessage = useRepoStore((s) => s.setCommitMessage);
   const commitDescription = useRepoStore((s) => s.commitDescription);
@@ -51,7 +56,19 @@ export function CommitBox() {
   const repoPath = useRepoStore((s) => s.repoPath);
   const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
   const aiModel = useRepoStore((s) => s.aiModel);
+  const stage = useRepoStore((s) => s.stage);
+  const loadStatus = useRepoStore((s) => s.loadStatus);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  // Off by default: a suggestion is just the subject line.
+  const [suggestBody, setSuggestBody] = useState(() => localStorage.getItem(SUGGEST_BODY_KEY) === "1");
+  const toggleSuggestBody = (on: boolean) => {
+    setSuggestBody(on);
+    try {
+      localStorage.setItem(SUGGEST_BODY_KEY, on ? "1" : "0");
+    } catch {
+      // localStorage unavailable — the choice just won't stick
+    }
+  };
 
   // Drag handle above the card resizes the merged commit field — the
   // description part when it's shown, the subject otherwise.
@@ -165,11 +182,26 @@ export function CommitBox() {
   const canContinue = unresolvedCount === 0 && !isLoading;
   const canSuggest = claudeAvailable && stagedCount > 0 && !isOperationInProgress && !amendMode;
 
-  const handleSuggest = async () => {
+  const summarizing = briefMode && !isOperationInProgress;
+  const canSummarize = claudeAvailable && fileStatuses.length > 0 && !amendMode;
+
+  const handleSuggest = async (writeBrief: boolean) => {
     setIsSuggesting(true);
-    const before = { repoPath, commitMessage, commitDescription, headCommitId };
     try {
-      const { subject, body } = await suggestCommitMessage(aiModel);
+      if (writeBrief) {
+        const unstaged = [...new Set(fileStatuses.filter((f) => !f.is_staged).map((f) => f.path))];
+        if (unstaged.length > 0) await stage(unstaged);
+      }
+      const s = useRepoStore.getState();
+      if (!s.fileStatuses.some((f) => f.is_staged)) return;
+      const before = {
+        repoPath: s.repoPath,
+        commitMessage: s.commitMessage,
+        commitDescription: s.commitDescription,
+        headCommitId: s.headCommitId,
+      };
+      const { subject, body } = await suggestCommitMessage(aiModel, writeBrief);
+      if (writeBrief) await loadStatus();
       // Repo switched, user typed, or HEAD moved while claude ran — the result is stale.
       const now = useRepoStore.getState();
       if (
@@ -178,12 +210,14 @@ export function CommitBox() {
         now.commitDescription !== before.commitDescription ||
         now.headCommitId !== before.headCommitId
       ) return;
-      const description = body || commitDescription;
+      // A summary replaces the whole message; a suggestion keeps a typed body.
+      const suggested = suggestBody ? body : "";
+      const description = writeBrief ? suggested : suggested || before.commitDescription;
       setCommitMessage(subject);
       setCommitDescription(description);
       persistDraft(subject, description);
     } catch (e) {
-      showError("Suggest commit message", e);
+      showError(writeBrief ? "Summarize changes" : "Suggest commit message", e);
     } finally {
       setIsSuggesting(false);
     }
@@ -230,12 +264,16 @@ export function CommitBox() {
 
   return (
     <>
-      <RowDragHandle
-        onMouseDown={(e) =>
-          (descriptionResize.current ?? messageResize.current)?.startResize(e)
-        }
-        label="Resize commit message"
-      />
+      {summarizing ? (
+        <div className="h-2 shrink-0" />
+      ) : (
+        <RowDragHandle
+          onMouseDown={(e) =>
+            (descriptionResize.current ?? messageResize.current)?.startResize(e)
+          }
+          label="Resize commit message"
+        />
+      )}
       <div className="flex shrink-0 flex-col gap-2 rounded-md border border-border bg-card px-3 py-3 animate-fade-in">
       {/* Operation progress header */}
       {isOperationInProgress && (
@@ -286,123 +324,168 @@ export function CommitBox() {
         </Tooltip>
       )}
 
-      {/* Merged commit field — subject on top (bright), extended description
+      {/* Brief tab: the summary, read-only. Otherwise the merged commit field — subject on top (bright), extended description
           below the rule (dim). Two textareas styled as one box: a single
           textarea can't paint two colours or hold a divider, and an overlay
           mirror would have to keep caret metrics in sync. */}
-      <div
-        className={`flex flex-col rounded-md border bg-field transition-colors focus-within:ring-1 focus-within:ring-ring ${
-          commitMessage.length > 72
-            ? "border-destructive/60"
-            : commitMessage.length > 50
-              ? "border-yellow-500/40"
-              : isOperationInProgress
-                ? "border-orange-500/30"
-                : "border-border"
-        }`}
-      >
-        <ResizableTextarea
-          value={commitMessage}
-          onChange={handleMessageChange}
-          onKeyDown={handleKeyDown}
-          placeholder={isOperationInProgress ? "Commit message for this step..." : "Commit message..."}
-          autoGrow
-          minHeight={50}
-          maxHeight={480}
-          gripPosition="none"
-          apiRef={messageResize}
-          className={`rounded-none border-0 bg-transparent focus:ring-0 ${canSuggest ? "pr-14" : "pr-10"}`}
-          overlay={
-            <div className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1">
-              {commitMessage.length > 0 && (
-                <span
-                  className={`text-caption tabular-nums ${
-                    commitMessage.length > 72
-                      ? "text-destructive"
-                      : commitMessage.length > 50
-                        ? "text-yellow-500"
-                        : "text-faint"
-                  }`}
-                >
-                  {commitMessage.length}
-                </span>
-              )}
-              {canSuggest && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <IconButton
-                      size="sm"
-                      onClick={handleSuggest}
-                      disabled={isSuggesting}
-                      aria-label="Suggest message with Claude"
-                      className="pointer-events-auto"
-                    >
-                      {isSuggesting ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Sparkles className="h-3.5 w-3.5" />
-                      )}
-                    </IconButton>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    <p className="text-xs">Suggest message with Claude</p>
-                    <p className="text-label text-dim">
-                      Written from the Change Brief; writes one first if the staged files have none. Sends your uncommitted diff to Anthropic via your Claude Code login
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          }
-        />
+      {summarizing ? (
+        <>
+          <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-field px-3 py-2 text-xs">
+            {commitMessage ? (
+              <>
+                <p className="font-medium text-foreground">{commitMessage}</p>
+                {commitDescription && (
+                  <p className="mt-1.5 whitespace-pre-wrap leading-relaxed text-dim">{commitDescription}</p>
+                )}
+              </>
+            ) : (
+              <p className="text-faint">Summarize stages every change, then writes the brief and the commit message.</p>
+            )}
+          </div>
+          {claudeAvailable && (
+            <button
+              onClick={() => handleSuggest(true)}
+              disabled={!canSummarize || isSuggesting}
+              className="flex min-h-8 w-full items-center justify-center gap-2 rounded-md border border-border px-3 text-xs font-semibold text-foreground transition-colors hover:bg-card-hover disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isSuggesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {isSuggesting ? "Summarizing…" : commitMessage ? "Summarize again" : "Summarize changes"}
+            </button>
+          )}
+        </>
+      ) : (
+        <div
+          className={`flex flex-col rounded-md border bg-field transition-colors focus-within:ring-1 focus-within:ring-ring ${
+            commitMessage.length > 72
+              ? "border-destructive/60"
+              : commitMessage.length > 50
+                ? "border-yellow-500/40"
+                : isOperationInProgress
+                  ? "border-orange-500/30"
+                  : "border-border"
+          }`}
+        >
+          <ResizableTextarea
+            value={commitMessage}
+            onChange={handleMessageChange}
+            onKeyDown={handleKeyDown}
+            placeholder={isOperationInProgress ? "Commit message for this step..." : "Commit message..."}
+            autoGrow
+            minHeight={50}
+            maxHeight={480}
+            gripPosition="none"
+            apiRef={messageResize}
+            className={`rounded-none border-0 bg-transparent focus:ring-0 ${canSuggest ? "pr-14" : "pr-10"}`}
+            overlay={
+              <div className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1">
+                {commitMessage.length > 0 && (
+                  <span
+                    className={`text-caption tabular-nums ${
+                      commitMessage.length > 72
+                        ? "text-destructive"
+                        : commitMessage.length > 50
+                          ? "text-yellow-500"
+                          : "text-faint"
+                    }`}
+                  >
+                    {commitMessage.length}
+                  </span>
+                )}
+                {canSuggest && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <IconButton
+                        size="sm"
+                        onClick={() => handleSuggest(false)}
+                        disabled={isSuggesting}
+                        aria-label="Suggest message with Claude"
+                        className="pointer-events-auto"
+                      >
+                        {isSuggesting ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                      </IconButton>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs">Suggest message with Claude</p>
+                      <p className="text-label text-dim">
+                        From the staged changes, with any Change Brief covering them as context. Sends your staged diff to Anthropic via your Claude Code login
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            }
+          />
 
-        {/* Description — hidden mid-operation (rebase/merge steps take a
-            subject only). */}
-        {!isOperationInProgress && (
-          <>
-            <div className="mx-3 border-t border-border" />
-            <ResizableTextarea
-              value={commitDescription}
-              onChange={handleDescriptionChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Extended description..."
-              minHeight={64}
-              maxHeight={480}
-              gripPosition="none"
-              apiRef={descriptionResize}
-              className="rounded-none border-0 bg-transparent text-dim focus:ring-0"
-            />
-          </>
-        )}
-      </div>
+          {/* Description — hidden mid-operation (rebase/merge steps take a
+              subject only). */}
+          {!isOperationInProgress && (
+            <>
+              <div className="mx-3 border-t border-border" />
+              <ResizableTextarea
+                value={commitDescription}
+                onChange={handleDescriptionChange}
+                onKeyDown={handleKeyDown}
+                placeholder="Extended description..."
+                minHeight={64}
+                maxHeight={480}
+                gripPosition="none"
+                apiRef={descriptionResize}
+                className="rounded-none border-0 bg-transparent text-dim focus:ring-0"
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {!isOperationInProgress && (
         <>
-          {/* Amend last commit toggle */}
-          {headCommitId && (
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <Checkbox
-                checked={amendMode}
-                onCheckedChange={(v) => setAmendMode(v === true)}
-              />
-              <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
-                Amend last commit
-              </span>
-              {amendMode && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <AlertTriangle className="h-3 w-3 text-yellow-500 shrink-0" />
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    <p className="text-xs">
-                      Amending rewrites history — you'll need to force push if
-                      already pushed
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </label>
-          )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            {/* Amend last commit toggle */}
+            {headCommitId && (
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <Checkbox
+                  checked={amendMode}
+                  onCheckedChange={(v) => setAmendMode(v === true)}
+                />
+                <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
+                  Amend last commit
+                </span>
+                {amendMode && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <AlertTriangle className="h-3 w-3 text-yellow-500 shrink-0" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs">
+                        Amending rewrites history — you'll need to force push if
+                        already pushed
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </label>
+            )}
+            {claudeAvailable && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <Checkbox checked={suggestBody} onCheckedChange={(v) => toggleSuggestBody(v === true)} />
+                    <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
+                      Suggest description
+                    </span>
+                  </label>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p className="text-xs">Off: Claude suggests the subject line only</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {briefMode && <SyncToggle />}
+          </div>
         </>
       )}
 
@@ -457,5 +540,45 @@ export function CommitBox() {
       )}
       </div>
     </>
+  );
+}
+
+/** Per-repo opt-in for sharing brief notes with origin. Off by default:
+ *  briefs can hold reasoning that shouldn't leave this machine. */
+function SyncToggle() {
+  const repoPath = useRepoStore((s) => s.repoPath);
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    getBriefSync().then(setEnabled).catch(() => {});
+  }, [repoPath]);
+
+  const toggle = async (on: boolean) => {
+    setEnabled(on);
+    try {
+      await setBriefSync(on);
+    } catch (e) {
+      setEnabled(!on);
+      showError("Sync Change Briefs", e);
+      return;
+    }
+    if (on) await syncBriefs(true).catch((e) => showError("Sync Change Briefs", e));
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <label className="flex items-center gap-2 cursor-pointer group">
+          <Checkbox checked={enabled} onCheckedChange={(v) => toggle(v === true)} />
+          <span className="text-xs text-dim group-hover:text-muted-foreground transition-colors select-none">
+            Sync briefs
+          </span>
+        </label>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <p className="text-xs">Share Change Briefs with origin on push, fetch and pull</p>
+        <p className="text-label text-dim">Off: briefs stay on this machine</p>
+      </TooltipContent>
+    </Tooltip>
   );
 }

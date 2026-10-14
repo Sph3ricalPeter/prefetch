@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useState, type MouseEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -10,18 +10,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { CommitFileRow, CommitFileTreeView } from "@/components/layout/detail-panel";
-import { Checkbox } from "@/components/ui/checkbox";
 import { DiffStat } from "@/components/ui/diff-stat";
 import { SectionHeader } from "@/components/ui/section-header";
-import { getBriefSync, openUrl, setBriefSync, syncBriefs } from "@/lib/commands";
-import { showError } from "@/lib/toast";
+import { openUrl } from "@/lib/commands";
 import { useRepoStore } from "@/stores/repo-store";
 import { useTreeCollapseStore } from "@/stores/tree-collapse-store";
 import { buildFileTree, collectDirPaths } from "@/lib/file-tree";
 import { cn } from "@/lib/utils";
 import { COMMIT_TYPE_META } from "@/lib/commit-type";
 import { COMMIT_TYPE_ICONS } from "@/lib/commit-type-icons";
-import { TIER_META, intentType, matchBriefs, sortIntents, type ShownIntent } from "@/lib/brief";
+import { TIER_META, intentType, matchBriefs, riskReasons, sortIntents, type ShownIntent } from "@/lib/brief";
 import type { Brief, FileStatus, RiskTier } from "@/types/git";
 
 /** DOM twins of the canvas icons in TIER_META. */
@@ -59,69 +57,121 @@ export function BriefView({
       {shown.map(({ brief, intents }) => {
         const key = brief.session || brief.intent.title;
         return (
-          <div key={key} className="flex flex-col gap-1.5">
-            <section className="rounded-md border border-border bg-card px-4 pt-2 pb-3 animate-fade-in">
-              <div className="flex items-center gap-2 pb-1.5">
-                <span className="text-caption font-semibold text-muted-foreground">Intent</span>
-                {brief.inferred && (
-                  <span
-                    className="text-caption font-semibold text-faint"
-                    title="Written by Prefetch from the diff, not by the agent that made the change"
-                  >
-                    inferred
-                  </span>
-                )}
-                {brief.session && !brief.inferred && (
-                  <span className="ml-auto truncate text-label text-faint">{brief.session}</span>
-                )}
-              </div>
-              <p className="text-sm font-medium text-foreground">{brief.intent.title}</p>
-              {brief.intent.why && (
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{brief.intent.why}</p>
-              )}
-
-              {brief.issues.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {brief.issues.map((issue) => (
-                    <button
-                      key={issue.id}
-                      disabled={!issue.url}
-                      onClick={() => issue.url && openUrl(issue.url)}
-                      title={issue.criteria.length ? issue.criteria.join("\n") : undefined}
-                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-secondary px-2 py-0.5 text-xs enabled:hover:bg-card-hover"
-                    >
-                      <span className="text-brand">{issue.id}</span>
-                      {issue.title && <span className="truncate text-muted-foreground">{issue.title}</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <RiskSummary intents={intents} />
-            </section>
-
-            {sortIntents(intents).map((s, i) => (
-              <IntentCard
-                key={i}
-                shown={s}
-                storageKey={`brief:${key}:${i}`}
-                selectedFilePath={selectedFilePath}
-                onFileClick={onFileClick}
-              />
-            ))}
-          </div>
+          <BriefCard
+            key={key}
+            brief={brief}
+            intents={intents}
+            storageKey={`brief:${key}`}
+            selectedFilePath={selectedFilePath}
+            onFileClick={onFileClick}
+          />
         );
       })}
 
-      {shown.length > 0 && unclaimed.length > 0 && (
+      {unclaimed.length > 0 && (
         <section className="rounded-md border border-border bg-card px-4 pt-2 pb-3">
           <div className="pb-1 text-caption font-semibold text-muted-foreground">Not in any brief</div>
           <Files files={unclaimed} storageKey="brief:unclaimed" selectedFilePath={selectedFilePath} onFileClick={onFileClick} />
         </section>
       )}
-
-      <SyncToggle />
     </div>
+  );
+}
+
+/** One card per brief: the lead intent heads it, its intents sit inside.
+ *  Clicking the header collapses the intents; alt-click opens or closes
+ *  everything inside, down to the folders. */
+function BriefCard({
+  brief,
+  intents,
+  storageKey,
+  selectedFilePath,
+  onFileClick,
+}: {
+  brief: Brief;
+  intents: ShownIntent[];
+  storageKey: string;
+  selectedFilePath: string | null;
+  onFileClick: (file: FileStatus) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  // Alt-click remounts the intent cards (new epoch) opened or closed.
+  const [all, setAll] = useState({ epoch: 0, open: false });
+  const setCollapsed = useTreeCollapseStore((s) => s.setCollapsed);
+  const sorted = sortIntents(intents);
+  const toggle = (e: MouseEvent) => {
+    if (!e.altKey) {
+      setOpen(!open);
+      return;
+    }
+    const next = !(open && all.open);
+    setOpen(next);
+    setAll({ epoch: all.epoch + 1, open: next });
+    sorted.forEach((s, i) =>
+      setCollapsed(`${storageKey}:${i}`, next ? [] : buildFileTree(s.files).flatMap(collectDirPaths)),
+    );
+  };
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <section className="rounded-md border border-border bg-card animate-fade-in">
+      <div className="px-4 pt-2 pb-3">
+        <button onClick={toggle} className="block w-full text-left">
+          <div className="flex items-center gap-2 pb-1.5">
+            <Chevron className="-ml-1 h-3 w-3 shrink-0 text-dim" />
+            <span className="text-caption font-semibold text-muted-foreground">Intent</span>
+            {brief.inferred && (
+              <span
+                className="text-caption font-semibold text-faint"
+                title="Written by Prefetch from the diff, not by the agent that made the change"
+              >
+                inferred
+              </span>
+            )}
+            {brief.session && !brief.inferred && (
+              <span className="ml-auto truncate text-label text-faint">{brief.session}</span>
+            )}
+          </div>
+          <p className="text-sm font-medium text-foreground">{brief.intent.title}</p>
+          {brief.intent.why && (
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{brief.intent.why}</p>
+          )}
+        </button>
+
+        {brief.issues.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {brief.issues.map((issue) => (
+              <button
+                key={issue.id}
+                disabled={!issue.url}
+                onClick={() => issue.url && openUrl(issue.url)}
+                title={issue.criteria.length ? issue.criteria.join("\n") : undefined}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-secondary px-2 py-0.5 text-xs enabled:hover:bg-card-hover"
+              >
+                <span className="text-brand">{issue.id}</span>
+                {issue.title && <span className="truncate text-muted-foreground">{issue.title}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <RiskSummary intents={intents} />
+      </div>
+
+      {open && (
+        <div className="flex flex-col gap-1.5 pb-2 pl-4 pr-2">
+          {sorted.map((s, i) => (
+            <IntentCard
+              key={`${all.epoch}:${i}`}
+              shown={s}
+              defaultOpen={all.open}
+              storageKey={`${storageKey}:${i}`}
+              selectedFilePath={selectedFilePath}
+              onFileClick={onFileClick}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -165,17 +215,19 @@ function Chip({ className, children }: { className: string; children: React.Reac
  *  collapsed "Changes" section holding the files. */
 function IntentCard({
   shown: { intent, files },
+  defaultOpen = false,
   storageKey,
   selectedFilePath,
   onFileClick,
 }: {
   shown: ShownIntent;
+  defaultOpen?: boolean;
   storageKey: string;
   selectedFilePath: string | null;
   onFileClick: (file: FileStatus) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
+  const [filesOpen, setFilesOpen] = useState(defaultOpen);
   const setCollapsed = useTreeCollapseStore((s) => s.setCollapsed);
   // Alt-click opens or closes everything below, like folders in the file trees.
   const setSubtree = (next: boolean) => {
@@ -198,77 +250,90 @@ function IntentCard({
   const TierIcon = tier ? TIER_ICONS[tier] : null;
   const high = tier === "high";
   const iconSize = high ? "h-4 w-4" : "h-3.5 w-3.5";
+  const reasons = riskReasons(intent);
+  const reasonText = reasons.join(", ");
+  // Severity tint: the tier color fading out to the right (hex + 8% alpha).
+  const tint = tierColor ? { backgroundImage: `linear-gradient(90deg, ${tierColor}14, transparent 70%)` } : undefined;
 
   return (
     <div
+      // overflow-clip, not hidden: hidden would trap the sticky header below.
       className={cn(
-        "relative overflow-hidden rounded-md border border-border bg-card animate-fade-in",
+        "relative overflow-clip rounded-md border border-border bg-card animate-fade-in",
         intent.kind === "unrelated" && "opacity-70",
       )}
-      // Severity tint: the tier color fading out to the right (hex + 8% alpha).
-      style={tierColor ? { backgroundImage: `linear-gradient(90deg, ${tierColor}14, transparent 70%)` } : undefined}
+      style={tint}
     >
       <span
-        className={cn("absolute inset-y-0 left-0 w-0.5", !tierColor && "bg-border")}
+        className={cn("absolute inset-y-0 left-0 z-20 w-0.5", !tierColor && "bg-border")}
         style={tierColor ? { backgroundColor: tierColor } : undefined}
       />
-      <button onClick={toggleCard} className="block w-full px-3 py-2 text-left">
-        <div className={cn("flex items-center gap-1.5", high ? "text-sm" : "text-xs")}>
-          {open ? (
-            <ChevronDown className="h-3 w-3 shrink-0 text-dim" />
-          ) : (
-            <ChevronRight className="h-3 w-3 shrink-0 text-dim" />
-          )}
-          {TierIcon && tier && (
-            <span title={TIER_META[tier].label} className="shrink-0" style={{ color: tierColor }}>
-              <TierIcon className={iconSize} />
-            </span>
-          )}
-          {typeMeta && TypeIcon && (
-            <span className="inline-flex shrink-0 items-center gap-1 font-medium" style={{ color: typeMeta.color }}>
-              <TypeIcon className={iconSize} />
-              {typeMeta.label}:
-            </span>
-          )}
-          <span className={cn("font-semibold text-foreground", !open && "truncate")}>{intent.title}</span>
-          {intent.kind !== "sub" && (
-            <span className="shrink-0 text-caption font-semibold text-faint">{intent.kind}</span>
-          )}
-        </div>
-        {intent.risk?.why && (
-          <p className="mt-1.5 pl-[18px] text-label leading-relaxed" style={{ color: tierColor }}>
-            {intent.risk.why}
-          </p>
-        )}
-      </button>
-
-      {open && (
-        <div className="px-3 pb-2 pl-[30px]">
-          {intent.risk?.oneWay && (
-            <Chip className="text-red-400 border-red-400/35">
-              <DoorClosed className="h-3 w-3" />
-              one-way door
-            </Chip>
-          )}
-          {intent.why && (
-            <p className={cn("text-xs leading-relaxed text-muted-foreground", intent.risk?.oneWay && "mt-2")}>
-              {intent.why}
+      {/* Title and why stay pinned while you scroll through the files below. */}
+      <div className="sticky top-0 z-10 bg-card" style={tint}>
+        <button onClick={toggleCard} className="block w-full px-3 py-2 text-left">
+          <div className={cn("flex items-center gap-1.5", high ? "text-sm" : "text-xs")}>
+            {open ? (
+              <ChevronDown className="h-3 w-3 shrink-0 text-dim" />
+            ) : (
+              <ChevronRight className="h-3 w-3 shrink-0 text-dim" />
+            )}
+            {TierIcon && tier && (
+              <span title={TIER_META[tier].label} className="shrink-0" style={{ color: tierColor }}>
+                <TierIcon className={iconSize} />
+              </span>
+            )}
+            {typeMeta && TypeIcon && (
+              <span className="inline-flex shrink-0 items-center gap-1 font-medium" style={{ color: typeMeta.color }}>
+                <TypeIcon className={iconSize} />
+                {typeMeta.label}:
+              </span>
+            )}
+            <span className={cn("font-semibold text-foreground", !open && "truncate")}>{intent.title}</span>
+            {intent.kind !== "sub" && (
+              <span className="shrink-0 text-caption font-semibold text-faint">{intent.kind}</span>
+            )}
+          </div>
+          {(reasons.length > 0 || intent.risk?.why) && (
+            <p className="mt-1.5 pl-[18px] text-label leading-relaxed" style={{ color: tierColor }}>
+              {reasons.length > 0 && (
+                <span className="font-semibold">
+                  {reasonText.charAt(0).toUpperCase() + reasonText.slice(1)}
+                  {intent.risk?.why && ": "}
+                </span>
+              )}
+              {intent.risk?.why}
             </p>
           )}
-          {files.length > 0 && (
-            <div className="mt-1.5">
-              <SectionHeader
-                label="Changes"
-                count={files.length}
-                isOpen={filesOpen}
-                onToggle={toggleFiles}
-                stats={<DiffStat files={files} />}
-                className="px-0 py-1"
-              />
-              {filesOpen && (
-                <Files files={files} storageKey={storageKey} selectedFilePath={selectedFilePath} onFileClick={onFileClick} />
-              )}
-            </div>
+        </button>
+        {open && (intent.risk?.oneWay || intent.why) && (
+          <div className="px-3 pb-1.5 pl-[30px]">
+            {intent.risk?.oneWay && (
+              <Chip className="text-red-400 border-red-400/35">
+                <DoorClosed className="h-3 w-3" />
+                one-way door
+              </Chip>
+            )}
+            {intent.why && (
+              <p className={cn("text-xs leading-relaxed text-muted-foreground", intent.risk?.oneWay && "mt-2")}>
+                {intent.why}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {open && files.length > 0 && (
+        <div className="px-3 pb-2 pl-[30px]">
+          <SectionHeader
+            label="Changes"
+            count={files.length}
+            isOpen={filesOpen}
+            onToggle={toggleFiles}
+            stats={<DiffStat files={files} />}
+            className="px-0 py-1"
+          />
+          {filesOpen && (
+            <Files files={files} storageKey={storageKey} selectedFilePath={selectedFilePath} onFileClick={onFileClick} />
           )}
         </div>
       )}
@@ -317,36 +382,5 @@ function Files({
         />
       ))}
     </div>
-  );
-}
-
-/** Per-repo opt-in for sharing brief notes with origin. Off by default:
- *  briefs can hold reasoning that shouldn't leave this machine. */
-function SyncToggle() {
-  const repoPath = useRepoStore((s) => s.repoPath);
-  const [enabled, setEnabled] = useState(false);
-
-  useEffect(() => {
-    getBriefSync().then(setEnabled).catch(() => {});
-  }, [repoPath]);
-
-  const toggle = async (on: boolean) => {
-    setEnabled(on);
-    try {
-      await setBriefSync(on);
-    } catch (e) {
-      setEnabled(!on);
-      showError("Sync Change Briefs", e);
-      return;
-    }
-    if (on) await syncBriefs(true).catch((e) => showError("Sync Change Briefs", e));
-  };
-
-  return (
-    <label className="flex cursor-pointer select-none items-center gap-2 px-1 pt-1 text-label text-faint">
-      <Checkbox checked={enabled} onCheckedChange={(v) => toggle(v === true)} />
-      Sync briefs with origin
-      <span className="ml-auto">{enabled ? "on push, fetch & pull" : "local only"}</span>
-    </label>
   );
 }

@@ -65,6 +65,13 @@ pub struct Intent {
     /// draft, and absent from stored notes (drafts are written as read).
     #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub tier: Option<Tier>,
+    /// Derived with `tier`: a project rule raised it above the answers.
+    #[serde(
+        default,
+        skip_deserializing,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub pinned: bool,
 }
 
 /// The agent's answers to the risk questions in the skill.
@@ -227,6 +234,7 @@ impl Brief {
     fn with_tiers(mut self, rules: &RiskRules) -> Self {
         for i in &mut self.intents {
             i.tier = rules.intent_tier(i);
+            i.pinned = i.tier > i.risk.as_ref().map(Risk::tier);
         }
         self
     }
@@ -321,6 +329,20 @@ fn read_wip_files(dir: &Path) -> (Vec<(PathBuf, Brief)>, Vec<String>) {
                 out.push((path, b.normalized()));
             }
             Err(e) => errors.push(format!("{name}: {e}")),
+        }
+    }
+    // The inferred draft was narrowed when written, but an agent may have
+    // claimed some of its files since. Agents win.
+    if let Some(pos) = out.iter().position(|(_, b)| b.session == INFERRED) {
+        let (path, inferred) = out.remove(pos);
+        let claimed: HashSet<&String> = out.iter().flat_map(|(_, b)| b.files()).collect();
+        let free: HashSet<String> = inferred
+            .files()
+            .filter(|f| !claimed.contains(f))
+            .cloned()
+            .collect();
+        if let Some(b) = inferred.restricted_to(&free) {
+            out.insert(pos, (path, b));
         }
     }
     (out, errors)
@@ -892,6 +914,7 @@ mod tests {
             commit_type: String::new(),
             risk,
             tier: None,
+            pinned: false,
         };
         let data = Some(Risk {
             data: true,
@@ -952,6 +975,11 @@ mod tests {
         let inferred = read.briefs.iter().find(|b| b.inferred).unwrap();
         assert_eq!(inferred.intents[0].files, ["b.rs"]);
         assert_eq!(inferred.intents[0].tier, Some(Tier::High));
+
+        // The agent claims b.rs afterwards: the stale inferred draft gives way.
+        fs::write(wip.join("agent.json"), draft("agent", &[&["a.rs", "b.rs"]])).unwrap();
+        assert_eq!(read_wip(path).unwrap().briefs.len(), 1);
+        fs::write(wip.join("agent.json"), draft("agent", &[&["a.rs"]])).unwrap();
 
         // Nothing unclaimed: the inferred draft goes away.
         write_inferred(path, &both, &[]).unwrap();
