@@ -109,6 +109,34 @@ export interface FileDiff {
   total_lines: number;
 }
 
+/** One object-level change in a Unity YAML asset (see `git/unity_yaml.rs`). */
+export interface UnityObjectChange {
+  /** Hierarchy path of the owning GameObject / prefab instance */
+  path: string;
+  /** `GameObject`, `Transform`, script name, `Prefab <name>`, ... */
+  type_name: string;
+  /** Unity class (`Transform`, `MonoBehaviour`, `PrefabInstance`, ...), for the icon */
+  class_name: string;
+  kind: "added" | "removed" | "modified";
+  props: UnityPropChange[];
+}
+
+export interface UnityPropChange {
+  /** Raw serialized path, e.g. `m_SavedProperties.m_Floats._Glossiness` */
+  key: string;
+  /** Inspector-style name (shader display name or nicified key) */
+  label: string;
+  /** Inspector-like group within the object; empty for none */
+  section: string;
+  /** Known from the shader; vectors/colors are otherwise inferred from the value */
+  value_type: "float" | "range" | "toggle" | "color" | "vector2" | "vector3" | "vector4" | "texture" | null;
+  range: [number, number] | null;
+  /** False for unchanged context, shown when the object is expanded */
+  changed: boolean;
+  old: string | null;
+  new: string | null;
+}
+
 export interface DiffHunk {
   header: string;
   old_start: number;

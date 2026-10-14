@@ -1,6 +1,7 @@
 import { useRepoStore } from "@/stores/repo-store";
-import { ArrowLeft, Columns2, Rows3, WrapText, UnfoldVertical, FoldVertical } from "lucide-react";
+import { ArrowLeft, Columns2, Rows3, WrapText, UnfoldVertical, FoldVertical, ListTree } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
+import { isUnityYamlFile } from "@/lib/utils";
 
 interface DiffToolbarProps {
   onExpandAll?: () => void;
@@ -17,6 +18,11 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
   const setDiffViewMode = useRepoStore((s) => s.setDiffViewMode);
   const setDiffWrapLines = useRepoStore((s) => s.setDiffWrapLines);
   const setDiffExpandContext = useRepoStore((s) => s.setDiffExpandContext);
+  const diffUnitySemantic = useRepoStore((s) => s.diffUnitySemantic);
+  const setDiffUnitySemantic = useRepoStore((s) => s.setDiffUnitySemantic);
+  const isUnity = isUnityYamlFile(filePath);
+  // Line wrapping doesn't apply to the object-level view.
+  const semantic = isUnity && diffUnitySemantic;
 
   return (
     <div className="flex items-center gap-2 py-1 border-b border-border bg-background shrink-0">
@@ -34,6 +40,24 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
         </span>
       )}
       {(onBack || filePath) && <span className="w-px h-4 bg-border shrink-0" />}
+
+      {/* Unity object-level diff toggle */}
+      {isUnity && (
+        <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+          <button
+            onClick={() => setDiffUnitySemantic(!diffUnitySemantic)}
+            title={diffUnitySemantic ? "Show raw YAML diff" : "Show changes per Unity object"}
+            className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
+              diffUnitySemantic
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <ListTree className="w-3.5 h-3.5" />
+            <span>Semantic</span>
+          </button>
+        </div>
+      )}
 
       {/* View mode toggle */}
       <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
@@ -64,20 +88,22 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
       </div>
 
       {/* Wrap lines toggle */}
-      <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
-        <button
-          onClick={() => setDiffWrapLines(!diffWrapLines)}
-          title={diffWrapLines ? "Disable line wrapping" : "Enable line wrapping"}
-          className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
-            diffWrapLines
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <WrapText className="w-3.5 h-3.5" />
-          <span>Wrap</span>
-        </button>
-      </div>
+      {!semantic && (
+        <div className="flex items-center rounded-md bg-secondary p-0.5 shrink-0">
+          <button
+            onClick={() => setDiffWrapLines(!diffWrapLines)}
+            title={diffWrapLines ? "Disable line wrapping" : "Enable line wrapping"}
+            className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors ${
+              diffWrapLines
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <WrapText className="w-3.5 h-3.5" />
+            <span>Wrap</span>
+          </button>
+        </div>
+      )}
 
       {/* Expand/Collapse all context toggle */}
       {onExpandAll && onCollapseAll && (

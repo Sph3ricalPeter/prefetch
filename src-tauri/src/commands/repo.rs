@@ -11,6 +11,7 @@ use crate::git::{
         self, BranchInfo, ConflictState, FileDiff, FileStatus, GitIdentity, GraphData,
         RebaseProgress, RewordImpact, StashInfo, TagInfo, UndoAction,
     },
+    unity_yaml,
 };
 use crate::watcher::RepoWatcher;
 use crate::AppState;
@@ -259,6 +260,21 @@ pub async fn get_binary_blob_base64(
     let path = repo_path(&state)?;
     validate_repo_path(&path, &file_path)?;
     offload(move || repository::get_binary_blob_base64(&path, &file_path, rev.as_deref())).await
+}
+
+#[tauri::command]
+pub async fn get_unity_diff(
+    file_path: String,
+    old_rev: Option<String>,
+    new_rev: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<unity_yaml::ObjectChange>, AppError> {
+    let path = repo_path(&state)?;
+    validate_repo_path(&path, &file_path)?;
+    offload(move || {
+        repository::get_unity_diff(&path, &file_path, old_rev.as_deref(), new_rev.as_deref())
+    })
+    .await
 }
 
 #[instrument(skip(state))]

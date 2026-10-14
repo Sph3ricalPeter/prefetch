@@ -455,6 +455,8 @@ interface RepoState {
   imageDiffViewMode: "unified" | "side-by-side" | "swipe";
   /** Whether long lines wrap in the diff viewer */
   diffWrapLines: boolean;
+  /** Whether Unity YAML assets open in the object-level (semantic) diff */
+  diffUnitySemantic: boolean;
   /** Whether unchanged context between hunks starts expanded */
   diffExpandContext: boolean;
   /** Whether the base (merge ancestor) section of conflict regions starts expanded */
@@ -579,6 +581,7 @@ interface RepoState {
   setDiffViewMode: (mode: "unified" | "side-by-side") => void;
   setImageDiffViewMode: (mode: "unified" | "side-by-side" | "swipe") => void;
   setDiffWrapLines: (on: boolean) => void;
+  setDiffUnitySemantic: (on: boolean) => void;
   setDiffExpandContext: (on: boolean) => void;
   setConflictShowBase: (on: boolean) => void;
   loadDiffPreferences: () => Promise<void>;
@@ -787,6 +790,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   diffViewMode: "unified",
   imageDiffViewMode: "side-by-side",
   diffWrapLines: true,
+  diffUnitySemantic: true,
   diffExpandContext: false,
   conflictShowBase: false,
   graphColumnVisibility: { sha: false, author: false, date: false },
@@ -2493,6 +2497,11 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     setUiState("diff_wrap_lines", on ? "true" : "false").catch(() => {});
   },
 
+  setDiffUnitySemantic: (on) => {
+    set({ diffUnitySemantic: on });
+    setUiState("diff_unity_semantic", on ? "true" : "false").catch(() => {});
+  },
+
   setDiffExpandContext: (on) => {
     set({ diffExpandContext: on });
     setUiState("diff_expand_context", on ? "true" : "false").catch(() => {});
@@ -2505,12 +2514,13 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
 
   loadDiffPreferences: async () => {
     try {
-      const [viewMode, imageViewMode, wrapLines, expandContext, showBase] = await Promise.all([
+      const [viewMode, imageViewMode, wrapLines, expandContext, showBase, unitySemantic] = await Promise.all([
         getUiState("diff_view_mode"),
         getUiState("image_diff_view_mode"),
         getUiState("diff_wrap_lines"),
         getUiState("diff_expand_context"),
         getUiState("conflict_show_base"),
+        getUiState("diff_unity_semantic"),
       ]);
       const update: Partial<RepoState> = {};
       if (viewMode === "unified" || viewMode === "side-by-side") {
@@ -2527,6 +2537,9 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       }
       if (showBase === "true" || showBase === "false") {
         update.conflictShowBase = showBase === "true";
+      }
+      if (unitySemantic === "true" || unitySemantic === "false") {
+        update.diffUnitySemantic = unitySemantic === "true";
       }
       if (Object.keys(update).length > 0) set(update);
     } catch {

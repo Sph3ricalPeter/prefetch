@@ -4,7 +4,9 @@ import { DiffViewerBody } from "@/components/staging/diff-viewer-body";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { useExpandableContext, type DiffSource } from "@/hooks/use-expandable-context";
 import { ImageDiffViewer } from "@/components/staging/image-diff-viewer";
-import { isImageFile } from "@/lib/utils";
+import { UnityDiffViewer } from "@/components/staging/unity-diff-viewer";
+import { isImageFile, isUnityYamlFile } from "@/lib/utils";
+import { useRepoStore } from "@/stores/repo-store";
 import { isHeavyDiff } from "@/lib/diff-size";
 
 interface DiffViewerProps {
@@ -38,12 +40,26 @@ export function DiffViewer({ diff, mode = "readonly", source = {}, staged = fals
   // between files, so a bare flag would carry the opt-in to the next file.
   const [loadHeavyPath, setLoadHeavyPath] = useState<string | null>(null);
   const heavy = useMemo(() => isHeavyDiff(diff), [diff]);
+  const unitySemantic = useRepoStore((s) => s.diffUnitySemantic);
 
   if (diff.is_binary) {
     if (isImageFile(resolvedPath)) {
       return <ImageDiffViewer filePath={resolvedPath} source={source} staged={staged} onBack={onBack} />;
     }
     return <EmptyState message="Binary file — cannot display diff" filePath={resolvedPath} onBack={onBack} />;
+  }
+
+  // Ahead of the size guards: the object view stays small for huge assets.
+  if (unitySemantic && isUnityYamlFile(resolvedPath)) {
+    return (
+      <UnityDiffViewer
+        filePath={resolvedPath}
+        source={source}
+        staged={staged}
+        refreshKey={diff.hunks}
+        onBack={onBack}
+      />
+    );
   }
 
   if (diff.is_truncated && diff.hunks.length === 0) {

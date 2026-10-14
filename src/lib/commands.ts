@@ -18,6 +18,7 @@ import type {
   StashInfo,
   TagInfo,
   UndoAction,
+  UnityObjectChange,
   WorktreeInfo,
 } from "@/types/git";
 import type { ActiveProfileConfig } from "@/types/profile";
@@ -228,6 +229,15 @@ export async function getBinaryBlobBase64(
   rev: string | null,
 ): Promise<string | null> {
   return tracedInvoke<string | null>("get_binary_blob_base64", { filePath, rev });
+}
+
+/** Object-level diff of a Unity YAML asset; revs follow `getBinaryBlobBase64`. */
+export async function getUnityDiff(
+  filePath: string,
+  oldRev: string | null,
+  newRev: string | null,
+): Promise<UnityObjectChange[]> {
+  return tracedInvoke<UnityObjectChange[]>("get_unity_diff", { filePath, oldRev, newRev });
 }
 
 export async function getTags(): Promise<TagInfo[]> {

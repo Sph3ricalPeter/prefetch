@@ -8,6 +8,7 @@ use crate::git::types::{
     self as types, BranchInfo, CommitInfo, ConflictState, DiffHunk, DiffLine, FileDiff, FileStatus,
     GraphData, RebaseProgress, RewordImpact, StashInfo, TagInfo, UndoAction,
 };
+use crate::git::unity_yaml;
 use git2::{BranchType, Repository, Sort};
 use std::collections::HashMap;
 use std::path::Path;
@@ -2117,28 +2118,48 @@ pub fn get_binary_blob_base64(
 ) -> Result<Option<String>, AppError> {
     use base64::Engine;
 
-    let raw = match rev {
-        None => {
-            let abs = Path::new(repo_path).join(file_path);
-            match std::fs::read(&abs) {
-                Ok(bytes) => bytes,
-                Err(_) => return Ok(None),
-            }
-        }
+    Ok(read_file_bytes(repo_path, file_path, rev)
+        .map(|raw| base64::engine::general_purpose::STANDARD.encode(raw)))
+}
+
+/// Raw bytes of `file_path` at `rev` (same `rev` convention as
+/// [`get_binary_blob_base64`]); `None` when the file doesn't exist there.
+fn read_file_bytes(repo_path: &str, file_path: &str, rev: Option<&str>) -> Option<Vec<u8>> {
+    match rev {
+        None => std::fs::read(Path::new(repo_path).join(file_path)).ok(),
         Some(r) => {
             let spec = if r.is_empty() {
                 format!(":{file_path}")
             } else {
                 format!("{r}:{file_path}")
             };
-            match capture_bytes(repo_path, &["show", &spec], &[]) {
-                Ok(bytes) => bytes,
-                Err(_) => return Ok(None),
-            }
+            capture_bytes(repo_path, &["show", &spec], &[]).ok()
         }
-    };
+    }
+}
 
-    Ok(Some(base64::engine::general_purpose::STANDARD.encode(&raw)))
+/// Object-level diff of a Unity text asset between two revisions (same `rev`
+/// convention as [`get_binary_blob_base64`]). A missing side counts as empty,
+/// so added/deleted files list every object.
+pub fn get_unity_diff(
+    repo_path: &str,
+    file_path: &str,
+    old_rev: Option<&str>,
+    new_rev: Option<&str>,
+) -> Result<Vec<unity_yaml::ObjectChange>, AppError> {
+    let read = |rev| {
+        read_file_bytes(repo_path, file_path, rev)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default()
+    };
+    let (old, new) = (read(old_rev), read(new_rev));
+    if !unity_yaml::is_unity_yaml(&old) && !unity_yaml::is_unity_yaml(&new) {
+        return Err(AppError::Other(
+            "Not a Unity text-serialized asset (binary serialization or LFS pointer?)".into(),
+        ));
+    }
+    let assets = unity_yaml::AssetIndex::cached(Path::new(repo_path));
+    Ok(unity_yaml::diff(&old, &new, &assets))
 }
 
 /// Get the last undoable action from the reflog.

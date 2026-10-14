@@ -3,6 +3,7 @@ import { ArrowLeft, Columns2, Image as ImageIcon, Loader2, SwatchBook } from "lu
 import { IconButton } from "@/components/ui/icon-button";
 import { getBinaryBlobBase64 } from "@/lib/commands";
 import { useRepoStore } from "@/stores/repo-store";
+import { resolveDiffRevs } from "@/lib/utils";
 import type { DiffSource } from "@/hooks/use-expandable-context";
 
 interface ImageDiffViewerProps {
@@ -38,20 +39,6 @@ function fetchReducer(_state: FetchState, action: FetchAction): FetchState {
     case "done":
       return { loading: false, oldImg: action.oldImg, newImg: action.newImg };
   }
-}
-
-function resolveRevs(source: DiffSource, staged: boolean): { oldRev: string | null; newRev: string | null } {
-  if (source.commitId) {
-    return { oldRev: `${source.commitId}^`, newRev: source.commitId };
-  }
-  if (source.stashIndex != null) {
-    const ref = `stash@{${source.stashIndex}}`;
-    return { oldRev: `${ref}^`, newRev: ref };
-  }
-  if (staged) {
-    return { oldRev: "HEAD", newRev: "" };
-  }
-  return { oldRev: "", newRev: null };
 }
 
 function formatBytes(bytes: number): string {
@@ -210,7 +197,7 @@ export function ImageDiffViewer({ filePath, source, staged, onBack }: ImageDiffV
 
   useEffect(() => {
     let cancelled = false;
-    const { oldRev, newRev } = resolveRevs(
+    const { oldRev, newRev } = resolveDiffRevs(
       { commitId: sourceCommitId, stashIndex: sourceStashIndex },
       staged,
     );

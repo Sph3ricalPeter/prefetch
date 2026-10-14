@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { extendTailwindMerge } from "tailwind-merge";
+import type { DiffSource } from "@/hooks/use-expandable-context";
 
 // Register the project's custom font-size tokens (see index.css @theme) so
 // tailwind-merge classifies `text-caption` / `text-label` / `text-heading` as
@@ -52,4 +53,34 @@ export function isImageFile(filePath: string): boolean {
   const dot = filePath.lastIndexOf(".");
   if (dot === -1) return false;
   return IMAGE_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
+}
+
+/** Unity assets that are usually text-serialized YAML (semantic diff capable). */
+const UNITY_YAML_EXTENSIONS = new Set([
+  ".prefab", ".unity", ".asset", ".mat", ".controller", ".anim", ".overridecontroller",
+]);
+
+export function isUnityYamlFile(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return false;
+  return UNITY_YAML_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
+}
+
+/**
+ * Old/new revisions for blob reads of a diff, in the `rev` convention of
+ * `getBinaryBlobBase64`: `null` = working tree, `""` = index, else a git rev.
+ */
+export function resolveDiffRevs(source: DiffSource, staged: boolean): { oldRev: string | null; newRev: string | null } {
+  if (source.commitId) {
+    return { oldRev: `${source.commitId}^`, newRev: source.commitId };
+  }
+  if (source.stashIndex != null) {
+    const ref = `stash@{${source.stashIndex}}`;
+    return { oldRev: `${ref}^`, newRev: ref };
+  }
+  if (staged) {
+    return { oldRev: "HEAD", newRev: "" };
+  }
+  return { oldRev: "", newRev: null };
 }
