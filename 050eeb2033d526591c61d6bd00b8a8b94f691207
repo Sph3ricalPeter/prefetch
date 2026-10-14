@@ -1,0 +1,205 @@
+{
+  "intent": {
+    "title": "Show why changes exist, not just what changed",
+    "why": "The commit message generator only sees the diff, so it guesses intent. Agents now record their intent in a draft that Prefetch shows next to the working changes, feeds to the message generator, and stores on the commit as a git note."
+  },
+  "intents": [
+    {
+      "title": "Read drafts, attach them as notes on commit",
+      "why": "Drafts live in .git/prefetch/wip; on commit the ones touching committed files go to refs/notes/prefetch.",
+      "kind": "sub",
+      "files": [
+        "src-tauri/src/git/brief.rs",
+        "src-tauri/src/commands/brief.rs",
+        "src-tauri/src/git/mod.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/commands/repo.rs"
+      ],
+      "type": "feat",
+      "risk": {
+        "shared": true,
+        "contract": true,
+        "tested": true,
+        "why": "Note JSON shape is a format other clones and agents read."
+      }
+    },
+    {
+      "title": "Refresh when a draft changes",
+      "kind": "sub",
+      "files": [
+        "src-tauri/src/watcher.rs"
+      ],
+      "type": "feat"
+    },
+    {
+      "title": "Commit message from intent, with a why-body",
+      "why": "Staged drafts become prompt context; the body is only filled when intent exists.",
+      "kind": "sub",
+      "files": [
+        "src-tauri/src/git/ai.rs",
+        "src-tauri/src/commands/ai.rs",
+        "src/components/staging/commit-box.tsx"
+      ],
+      "type": "feat"
+    },
+    {
+      "title": "Brief | Files toggle in the right column",
+      "kind": "sub",
+      "files": [
+        "src/components/layout/brief-view.tsx",
+        "src/lib/brief.ts",
+        "src/components/layout/detail-panel.tsx",
+        "src/stores/repo-store.ts",
+        "src/lib/commands.ts",
+        "src/types/git.ts"
+      ],
+      "type": "feat"
+    },
+    {
+      "title": "Keep notes safe: survive amend/rebase, opt-in sync, visible errors",
+      "why": "Notes were lost on amend/rebase, never left the machine, and a failed attach was only logged. Now notes.rewriteRef is set on first note, sync with origin is a per-clone opt-in (prefetch.syncBriefs, off by default since briefs can be proprietary), and attach runs as its own command so failures toast.",
+      "kind": "sub",
+      "files": [
+        "src-tauri/src/git/brief.rs",
+        "src-tauri/src/commands/brief.rs",
+        "src-tauri/src/commands/repo.rs",
+        "src-tauri/src/lib.rs",
+        "src/lib/commands.ts",
+        "src/stores/repo-store.ts",
+        "src/components/layout/brief-view.tsx"
+      ],
+      "type": "fix",
+      "risk": {
+        "external": true,
+        "tested": true,
+        "oneWay": true,
+        "why": "Once synced, notes on origin can't be recalled from clones that fetched them."
+      }
+    },
+    {
+      "title": "Intent types, risk questions and tiers in the Brief view",
+      "why": "Agents answer fixed yes/no risk questions so tiers are consistent; Prefetch derives the tier, a committed .prefetch/risk.json can pin tiers by path, and the card is reordered by risk then fix > feat. The graph marks commits that have a brief.",
+      "kind": "sub",
+      "type": "feat",
+      "files": [
+        "src-tauri/src/git/brief.rs",
+        "src-tauri/src/commands/brief.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/Cargo.toml",
+        "src/types/git.ts",
+        "src/lib/brief.ts",
+        "src/lib/commands.ts",
+        "src/stores/repo-store.ts",
+        "src/components/layout/brief-view.tsx",
+        "src/components/layout/detail-panel.tsx",
+        "src/components/graph/commit-graph-canvas.tsx",
+        "docs/skills/prefetch-brief/SKILL.md",
+        "src/stores/tree-collapse-store.ts",
+        "src/components/ui/section-header.tsx"
+      ],
+      "risk": {
+        "shared": true,
+        "contract": true,
+        "tested": true,
+        "why": "Draft format gains fields agents must fill; old drafts still parse."
+      }
+    },
+    {
+      "title": "Generate or regenerate a brief with Claude",
+      "why": "Repos without agent drafts, and old briefs lacking type/risk, had no way to get a brief. A topbar sparkle runs claude -p over the working changes or a commit, using the skill as the format spec and the old brief as input, and stores the result marked inferred.",
+      "kind": "sub",
+      "type": "feat",
+      "files": [
+        "src-tauri/src/git/ai.rs",
+        "src-tauri/src/commands/ai.rs",
+        "src/lib/action-icons.ts"
+      ],
+      "risk": {
+        "shared": true,
+        "data": true,
+        "tested": true,
+        "why": "Regenerating replaces a commit's note; on the working tree it only rewrites the inferred draft."
+      }
+    },
+    {
+      "title": "Suggest writes the commit message from the brief",
+      "why": "Brief and message covered the same ground in two separate calls. Suggest now writes from the brief when the staged files are covered, and otherwise writes the brief and the message in one call, so every commit made with it gets a brief.",
+      "kind": "sub",
+      "type": "feat",
+      "files": [
+        "src-tauri/src/git/ai.rs",
+        "src-tauri/src/git/brief.rs",
+        "src/components/staging/commit-box.tsx"
+      ],
+      "risk": {
+        "shared": true,
+        "tested": true,
+        "why": "Suggest writes an inferred draft when the staged files have no brief."
+      }
+    },
+    {
+      "title": "Sessions sharing a working tree keep their own drafts",
+      "why": "Several agents can work in one tree. Generation and Suggest used to fold every draft into one inferred brief, and the hook accepted any session's draft as fresh. Now inference only covers files no agent draft claims, the hook tracks each session's own draft, and the skill tells agents to read but never touch others' drafts.",
+      "kind": "sub",
+      "type": "fix",
+      "files": [
+        "src-tauri/src/git/ai.rs",
+        "src-tauri/src/git/brief.rs",
+        "docs/skills/prefetch-brief/hook.js",
+        "docs/skills/prefetch-brief/SKILL.md"
+      ],
+      "risk": {
+        "shared": true,
+        "tested": true,
+        "why": "Changes which drafts Prefetch writes and when the hook asks agents to update."
+      }
+    },
+    {
+      "title": "Commit heat in the graph",
+      "why": "To see at a glance which commits deserve attention: each commit with a brief gets a score (high 8, mid 3, low 0, one-way +4), a row tinted in its heat color with a solid left edge (like the intent cards), the score before the SHA, ticks beside the scrollbar, and the WIP row shows the drafts' heat dimmed.",
+      "kind": "sub",
+      "type": "feat",
+      "files": [
+        "src-tauri/src/git/brief.rs",
+        "src-tauri/src/commands/brief.rs",
+        "src/lib/brief.ts",
+        "src/types/git.ts",
+        "src/lib/commands.ts",
+        "src/stores/repo-store.ts",
+        "src/components/graph/commit-graph-canvas.tsx"
+      ],
+      "risk": {
+        "shared": true,
+        "tested": false,
+        "why": "Draws in every graph row; only checked visually on the WIP row."
+      }
+    },
+    {
+      "title": "Fix review findings: note data loss, URL opening, edge cases",
+      "why": "Review found that regenerating a commit wiped agent briefs, an amend replaced the earlier note, drafts could be deleted by session name from JSON, and brief URLs could launch local files. Regenerate now keeps agent briefs, attach merges into the existing note and only deletes drafts it used, open_url only allows http(s), and long prompts go on stdin.",
+      "kind": "sub",
+      "type": "fix",
+      "files": [
+        "src-tauri/src/git/brief.rs",
+        "src-tauri/src/git/ai.rs",
+        "src-tauri/src/commands/forge.rs",
+        "src/components/layout/brief-view.tsx",
+        "src/components/graph/commit-graph-canvas.tsx"
+      ],
+      "risk": {
+        "shared": true,
+        "data": true,
+        "tested": true,
+        "why": "Changes how notes and drafts are written and deleted."
+      }
+    }
+  ],
+  "issues": [
+    {
+      "id": "#84",
+      "title": "Change Brief P1",
+      "url": "https://github.com/Sph3ricalPeter/prefetch/issues/84"
+    }
+  ]
+}
