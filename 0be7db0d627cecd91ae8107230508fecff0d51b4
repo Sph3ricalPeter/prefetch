@@ -1,0 +1,15 @@
+{
+  "intent": {
+    "title": "Add release skill config for Prefetch",
+    "why": "The user-level release skill needs .claude/release.md to know where the version lives, how dev→main→tag ships, and how to verify the GitHub Release and updater."
+  },
+  "intents": [
+    {
+      "title": "Write .claude/release.md from repo facts",
+      "kind": "sub",
+      "type": "chore",
+      "files": [".claude/release.md"],
+      "risk": {}
+    }
+  ]
+}
