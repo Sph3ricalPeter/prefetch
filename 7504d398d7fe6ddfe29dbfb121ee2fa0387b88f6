@@ -1,0 +1,35 @@
+{
+  "intent": {
+    "title": "Close gaps the pre-release review found in the risk fixes",
+    "why": "The review found that hiding a shared file could make the working view look safer than the commit, that the UI still explained tiers with reasons the new rule ignores, and that the skill's guidance example contradicted the new data definition."
+  },
+  "intents": [
+    {
+      "title": "A shared file stays under its riskiest intent",
+      "why": "Keeping it under the newest draft could hide a high-risk or one-way intent until after the commit.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["change brief", "risk"],
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": { "shared": true, "tested": true }
+    },
+    {
+      "title": "Risk reasons match the tier rule",
+      "why": "Inferred intents no longer list 'not tested' as a reason, since it doesn't raise their tier, and the data label drops 'or config'.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["change brief", "risk"],
+      "files": ["src/lib/brief.ts", "src/components/layout/brief-view.tsx"],
+      "risk": {}
+    },
+    {
+      "title": "Guidance steps and summary prompt agree with the new rules",
+      "why": "The skill's guidance example called repo outputs data, and an inferred summary whose intents all joined another brief was left describing nothing.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["summarize", "risk"],
+      "files": ["docs/skills/prefetch-brief/SKILL.md", "src-tauri/src/git/ai.rs"],
+      "risk": { "shared": true, "why": "The spec is also the Summarize prompt." }
+    }
+  ]
+}
