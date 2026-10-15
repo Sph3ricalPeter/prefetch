@@ -1,0 +1,17 @@
+{
+  "intent": {
+    "title": "Keep a brief when its tags are malformed",
+    "why": "Release review found that one badly written tag value from an agent (a lone string, null, or a number) made the whole brief unreadable, so its intent was lost on commit."
+  },
+  "intents": [
+    {
+      "title": "Read tags leniently",
+      "why": "A lone string becomes a one-tag list, null becomes no tags, and non-text entries are dropped, instead of rejecting the brief.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["briefs"],
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": { "shared": true, "contract": true, "tested": true, "why": "Changes how every brief draft and note is parsed." }
+    }
+  ]
+}
