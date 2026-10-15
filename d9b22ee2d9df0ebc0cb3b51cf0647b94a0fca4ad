@@ -1,0 +1,26 @@
+{
+  "intent": {
+    "title": "Stop flagging ordinary content changes as high risk",
+    "why": "In a game project, Summarize marked every scene, prop and sound tweak as high risk: it read repo content files as stored data, and an inferred brief can never claim tests, so any data answer became high."
+  },
+  "intents": [
+    {
+      "title": "Inferred lead intent leaves out what joined an agent brief",
+      "why": "After inferred intents moved into an agent's card, the inferred card's summary still described them, so the same work read as listed twice.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": [
+        "summarize",
+        "change brief"
+      ],
+      "files": [
+        "src-tauri/src/git/ai.rs"
+      ],
+      "risk": {
+        "shared": true,
+        "why": "Prompt wording for every Summarize call."
+      }
+    }
+  ],
+  "session": "benign-high-risk"
+}
