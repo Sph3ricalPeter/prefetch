@@ -60,7 +60,11 @@ pub struct Intent {
     #[serde(default, rename = "type", skip_serializing_if = "String::is_empty")]
     pub commit_type: String,
     /// 1-3 short project-specific categories the agent picks; capped on read.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_tags",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk: Option<Risk>,
@@ -203,6 +207,19 @@ fn v1() -> u32 {
 
 fn sub() -> String {
     "sub".into()
+}
+
+/// Tags as an agent might write them: a list, a lone string, or null. Bad
+/// entries are dropped so they can't reject the whole draft.
+fn lenient_tags<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => vec![s],
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    })
 }
 
 /// A note holds a list of briefs; a single object is accepted too, so an agent
@@ -956,6 +973,20 @@ mod tests {
         assert!(b.inferred);
         assert_eq!(b.intents[0].files, ["src/a.rs"]);
         assert_eq!(b.intents[0].tags, ["pricing", "de", "tiers"]);
+        for (tags, want) in [
+            (r#""Auth""#, vec!["auth"]),
+            ("null", vec![]),
+            (r#"["a",1]"#, vec!["a"]),
+        ] {
+            let raw = format!(
+                r#"{{"intent":{{"title":"t"}},"intents":[{{"title":"a","tags":{tags}}}]}}"#
+            );
+            assert_eq!(
+                parse_generated(&raw).unwrap().intents[0].tags,
+                want,
+                "{tags}"
+            );
+        }
         assert_eq!(b.intents[0].commit_type, "fix");
         assert!(parse_generated("not json").is_err());
         let (with_msg, msg) = parse_generated_with_message(
