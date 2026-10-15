@@ -391,20 +391,48 @@ fn read_wip_files(dir: &Path) -> (Vec<(PathBuf, Brief)>, Vec<String>) {
     (out, errors)
 }
 
-/// All agent drafts for the working tree, unfiltered.
+/// All drafts for the working tree, for the Brief view.
 pub fn read_wip(path: &str) -> Result<WipBriefs, AppError> {
     let repo = Repository::open(path)?;
-    let mut wip = read_wip_dir(&wip_dir(&repo));
+    let (mut drafts, mut errors) = read_wip_files(&wip_dir(&repo));
+    show_shared_once(&mut drafts);
     let rules = RiskRules::load(&repo).unwrap_or_else(|e| {
-        wip.errors.push(e);
+        errors.push(e);
         RiskRules::default()
     });
-    wip.briefs = wip
-        .briefs
-        .into_iter()
-        .map(|b| b.with_tiers(&rules))
-        .collect();
-    Ok(wip)
+    Ok(WipBriefs {
+        briefs: drafts
+            .into_iter()
+            .map(|(_, b)| b.with_tiers(&rules))
+            .collect(),
+        errors,
+    })
+}
+
+/// A file several drafts list (sessions that both edited it) shows once,
+/// under the draft written last; the others drop it, and any intent it
+/// leaves empty. View only: commit notes still record every session's claim.
+fn show_shared_once(drafts: &mut [(PathBuf, Brief)]) {
+    let mut owner: HashMap<String, (Option<std::time::SystemTime>, usize)> = HashMap::new();
+    for (n, (path, brief)) in drafts.iter().enumerate() {
+        let written = fs::metadata(path).and_then(|m| m.modified()).ok();
+        for f in brief.files() {
+            let e = owner.entry(f.clone()).or_insert((written, n));
+            if written > e.0 {
+                *e = (written, n);
+            }
+        }
+    }
+    for (n, (_, brief)) in drafts.iter_mut().enumerate() {
+        brief.intents.retain_mut(|i| {
+            if i.files.is_empty() {
+                return true;
+            }
+            i.files
+                .retain(|f| owner.get(f).is_none_or(|&(_, o)| o == n));
+            !i.files.is_empty()
+        });
+    }
 }
 
 /// Drafts narrowed to the staged files: the context for a commit message.
@@ -1082,6 +1110,36 @@ mod tests {
         // Nothing unclaimed: the inferred draft goes away.
         write_inferred(path, &both, &[]).unwrap();
         assert_eq!(read_wip(path).unwrap().briefs.len(), 1);
+    }
+
+    #[test]
+    fn shared_file_shows_under_newest_draft_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q"]);
+        let wip = dir.join(".git/prefetch/wip");
+        fs::create_dir_all(&wip).unwrap();
+        fs::write(
+            wip.join("old.json"),
+            draft("old", &[&["a.rs"], &["s.json"]]),
+        )
+        .unwrap();
+        fs::write(wip.join("new.json"), draft("new", &[&["s.json", "b.rs"]])).unwrap();
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(wip.join("old.json"))
+            .and_then(|f| f.set_modified(past))
+            .unwrap();
+
+        let briefs = read_wip(dir.to_str().unwrap()).unwrap().briefs;
+        let files = |s: &str| -> Vec<Vec<String>> {
+            let b = briefs.iter().find(|b| b.session == s).unwrap();
+            b.intents.iter().map(|i| i.files.clone()).collect()
+        };
+        // The old draft's intent for s.json had nothing else, so it's gone.
+        assert_eq!(files("old"), [["a.rs"]]);
+        assert_eq!(files("new"), [["s.json", "b.rs"]]);
     }
 
     #[test]
