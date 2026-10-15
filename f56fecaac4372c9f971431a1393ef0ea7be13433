@@ -1,0 +1,38 @@
+{
+  "intent": {
+    "title": "Tag each change with project categories",
+    "why": "Brief titles and summaries alone were hard to scan; the user wanted 1 to 3 project-specific tags under each change's header to see at a glance what area it touches."
+  },
+  "intents": [
+    {
+      "title": "Store and clean up change tags",
+      "why": "Briefs now carry an optional tag list per change; tags are trimmed, lowercased, de-duplicated and capped at three when read.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["briefs"],
+      "files": ["src-tauri/src/git/brief.rs", "src/types/git.ts"],
+      "risk": {
+        "shared": true, "contract": true, "tested": true,
+        "why": "Adds an optional field to the brief format; older briefs without it still read fine."
+      }
+    },
+    {
+      "title": "Show tags as badges under each change's title",
+      "why": "Filled badges with a small tag icon sit right under the title row of each change card, sized per the app's badge rules.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["briefs", "ui"],
+      "files": ["src/components/layout/brief-view.tsx"],
+      "risk": {}
+    },
+    {
+      "title": "Ask agents to pick tags",
+      "why": "The brief spec tells agents (and Prefetch's own Summarize) to add 1 to 3 tags in the project's own words, reusing tags other drafts already use.",
+      "kind": "sub",
+      "type": "docs",
+      "tags": ["briefs", "agent skill"],
+      "files": ["docs/skills/prefetch-brief/SKILL.md"],
+      "risk": { "contract": true, "tested": false, "why": "Changes what every agent writes into briefs." }
+    }
+  ]
+}
