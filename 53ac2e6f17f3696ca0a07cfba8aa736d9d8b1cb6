@@ -1,0 +1,26 @@
+{
+  "intent": {
+    "title": "Fold inferred changes into the agent's intent and tune risk per project",
+    "why": "Summarize showed a file the agent forgot to list as a separate high-risk intent, although it was part of the agent's work, and the risk questions had no project-specific meaning, so a record file nobody can test always came out high."
+  },
+  "intents": [
+    {
+      "title": "Agents write the project's risk guidance from its docs",
+      "why": "When a repo has no risk guidance file, the agent creates one from the project's instructions and docs, so the user can tune what counts as data or critical per project.",
+      "kind": "sub",
+      "type": "docs",
+      "tags": [
+        "change brief",
+        "risk"
+      ],
+      "files": [
+        "docs/skills/prefetch-brief/SKILL.md"
+      ],
+      "risk": {
+        "shared": true,
+        "why": "The skill text is also the spec Summarize sends to the model."
+      }
+    }
+  ],
+  "session": "inferred-joins-risk-guidance"
+}
