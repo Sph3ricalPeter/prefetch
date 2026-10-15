@@ -95,7 +95,7 @@ pub struct Intent {
 pub struct Risk {
     /// Changed code is used outside this change.
     pub shared: bool,
-    /// Touches persisted data, schema, migrations or prod config.
+    /// Touches state outside the repo: databases, migrations, user files, prod config.
     pub data: bool,
     /// Has side effects outside the repo (network writes, emails, payments).
     pub external: bool,
@@ -118,9 +118,11 @@ pub enum Tier {
 }
 
 impl Risk {
-    pub fn tier(&self) -> Tier {
+    /// `inferred`: answered from the diff alone, where "not tested" only means
+    /// no test is visible, so it doesn't raise an impactful change to high.
+    pub fn tier(&self, inferred: bool) -> Tier {
         let impactful = self.data || self.external || self.contract;
-        if self.one_way || (impactful && !self.tested) {
+        if self.one_way || (impactful && !self.tested && !inferred) {
             Tier::High
         } else if impactful || self.shared {
             Tier::Mid
@@ -173,8 +175,8 @@ impl RiskRules {
 
     /// Files a rule matches take the rule's tier, the rest the agent's; the
     /// intent gets the highest. No answers and no matching rule: none.
-    fn intent_tier(&self, intent: &Intent) -> Option<Tier> {
-        let answered = intent.risk.as_ref().map(Risk::tier);
+    fn intent_tier(&self, intent: &Intent, inferred: bool) -> Option<Tier> {
+        let answered = intent.risk.as_ref().map(|r| r.tier(inferred));
         if intent.files.is_empty() {
             return answered;
         }
@@ -272,9 +274,10 @@ impl Brief {
     }
 
     fn with_tiers(mut self, rules: &RiskRules) -> Self {
+        let inferred = self.inferred;
         for i in &mut self.intents {
-            i.tier = rules.intent_tier(i);
-            i.pinned = i.tier > i.risk.as_ref().map(Risk::tier);
+            i.tier = rules.intent_tier(i, inferred);
+            i.pinned = i.tier > i.risk.as_ref().map(|r| r.tier(inferred));
         }
         self
     }
@@ -929,11 +932,22 @@ mod tests {
         let risk = |f: fn(&mut Risk)| {
             let mut r = Risk::default();
             f(&mut r);
-            r.tier()
+            r.tier(false)
         };
         assert_eq!(risk(|_| {}), Tier::Low);
         assert_eq!(risk(|r| r.shared = true), Tier::Mid);
         assert_eq!(risk(|r| r.data = true), Tier::High);
+        // Inferred: untested only means no test in the diff, so not high.
+        let data = Risk {
+            data: true,
+            ..Default::default()
+        };
+        assert_eq!(data.tier(true), Tier::Mid);
+        let one_way = Risk {
+            one_way: true,
+            ..Default::default()
+        };
+        assert_eq!(one_way.tier(true), Tier::High);
         assert_eq!(
             risk(|r| {
                 r.data = true;
@@ -971,19 +985,22 @@ mod tests {
         });
         // A rule lowers files it covers; unmatched files keep the answer.
         assert_eq!(
-            rules.intent_tier(&intent(&["docs/a/b.md"], data.clone())),
+            rules.intent_tier(&intent(&["docs/a/b.md"], data.clone()), false),
             Some(Tier::Low)
         );
         assert_eq!(
-            rules.intent_tier(&intent(&["docs/a.md", "src/x.rs"], data)),
+            rules.intent_tier(&intent(&["docs/a.md", "src/x.rs"], data), false),
             Some(Tier::High)
         );
         // A rule raises even unassessed intents; `*` stays inside one folder.
         assert_eq!(
-            rules.intent_tier(&intent(&["db/1.sql"], None)),
+            rules.intent_tier(&intent(&["db/1.sql"], None), false),
             Some(Tier::High)
         );
-        assert_eq!(rules.intent_tier(&intent(&["db/x/1.sql"], None)), None);
+        assert_eq!(
+            rules.intent_tier(&intent(&["db/x/1.sql"], None), false),
+            None
+        );
     }
 
     #[test]

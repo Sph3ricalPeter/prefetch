@@ -90,7 +90,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
 - **`tags`** are 1 to 3 short lowercase categories that place the intent in this project: the product area, domain or data it touches (for example `checkout`, `pricing data`, `auth`). They let a reader sort changes at a glance, so pick the names this project's people use. Reuse tags from the other drafts in `wip/` when they fit, so the same area keeps the same name. Do not repeat the `type` or the risk.
 - **`risk`** answers fixed questions about that intent. Answer only from what you know; Prefetch derives the risk tier from these answers, so do not add your own rating. An omitted field means `false`.
   - `shared`: code you changed is used outside this change (other modules or callers).
-  - `data`: it touches persisted data, a schema, migrations, or production config.
+  - `data`: it touches state that lives outside the repo: databases and their schema or migrations, user or save files, deployed production config. Files that ship from the repo (scenes, assets, prefabs, fixtures, content, settings files) are not `data`: reverting the commit restores them.
   - `external`: it has side effects outside the repo (network writes, emails, payments, form submissions).
   - `contract`: it changes a public API, CLI, file format, or protocol.
   - `tested`: tests that exercise it ran and passed in this session. Not "tests exist".
