@@ -96,10 +96,30 @@ Several agents can work in the same working tree at once. Each one keeps its own
   - `tested`: tests that exercise it ran and passed in this session. Not "tests exist".
   - `oneWay`: `git revert` would not fully undo it (data already migrated or sent, published releases, deleted remote state).
   - `why`: one line naming the main concern. Leave it out when every answer is `false`.
-- **Project rules.** If the repo has `.prefetch/risk.json`, read its `guidance` before you answer. Its `rules` pin tiers for paths; you do not apply them yourself.
+- **Project rules.** Read the `guidance` in `.prefetch/risk.json` before you answer (see "Project risk guidance" below). Its `rules` pin tiers for paths; you do not apply them yourself.
 - **Plain language.** Write every title and `why` for a teammate who has not seen the code or this conversation. Use everyday words and full sentences. Say what changes and why it matters, not how the code does it. Leave out function, file and variable names, ticket numbers and internal shorthand unless the reader needs them.
 - **Keep it short.** Titles are about 8 words. A `why` is one or two sentences.
 - **`issues`** is optional. Add an issue only if the work is tied to a tracker issue that you saw: one the user gave you, one in the branch name, or one from a tracker tool. Never invent IDs. If there is no issue, leave out the field. Add `criteria` only if you have the acceptance criteria.
+
+## Project risk guidance
+
+`.prefetch/risk.json` at the repo root tells everyone who answers the risk questions (agents and Prefetch) what they mean in this project. The user tunes it; it is committed so the team shares it.
+
+If the file is missing, create it before your first draft:
+
+- Read the project's agent instructions (`CLAUDE.md`, `AGENTS.md`), the README and the docs.
+- Write `guidance` as plain sentences that answer, for this project: which stores, configs and outputs count as `data` (they reach users, customers or production); which tracked files only record results, notes or status and are not `data`; what counts as `external`; and which areas the docs call critical.
+- Add `rules` only for paths the docs say always need review. Tiers are `low`, `mid` or `high`.
+- List the file in your draft as its own `chore` intent.
+
+Once the file exists, change it only when the user asks.
+
+```json
+{
+  "guidance": "Files under output/ are delivered to customers: data. status/*.json only records manual checks: not data. Writes to the billing API are external.",
+  "rules": [{ "paths": ["migrations/**"], "tier": "high" }]
+}
+```
 
 ## If you commit yourself
 
