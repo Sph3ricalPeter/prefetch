@@ -1,0 +1,35 @@
+{
+  "intent": {
+    "title": "Fold inferred changes into the agent's intent and tune risk per project",
+    "why": "Summarize showed a file the agent forgot to list as a separate high-risk intent, although it was part of the agent's work, and the risk questions had no project-specific meaning, so a record file nobody can test always came out high."
+  },
+  "intents": [
+    {
+      "title": "Show inferred changes inside the intent they belong to",
+      "why": "Summarize can now say which agent brief an inferred change is part of, and the Brief view shows it there, marked inferred, instead of as its own card. Agent drafts are still never edited.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": [
+        "change brief",
+        "summarize"
+      ],
+      "files": [
+        "src-tauri/src/git/brief.rs",
+        "src-tauri/src/git/ai.rs",
+        "src/types/git.ts",
+        "src/lib/brief.ts",
+        "src/components/layout/brief-view.tsx"
+      ],
+      "risk": {
+        "shared": true,
+        "data": false,
+        "external": false,
+        "contract": true,
+        "tested": false,
+        "oneWay": false,
+        "why": "Briefs and stored notes gain an optional field; older readers ignore it. No test covers the view grouping."
+      }
+    }
+  ],
+  "session": "inferred-joins-risk-guidance"
+}
