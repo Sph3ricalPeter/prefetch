@@ -86,16 +86,18 @@ export function intentType(intent: BriefIntent): CommitType | null {
 const TIER_RANK: Record<string, number> = { high: 0, mid: 1 };
 const TYPE_RANK: Record<string, number> = { fix: 0, feat: 1 };
 
-/** Why an intent is flagged mid or high, as short phrases, worst first. */
-export function riskReasons(intent: BriefIntent): string[] {
+/** Why an intent is flagged mid or high, as short phrases, worst first.
+ *  `inferred`: "not tested" only means no test in the diff, which the tier
+ *  rule ignores (`Risk::tier`), so it isn't given as a reason. */
+export function riskReasons(intent: BriefIntent, inferred = false): string[] {
   if (intent.tier !== "high" && intent.tier !== "mid") return [];
   const r = intent.risk;
   const reasons = [
     r?.oneWay && "can't be undone by revert",
-    r?.data && "touches stored data or config",
+    r?.data && "touches stored data",
     r?.external && "acts outside the repo",
     r?.contract && "changes a public interface",
-    (r?.data || r?.external || r?.contract) && !r?.tested && "not tested",
+    !inferred && (r?.data || r?.external || r?.contract) && !r?.tested && "not tested",
     intent.pinned && "project risk rule",
   ].filter((x): x is string => !!x);
   if (reasons.length === 0 && r?.shared) reasons.push("used by other code");

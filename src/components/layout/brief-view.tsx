@@ -171,6 +171,7 @@ function BriefCard({
             <IntentCard
               key={`${all.epoch}:${keyOf(s)}`}
               shown={s}
+              fromDiff={!!brief.inferred || !!s.inferred}
               defaultOpen={all.open}
               storageKey={keyOf(s)}
               selectedFilePath={selectedFilePath}
@@ -223,12 +224,15 @@ function Chip({ className, children }: { className: string; children: React.Reac
  *  collapsed "Changes" section holding the files. */
 function IntentCard({
   shown: { intent, files, inferred },
+  fromDiff,
   defaultOpen = false,
   storageKey,
   selectedFilePath,
   onFileClick,
 }: {
   shown: ShownIntent;
+  /** Risk answers come from an inferred brief. */
+  fromDiff: boolean;
   defaultOpen?: boolean;
   storageKey: string;
   selectedFilePath: string | null;
@@ -258,7 +262,7 @@ function IntentCard({
   const TierIcon = tier ? TIER_ICONS[tier] : null;
   const high = tier === "high";
   const iconSize = high ? "h-4 w-4" : "h-3.5 w-3.5";
-  const reasons = riskReasons(intent);
+  const reasons = riskReasons(intent, fromDiff);
   const reasonText = reasons.join(", ");
   // Severity tint: the tier color fading out to the right (hex + 8% alpha).
   const tint = tierColor ? { backgroundImage: `linear-gradient(90deg, ${tierColor}14, transparent 70%)` } : undefined;

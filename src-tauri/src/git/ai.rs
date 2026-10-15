@@ -225,7 +225,7 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
              follow-up it needed), give it an intent of its own with \
              `\"joins\": \"<that brief's session>\"` and a `why` that says how it fits. \
              Joined intents are shown in that brief, so your lead `intent` describes \
-             only the intents that don't join one.\n\
+             only the intents that don't join one, or all of them if every intent joins.\n\
              <other-briefs>\n{json}\n</other-briefs>\n"
         ));
     }

@@ -394,32 +394,38 @@ fn read_wip_files(dir: &Path) -> (Vec<(PathBuf, Brief)>, Vec<String>) {
 /// All drafts for the working tree, for the Brief view.
 pub fn read_wip(path: &str) -> Result<WipBriefs, AppError> {
     let repo = Repository::open(path)?;
-    let (mut drafts, mut errors) = read_wip_files(&wip_dir(&repo));
-    show_shared_once(&mut drafts);
+    let (drafts, mut errors) = read_wip_files(&wip_dir(&repo));
     let rules = RiskRules::load(&repo).unwrap_or_else(|e| {
         errors.push(e);
         RiskRules::default()
     });
+    let mut drafts: Vec<_> = drafts
+        .into_iter()
+        .map(|(p, b)| (p, b.with_tiers(&rules)))
+        .collect();
+    show_shared_once(&mut drafts);
     Ok(WipBriefs {
-        briefs: drafts
-            .into_iter()
-            .map(|(_, b)| b.with_tiers(&rules))
-            .collect(),
+        briefs: drafts.into_iter().map(|(_, b)| b).collect(),
         errors,
     })
 }
 
-/// A file several drafts list (sessions that both edited it) shows once,
-/// under the draft written last; the others drop it, and any intent it
-/// leaves empty. View only: commit notes still record every session's claim.
+/// A file several drafts list (sessions that both edited it) shows once:
+/// under the riskiest intent claiming it, so the view never reads safer
+/// than the commit will, then the draft written last. The others drop it,
+/// and any intent it leaves empty. View only: commit notes keep every claim.
 fn show_shared_once(drafts: &mut [(PathBuf, Brief)]) {
-    let mut owner: HashMap<String, (Option<std::time::SystemTime>, usize)> = HashMap::new();
+    type Rank = (Option<Tier>, Option<std::time::SystemTime>);
+    let mut owner: HashMap<String, (Rank, usize)> = HashMap::new();
     for (n, (path, brief)) in drafts.iter().enumerate() {
         let written = fs::metadata(path).and_then(|m| m.modified()).ok();
-        for f in brief.files() {
-            let e = owner.entry(f.clone()).or_insert((written, n));
-            if written > e.0 {
-                *e = (written, n);
+        for i in &brief.intents {
+            for f in &i.files {
+                let rank = (i.tier, written);
+                let e = owner.entry(f.clone()).or_insert((rank, n));
+                if rank > e.0 {
+                    *e = (rank, n);
+                }
             }
         }
     }
@@ -1140,6 +1146,24 @@ mod tests {
         // The old draft's intent for s.json had nothing else, so it's gone.
         assert_eq!(files("old"), [["a.rs"]]);
         assert_eq!(files("new"), [["s.json", "b.rs"]]);
+
+        // A riskier claim wins over a newer one, so the view isn't calmer than the note.
+        let risky = serde_json::json!({ "intent": { "title": "lead" }, "intents": [
+            { "title": "i0", "files": ["a.rs"] },
+            { "title": "i1", "files": ["s.json"], "risk": { "oneWay": true } } ] });
+        fs::write(wip.join("old.json"), risky.to_string()).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(wip.join("old.json"))
+            .and_then(|f| f.set_modified(past))
+            .unwrap();
+        let briefs = read_wip(dir.to_str().unwrap()).unwrap().briefs;
+        let files = |s: &str| -> Vec<Vec<String>> {
+            let b = briefs.iter().find(|b| b.session == s).unwrap();
+            b.intents.iter().map(|i| i.files.clone()).collect()
+        };
+        assert_eq!(files("old"), [["a.rs"], ["s.json"]]);
+        assert_eq!(files("new"), [["b.rs"]]);
     }
 
     #[test]
