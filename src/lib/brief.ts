@@ -121,12 +121,15 @@ export function sortIntents<T extends { intent: BriefIntent }>(list: T[]): T[] {
 export interface ShownIntent {
   intent: BriefIntent;
   files: FileStatus[];
+  /** Moved here from the inferred brief because it `joins` this one. */
+  inferred?: boolean;
 }
 
 /**
  * Pair briefs with the files in view. A brief that touches none of them is
  * stale (its work was committed or reverted) and is dropped; the rest of the
- * files are "unclaimed" — changed, but no brief says why.
+ * files are "unclaimed" — changed, but no brief says why. Inferred intents
+ * that join an agent brief in view are shown inside it.
  */
 export function matchBriefs(briefs: Brief[], files: FileStatus[]) {
   // Working changes list a path twice when it's partly staged; prefer staged.
@@ -135,7 +138,8 @@ export function matchBriefs(briefs: Brief[], files: FileStatus[]) {
     if (!byPath.has(f.path) || f.is_staged) byPath.set(f.path, f);
   }
   const claimed = new Set<string>();
-  const shown = briefs
+  const inView = (b: { intents: ShownIntent[] }) => b.intents.some((s) => s.files.length > 0);
+  const matched = briefs
     .map((brief) => {
       const intents: ShownIntent[] = brief.intents
         .map((intent) => ({
@@ -145,7 +149,17 @@ export function matchBriefs(briefs: Brief[], files: FileStatus[]) {
         .filter((s) => s.intent.files.length === 0 || s.files.length > 0);
       return { brief, intents };
     })
-    .filter((b) => b.intents.some((s) => s.files.length > 0));
+    .filter(inView);
+  const hosts = new Map(matched.filter((b) => !b.brief.inferred).map((b) => [b.brief.session, b]));
+  for (const b of matched) {
+    if (!b.brief.inferred) continue;
+    b.intents = b.intents.filter((s) => {
+      const host = s.intent.joins ? hosts.get(s.intent.joins) : undefined;
+      host?.intents.push({ ...s, inferred: true });
+      return !host;
+    });
+  }
+  const shown = matched.filter(inView);
   for (const b of shown) for (const s of b.intents) for (const f of s.files) claimed.add(f.path);
   const unclaimed = [...byPath.values()].filter((f) => !claimed.has(f.path));
   return { shown, unclaimed };

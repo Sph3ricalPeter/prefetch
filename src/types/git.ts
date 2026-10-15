@@ -368,6 +368,8 @@ export interface BriefIntent {
   /** 1-3 project-specific categories the agent picked. */
   tags?: string[];
   risk?: BriefRisk;
+  /** Inferred briefs only: session of the agent brief this intent is part of. */
+  joins?: string;
   /** Derived by Prefetch from `risk` and `.prefetch/risk.json`; absent when unassessed. */
   tier?: RiskTier;
   /** The tier was raised by a `.prefetch/risk.json` rule, not the risk answers. */

@@ -68,6 +68,10 @@ pub struct Intent {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk: Option<Risk>,
+    /// Inferred briefs only: the session of the agent brief this intent is
+    /// part of, so the view can show it there instead of on its own.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub joins: String,
     /// Derived on read from `risk` and the project rules. Never taken from a
     /// draft, and absent from stored notes (drafts are written as read).
     #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
@@ -942,6 +946,7 @@ mod tests {
             commit_type: String::new(),
             tags: Vec::new(),
             risk,
+            joins: String::new(),
             tier: None,
             pinned: false,
         };

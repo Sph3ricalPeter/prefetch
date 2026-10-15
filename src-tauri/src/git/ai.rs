@@ -219,7 +219,10 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
         let json = serde_json::to_string_pretty(scope.others).unwrap_or_default();
         prompt.push_str(&format!(
             "\nOther agent sessions already describe some of these changes. Their \
-             briefs are context only: do not describe their files.\n\
+             briefs are context only: do not describe their files. When one of your \
+             files is part of an intent in those briefs (a record of its results, a \
+             follow-up it needed), give it an intent of its own with \
+             `\"joins\": \"<that brief's session>\"` and a `why` that says how it fits.\n\
              <other-briefs>\n{json}\n</other-briefs>\n"
         ));
     }

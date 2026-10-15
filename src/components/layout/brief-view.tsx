@@ -31,6 +31,8 @@ const TIER_ICONS: Record<RiskTier | "none", LucideIcon> = {
   none: ScrollText,
 };
 
+const INFERRED_TITLE = "Written by Prefetch from the diff, not by the agent that made the change";
+
 export function BriefView({
   briefs,
   files,
@@ -121,10 +123,7 @@ function BriefCard({
             <Chevron className="-ml-1 h-3 w-3 shrink-0 text-dim" />
             <span className="text-caption font-semibold text-muted-foreground">Intent</span>
             {brief.inferred && (
-              <span
-                className="text-caption font-semibold text-faint"
-                title="Written by Prefetch from the diff, not by the agent that made the change"
-              >
+              <span className="text-caption font-semibold text-faint" title={INFERRED_TITLE}>
                 inferred
               </span>
             )}
@@ -215,7 +214,7 @@ function Chip({ className, children }: { className: string; children: React.Reac
  *  `type:` and title, with the risk line under it. Expanded adds the why and a
  *  collapsed "Changes" section holding the files. */
 function IntentCard({
-  shown: { intent, files },
+  shown: { intent, files, inferred },
   defaultOpen = false,
   storageKey,
   selectedFilePath,
@@ -292,6 +291,11 @@ function IntentCard({
             <span className={cn("font-semibold text-foreground", !open && "truncate")}>{intent.title}</span>
             {intent.kind !== "sub" && (
               <span className="shrink-0 text-caption font-semibold text-faint">{intent.kind}</span>
+            )}
+            {inferred && (
+              <span className="shrink-0 text-caption font-semibold text-faint" title={INFERRED_TITLE}>
+                inferred
+              </span>
             )}
           </div>
           {intent.tags && intent.tags.length > 0 && (
