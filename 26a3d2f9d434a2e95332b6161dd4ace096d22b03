@@ -1,0 +1,44 @@
+{
+  "intent": {
+    "title": "Stop flagging ordinary content changes as high risk",
+    "why": "In a game project, Summarize marked every scene, prop and sound tweak as high risk: it read repo content files as stored data, and an inferred brief can never claim tests, so any data answer became high."
+  },
+  "intents": [
+    {
+      "title": "Inferred changes without tests rate medium, not high",
+      "why": "An inferred brief only sees the diff, so 'not tested' means 'no test visible', not 'known untested'. High now needs a one-way change or an agent saying it didn't test.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": [
+        "change brief",
+        "risk"
+      ],
+      "files": [
+        "src-tauri/src/git/brief.rs"
+      ],
+      "risk": {
+        "shared": true,
+        "tested": true,
+        "why": "Re-tiers every existing inferred brief and commit note on read, which also changes graph heat."
+      }
+    },
+    {
+      "title": "Define stored data as state outside the repo",
+      "why": "Scenes, assets and other files shipped from the repo are restored by a revert, so they no longer count as stored data.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": [
+        "change brief",
+        "risk"
+      ],
+      "files": [
+        "docs/skills/prefetch-brief/SKILL.md"
+      ],
+      "risk": {
+        "shared": true,
+        "why": "The spec is also the Summarize prompt, so agents and inference both answer differently."
+      }
+    }
+  ],
+  "session": "benign-high-risk"
+}
