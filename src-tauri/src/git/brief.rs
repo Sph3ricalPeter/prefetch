@@ -59,6 +59,9 @@ pub struct Intent {
     /// Conventional-commit type (`fix`, `feat`, ...); empty when not given.
     #[serde(default, rename = "type", skip_serializing_if = "String::is_empty")]
     pub commit_type: String,
+    /// 1-3 short project-specific categories the agent picks; capped on read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk: Option<Risk>,
     /// Derived on read from `risk` and the project rules. Never taken from a
@@ -227,6 +230,14 @@ impl Brief {
     fn normalized(mut self) -> Self {
         for i in &mut self.intents {
             i.files = i.files.iter().map(|f| normalize(f)).collect();
+            let mut tags: Vec<String> = Vec::new();
+            for t in i.tags.iter().map(|t| t.trim().to_lowercase()) {
+                if !t.is_empty() && !tags.contains(&t) {
+                    tags.push(t);
+                }
+            }
+            tags.truncate(3);
+            i.tags = tags;
         }
         self
     }
@@ -912,6 +923,7 @@ mod tests {
             kind: "sub".into(),
             files: files.iter().map(|f| f.to_string()).collect(),
             commit_type: String::new(),
+            tags: Vec::new(),
             risk,
             tier: None,
             pinned: false,
@@ -939,10 +951,11 @@ mod tests {
 
     #[test]
     fn generated_brief_parses_fenced_and_replaces_drafts() {
-        let raw = "```json\n{\"intent\":{\"title\":\"t\"},\"intents\":[{\"title\":\"a\",\"type\":\"fix\",\"files\":[\"./src\\\\a.rs\"],\"risk\":{\"oneWay\":true}}]}\n```";
+        let raw = "```json\n{\"intent\":{\"title\":\"t\"},\"intents\":[{\"title\":\"a\",\"type\":\"fix\",\"tags\":[\" Pricing \",\"pricing\",\"\",\"de\",\"tiers\",\"extra\"],\"files\":[\"./src\\\\a.rs\"],\"risk\":{\"oneWay\":true}}]}\n```";
         let b = parse_generated(raw).unwrap();
         assert!(b.inferred);
         assert_eq!(b.intents[0].files, ["src/a.rs"]);
+        assert_eq!(b.intents[0].tags, ["pricing", "de", "tiers"]);
         assert_eq!(b.intents[0].commit_type, "fix");
         assert!(parse_generated("not json").is_err());
         let (with_msg, msg) = parse_generated_with_message(

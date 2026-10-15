@@ -365,6 +365,8 @@ export interface BriefIntent {
   files: string[];
   /** Conventional-commit type (`fix`, `feat`, ...), when the agent gave one. */
   type?: string;
+  /** 1-3 project-specific categories the agent picked. */
+  tags?: string[];
   risk?: BriefRisk;
   /** Derived by Prefetch from `risk` and `.prefetch/risk.json`; absent when unassessed. */
   tier?: RiskTier;

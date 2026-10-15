@@ -47,6 +47,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
       "why": "Uncommitted edits are stashed first and restored afterwards, even when the reset fails.",
       "kind": "sub",
       "type": "fix",
+      "tags": ["git ops", "data safety"],
       "files": ["src/stores/repo-store.ts"],
       "risk": {
         "shared": true, "data": false, "external": false, "contract": false,
@@ -58,6 +59,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
       "title": "Share the diff-range logic between views",
       "kind": "enabling",
       "type": "refactor",
+      "tags": ["diff view"],
       "files": ["src/lib/utils.ts"],
       "risk": { "shared": true, "tested": true }
     },
@@ -65,6 +67,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
       "title": "Fix typo in README",
       "kind": "unrelated",
       "type": "docs",
+      "tags": ["docs"],
       "files": ["README.md"],
       "risk": {}
     }
@@ -84,6 +87,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
   - `enabling`: a refactor that the lead goal needs.
   - `unrelated`: a separate concern that you did on the way.
 - **`type`** is the conventional-commit type of that intent: `fix`, `feat`, `refactor`, `perf`, `docs`, `test`, `build`, `ci`, `style`, `chore` or `revert`.
+- **`tags`** are 1 to 3 short lowercase categories that place the intent in this project: the product area, domain or data it touches (for example `checkout`, `pricing data`, `auth`). They let a reader sort changes at a glance, so pick the names this project's people use. Reuse tags from the other drafts in `wip/` when they fit, so the same area keeps the same name. Do not repeat the `type` or the risk.
 - **`risk`** answers fixed questions about that intent. Answer only from what you know; Prefetch derives the risk tier from these answers, so do not add your own rating. An omitted field means `false`.
   - `shared`: code you changed is used outside this change (other modules or callers).
   - `data`: it touches persisted data, a schema, migrations, or production config.

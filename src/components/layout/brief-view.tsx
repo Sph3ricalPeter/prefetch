@@ -7,6 +7,7 @@ import {
   Flame,
   ScrollText,
   ShieldCheck,
+  Tag,
   type LucideIcon,
 } from "lucide-react";
 import { CommitFileRow, CommitFileTreeView } from "@/components/layout/detail-panel";
@@ -293,6 +294,19 @@ function IntentCard({
               <span className="shrink-0 text-caption font-semibold text-faint">{intent.kind}</span>
             )}
           </div>
+          {intent.tags && intent.tags.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1 pl-[18px]">
+              {intent.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-label font-medium leading-none text-muted-foreground"
+                >
+                  <Tag className="h-2.5 w-2.5 text-dim" />
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
           {(reasons.length > 0 || intent.risk?.why) && (
             <p className="mt-1.5 pl-[18px] text-label leading-relaxed" style={{ color: tierColor }}>
               {reasons.length > 0 && (
