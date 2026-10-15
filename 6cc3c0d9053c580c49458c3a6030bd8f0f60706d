@@ -1,0 +1,35 @@
+{
+  "intent": {
+    "title": "Tighten the inferred-intent and risk guidance changes before release",
+    "why": "The pre-release review found ways the new inferred-intent grouping and agent-written risk guidance could fail: a null field rejecting a whole brief, cards swapping open state, Summarize being handed setup steps it cannot do, and a bad rule silently dropping the guidance."
+  },
+  "intents": [
+    {
+      "title": "Accept a null link to another session",
+      "why": "A model that writes null for an intent that joins nothing made the whole generated brief invalid, so Summarize returned no commit message.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["summarize", "change brief"],
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": { "shared": true, "tested": true, "why": "Also keeps the project guidance when its rules are malformed; guidance is now read on its own." }
+    },
+    {
+      "title": "Keep Summarize out of the risk file setup steps",
+      "why": "Summarize has no file access; telling it to create the risk file could produce a made-up intent.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["summarize"],
+      "files": ["src-tauri/src/git/ai.rs", "docs/skills/prefetch-brief/SKILL.md"],
+      "risk": { "shared": true, "why": "Prompt and skill wording change for every Summarize call." }
+    },
+    {
+      "title": "Intent cards keep their own open state when one joins",
+      "why": "Cards were tracked by position, so an inferred intent sorting into an agent's card shifted the others and they took each other's open and folder state.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["change brief"],
+      "files": ["src/components/layout/brief-view.tsx"],
+      "risk": { "why": "Saved folder collapse state for brief cards resets once under the new keys." }
+    }
+  ]
+}
