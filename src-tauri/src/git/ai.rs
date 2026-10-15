@@ -223,7 +223,9 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
              briefs are context only: do not describe their files. When one of your \
              files is part of an intent in those briefs (a record of its results, a \
              follow-up it needed), give it an intent of its own with \
-             `\"joins\": \"<that brief's session>\"` and a `why` that says how it fits.\n\
+             `\"joins\": \"<that brief's session>\"` and a `why` that says how it fits. \
+             Joined intents are shown in that brief, so your lead `intent` describes \
+             only the intents that don't join one.\n\
              <other-briefs>\n{json}\n</other-briefs>\n"
         ));
     }
