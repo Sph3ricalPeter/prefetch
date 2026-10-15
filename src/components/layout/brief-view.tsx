@@ -31,7 +31,16 @@ const TIER_ICONS: Record<RiskTier | "none", LucideIcon> = {
   none: ScrollText,
 };
 
-const INFERRED_TITLE = "Written by Prefetch from the diff, not by the agent that made the change";
+function InferredBadge() {
+  return (
+    <span
+      className="shrink-0 text-caption font-semibold text-faint"
+      title="Written by Prefetch from the diff, not by the agent that made the change"
+    >
+      inferred
+    </span>
+  );
+}
 
 export function BriefView({
   briefs,
@@ -102,6 +111,9 @@ function BriefCard({
   const [all, setAll] = useState({ epoch: 0, open: false });
   const setCollapsed = useTreeCollapseStore((s) => s.setCollapsed);
   const sorted = sortIntents(intents);
+  // By identity, not position: an inferred intent joining this card can land
+  // anywhere in the sort and must not take another card's open state.
+  const keyOf = ({ intent }: ShownIntent) => `${storageKey}:${intent.title}:${intent.files[0] ?? ""}`;
   const toggle = (e: MouseEvent) => {
     if (!e.altKey) {
       setOpen(!open);
@@ -110,8 +122,8 @@ function BriefCard({
     const next = !(open && all.open);
     setOpen(next);
     setAll({ epoch: all.epoch + 1, open: next });
-    sorted.forEach((s, i) =>
-      setCollapsed(`${storageKey}:${i}`, next ? [] : buildFileTree(s.files).flatMap(collectDirPaths)),
+    sorted.forEach((s) =>
+      setCollapsed(keyOf(s), next ? [] : buildFileTree(s.files).flatMap(collectDirPaths)),
     );
   };
   const Chevron = open ? ChevronDown : ChevronRight;
@@ -122,11 +134,7 @@ function BriefCard({
           <div className="flex items-center gap-2 pb-1.5">
             <Chevron className="-ml-1 h-3 w-3 shrink-0 text-dim" />
             <span className="text-caption font-semibold text-muted-foreground">Intent</span>
-            {brief.inferred && (
-              <span className="text-caption font-semibold text-faint" title={INFERRED_TITLE}>
-                inferred
-              </span>
-            )}
+            {brief.inferred && <InferredBadge />}
             {brief.session && !brief.inferred && (
               <span className="ml-auto truncate text-label text-faint">{brief.session}</span>
             )}
@@ -159,12 +167,12 @@ function BriefCard({
 
       {open && (
         <div className="flex flex-col gap-1.5 pb-2 pl-4 pr-2">
-          {sorted.map((s, i) => (
+          {sorted.map((s) => (
             <IntentCard
-              key={`${all.epoch}:${i}`}
+              key={`${all.epoch}:${keyOf(s)}`}
               shown={s}
               defaultOpen={all.open}
-              storageKey={`${storageKey}:${i}`}
+              storageKey={keyOf(s)}
               selectedFilePath={selectedFilePath}
               onFileClick={onFileClick}
             />
@@ -292,11 +300,7 @@ function IntentCard({
             {intent.kind !== "sub" && (
               <span className="shrink-0 text-caption font-semibold text-faint">{intent.kind}</span>
             )}
-            {inferred && (
-              <span className="shrink-0 text-caption font-semibold text-faint" title={INFERRED_TITLE}>
-                inferred
-              </span>
-            )}
+            {inferred && <InferredBadge />}
           </div>
           {intent.tags && intent.tags.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1 pl-[18px]">

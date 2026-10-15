@@ -110,7 +110,7 @@ If the file is missing, create it before your first draft:
 - Read the project's agent instructions (`CLAUDE.md`, `AGENTS.md`), the README and the docs.
 - Write `guidance` as plain sentences that answer, for this project: which stores, configs and outputs count as `data` (they reach users, customers or production); which tracked files only record results, notes or status and are not `data`; what counts as `external`; and which areas the docs call critical.
 - Add `rules` only for paths the docs say always need review. Tiers are `low`, `mid` or `high`.
-- List the file in your draft as its own `chore` intent.
+- List the file in your draft as its own intent with `"kind": "unrelated"` and `"type": "chore"`.
 
 Once the file exists, change it only when the user asks.
 

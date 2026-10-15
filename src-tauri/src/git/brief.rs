@@ -70,7 +70,11 @@ pub struct Intent {
     pub risk: Option<Risk>,
     /// Inferred briefs only: the session of the agent brief this intent is
     /// part of, so the view can show it there instead of on its own.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_string",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub joins: String,
     /// Derived on read from `risk` and the project rules. Never taken from a
     /// draft, and absent from stored notes (drafts are written as read).
@@ -130,9 +134,7 @@ impl Risk {
 /// Rules pin the tier of matching files, overriding the agent's answers.
 #[derive(Debug, Default, Deserialize)]
 pub struct RiskRules {
-    /// Free text for whoever answers the risk questions (agents, generation).
-    #[serde(default)]
-    pub guidance: String,
+    // The file's `guidance` text is read on its own by `risk_guidance`.
     #[serde(default)]
     pub rules: Vec<RiskRule>,
 }
@@ -144,17 +146,15 @@ pub struct RiskRule {
     pub tier: Tier,
 }
 
+fn risk_file(repo: &Repository) -> Option<String> {
+    fs::read_to_string(repo.workdir()?.join(".prefetch").join("risk.json")).ok()
+}
+
 impl RiskRules {
     fn load(repo: &Repository) -> Result<Self, String> {
-        let Some(root) = repo.workdir() else {
-            return Ok(Self::default());
-        };
-        match fs::read_to_string(root.join(".prefetch").join("risk.json")) {
-            Ok(text) => {
-                serde_json::from_str(&text).map_err(|e| format!(".prefetch/risk.json: {e}"))
-            }
-            Err(_) => Ok(Self::default()),
-        }
+        risk_file(repo).map_or(Ok(Self::default()), |text| {
+            serde_json::from_str(&text).map_err(|e| format!(".prefetch/risk.json: {e}"))
+        })
     }
 
     /// First matching rule's tier for `path`.
@@ -223,6 +223,14 @@ fn lenient_tags<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D
             .filter_map(|v| v.as_str().map(str::to_owned))
             .collect(),
         _ => Vec::new(),
+    })
+}
+
+/// Optional fields the model may fill with `null`; anything but a string is empty.
+fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => s,
+        _ => String::new(),
     })
 }
 
@@ -683,12 +691,19 @@ fn strip_fences(raw: &str) -> &str {
     text.trim().strip_suffix("```").unwrap_or(text).trim()
 }
 
-/// The project's risk guidance text, empty when there is none.
+/// The project's risk guidance text, empty when there is none. Read on its
+/// own: agents write this file, and a bad `rules` entry shouldn't drop it.
 pub fn risk_guidance(path: &str) -> String {
+    #[derive(Deserialize)]
+    struct Guidance {
+        #[serde(default)]
+        guidance: String,
+    }
     Repository::open(path)
         .ok()
-        .and_then(|r| RiskRules::load(&r).ok())
-        .map(|r| r.guidance)
+        .and_then(|r| risk_file(&r))
+        .and_then(|t| serde_json::from_str::<Guidance>(&t).ok())
+        .map(|g| g.guidance)
         .unwrap_or_default()
 }
 
@@ -992,6 +1007,14 @@ mod tests {
                 "{tags}"
             );
         }
+        let raw = r#"{"intent":{"title":"t"},"intents":[{"title":"a","joins":null},{"title":"b","joins":"x"}]}"#;
+        let joins: Vec<String> = parse_generated(raw)
+            .unwrap()
+            .intents
+            .into_iter()
+            .map(|i| i.joins)
+            .collect();
+        assert_eq!(joins, ["", "x"]);
         assert_eq!(b.intents[0].commit_type, "fix");
         assert!(parse_generated("not json").is_err());
         let (with_msg, msg) = parse_generated_with_message(

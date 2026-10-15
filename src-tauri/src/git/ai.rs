@@ -195,7 +195,8 @@ struct BriefScope<'a> {
 fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
     let mut prompt = format!(
         "Write a Change Brief for {subject} (branch: {}). The spec below is written \
-         for coding agents; follow its Format and Rules, ignore where to save the file. \
+         for coding agents; follow its Format and Rules, ignore where to save the file and the \
+         Project risk guidance setup steps. \
          Every file you describe must be in exactly one intent. You only see the diff, so \
          set `tested` only when the diff itself adds or updates tests covering that intent.\n\n\
          <spec>\n{BRIEF_SPEC}\n</spec>\n",
