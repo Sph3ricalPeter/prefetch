@@ -520,9 +520,14 @@ export async function aiAvailable(): Promise<boolean> {
 }
 
 /** Ask Claude Code for a commit message describing the staged diff; with
- *  `writeBrief` it also rewrites the inferred Change Brief in the same call. */
-export async function suggestCommitMessage(model: string, writeBrief: boolean): Promise<CommitSuggestion> {
-  return tracedInvoke<CommitSuggestion>("suggest_commit_message", { model, writeBrief });
+ *  `writeBrief` it also rewrites the inferred Change Brief in the same call.
+ *  Without `withBody` the subject alone names the risky intents. */
+export async function suggestCommitMessage(
+  model: string,
+  writeBrief: boolean,
+  withBody: boolean,
+): Promise<CommitSuggestion> {
+  return tracedInvoke<CommitSuggestion>("suggest_commit_message", { model, writeBrief, withBody });
 }
 
 /** Agent-written Change Brief drafts for the working tree. */

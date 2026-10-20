@@ -194,7 +194,7 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
         commitDescription: s.commitDescription,
         headCommitId: s.headCommitId,
       };
-      const { subject, body } = await suggestCommitMessage(aiModel, writeBrief);
+      const { subject, body } = await suggestCommitMessage(aiModel, writeBrief, suggestBody);
       if (writeBrief) await loadStatus();
       // Repo switched, user typed, or HEAD moved while claude ran — the result is stale.
       const now = useRepoStore.getState();

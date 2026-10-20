@@ -76,6 +76,7 @@ pub fn suggest_commit_message(
     claude: &Path,
     model: &str,
     write_brief: bool,
+    with_body: bool,
 ) -> Result<CommitSuggestion, AppError> {
     // Stat first so every file stays visible even if the diff gets truncated.
     // Wide stat: without a TTY git shortens long paths to ".../tail".
@@ -109,7 +110,7 @@ pub fn suggest_commit_message(
             },
         );
         instructions.push_str(MESSAGE_WITH_BRIEF);
-        instructions.push_str(MESSAGE_FORMAT);
+        instructions.push_str(&message_format(with_body));
         instructions.push_str(JSON_ONLY);
         let raw = run_claude(
             repo_path,
@@ -124,7 +125,7 @@ pub fn suggest_commit_message(
         message
     } else {
         let briefs = brief::staged_briefs(repo_path)?;
-        let prompt = intent_prompt(&branch, &brief::prompt_context(&briefs));
+        let prompt = intent_prompt(&branch, &brief::prompt_context(&briefs), with_body);
         run_claude(repo_path, claude, model, &prompt, SYSTEM_PROMPT, staged)?
     };
     let (subject, body) = parse_suggestion(&stdout)
@@ -152,15 +153,30 @@ const MESSAGE_WITH_BRIEF: &str = "\nReply with ONE JSON object: \
 const JSON_ONLY: &str = " Output ONLY the JSON object, no fences, no preamble.";
 
 /// Message format shared by both suggestion prompts. Every high and mid risk
-/// intent must reach the message, however many intents there are.
-const MESSAGE_FORMAT: &str = "Rank the intents by importance: higher risk tier \
-    first, then fix, then feat, then the rest. Line 1 is the subject: imperative \
-    mood, the conventional-commit prefix and gist of the most important intent, \
-    <=72 chars, no trailing period. Then a blank line, then a body with one short \
-    plain-text line per intent saying why, most important first, wrapped at 72 \
-    chars. Never leave out a high or mid risk intent; leave out low or unknown \
-    risk ones only when the body would pass 8 lines. If an issue is listed, \
-    end the body with `Refs: <ID>`.";
+/// intent must reach the message, however many intents there are; without a
+/// body the subject has to carry them.
+fn message_format(with_body: bool) -> String {
+    let rank = "Rank the intents by importance: higher risk tier first, then fix, \
+        then feat, then the rest.";
+    let format = if with_body {
+        "Line 1 is the subject: imperative mood, the conventional-commit prefix \
+         and gist of the most important intent, <=72 chars, no trailing period. \
+         Then a blank line, then a body with one short plain-text line per intent \
+         saying why, most important first, wrapped at 72 chars. Never leave out a \
+         high or mid risk intent; leave out low or unknown risk ones only when the \
+         body would pass 8 lines. If an issue is listed, end the body with \
+         `Refs: <ID>`."
+    } else {
+        "Write the subject line only, no body: the conventional-commit prefix of \
+         the most important intent, then the intents in a few words each, most \
+         important first, separated by `; ` (e.g. `fix: start seniors at 66; \
+         find the calendar arrow; add Vault reach check`). It must name every \
+         high risk intent; add mid risk ones while it stays under about 100 \
+         chars, low or unknown risk ones only if there are no others. No \
+         trailing period."
+    };
+    format!("{rank} {format}")
+}
 
 /// Untracked files aren't in `git diff`; their text, so the model sees what
 /// they are. Binary or large ones go by name only.
@@ -384,7 +400,7 @@ pub fn generate_brief(
 }
 
 /// Commit-message prompt, with the Change Brief context when there is one.
-fn intent_prompt(branch: &str, intent: &str) -> String {
+fn intent_prompt(branch: &str, intent: &str, with_body: bool) -> String {
     let context = if intent.is_empty() {
         String::new()
     } else {
@@ -397,7 +413,8 @@ fn intent_prompt(branch: &str, intent: &str) -> String {
     format!(
         "Write a git commit message for the staged changes on stdin (branch: {branch}); \
          a diffstat comes first, then the diff.\n\n\
-         {context}{MESSAGE_FORMAT} Output ONLY the message, no fences, no preamble."
+         {context}{} Output ONLY the message, no fences, no preamble.",
+        message_format(with_body)
     )
 }
 
@@ -481,7 +498,7 @@ mod tests {
         let Some(claude) = claude_path() else { return };
         let tmp = live_repo();
         let path = tmp.path().to_str().unwrap();
-        let s = suggest_commit_message(path, &claude, "haiku", true).unwrap();
+        let s = suggest_commit_message(path, &claude, "haiku", true, true).unwrap();
         println!("{}\n\n{}", s.subject, s.body);
         let wip = brief::read_wip(path).unwrap();
         println!("{}", serde_json::to_string_pretty(&wip.briefs).unwrap());

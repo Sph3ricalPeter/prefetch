@@ -37,12 +37,13 @@ pub async fn suggest_commit_message(
     state: State<'_, AppState>,
     model: String,
     write_brief: bool,
+    with_body: bool,
 ) -> Result<ai::CommitSuggestion, AppError> {
     let path = repo_path(&state)?;
     offload(move || {
         let claude =
             ai::claude_path().ok_or_else(|| AppError::Other("Claude Code CLI not found".into()))?;
-        ai::suggest_commit_message(&path, &claude, &model, write_brief)
+        ai::suggest_commit_message(&path, &claude, &model, write_brief, with_body)
     })
     .await
 }
