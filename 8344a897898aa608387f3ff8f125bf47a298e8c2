@@ -1,0 +1,17 @@
+{
+  "intent": {
+    "title": "Plan how brief intents point at the exact changed lines",
+    "why": "Each intent in the Brief view shows whole files, so a reader can't see where its change is, and a file edited by two sessions shows in full under both."
+  },
+  "intents": [
+    {
+      "title": "Write up options for line-level intents",
+      "why": "Compares how intents could own parts of the diff, recommends recording each agent's edits through the existing hook, and lays out a stepwise rollout with open questions.",
+      "kind": "sub",
+      "type": "docs",
+      "tags": ["change brief"],
+      "files": ["docs/research/hunk-intents.md"],
+      "risk": {}
+    }
+  ]
+}
