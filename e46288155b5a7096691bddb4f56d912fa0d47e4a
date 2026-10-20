@@ -1,0 +1,42 @@
+{
+  "intent": {
+    "title": "Let users jump to a branch's worktree",
+    "why": "Checking out a branch that another worktree already holds only showed an error, with no way to get to that worktree from the app."
+  },
+  "intents": [
+    {
+      "title": "Offer \"Open worktree\" wherever checkout is blocked",
+      "why": "The blocked-checkout error now has a button that opens the worktree in Prefetch, and the branch and graph right-click menus offer the same.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["worktrees", "branches"],
+      "files": [
+        "src/stores/repo-store.ts",
+        "src/components/sidebar/branch-list.tsx",
+        "src/components/layout/graph-panel.tsx",
+        "src/lib/action-icons.ts"
+      ],
+      "risk": {
+        "shared": true,
+        "why": "Opening a worktree replaces the currently open repository in the window."
+      }
+    },
+    {
+      "title": "Open a worktree from the worktree list",
+      "why": "Double-clicking a worktree, or picking Open from its menu, now switches to it instead of revealing it in the file manager; stale worktrees are skipped.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["worktrees"],
+      "files": ["src/components/sidebar/worktree-list.tsx"],
+      "risk": {}
+    },
+    {
+      "title": "Add project risk guidance for change briefs",
+      "kind": "unrelated",
+      "type": "chore",
+      "tags": ["tooling"],
+      "files": [".prefetch/risk.json"],
+      "risk": {}
+    }
+  ]
+}
