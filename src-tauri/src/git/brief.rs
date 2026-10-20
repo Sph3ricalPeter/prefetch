@@ -330,12 +330,15 @@ fn wip_dir(repo: &Repository) -> PathBuf {
     repo.path().join("prefetch").join("wip")
 }
 
-fn read_wip_dir(dir: &Path) -> WipBriefs {
-    let (files, errors) = read_wip_files(dir);
-    WipBriefs {
-        briefs: files.into_iter().map(|(_, b)| b).collect(),
-        errors,
-    }
+/// Drafts with their tiers, for the commit-message prompts. A broken
+/// risk.json is reported in the WIP view; here it just means no rules.
+fn tiered_drafts(repo: &Repository) -> Vec<Brief> {
+    let rules = RiskRules::load(repo).unwrap_or_default();
+    read_wip_files(&wip_dir(repo))
+        .0
+        .into_iter()
+        .map(|(_, b)| b.with_tiers(&rules))
+        .collect()
 }
 
 /// Drafts with the file each came from, plus `file.json: reason` for the ones
@@ -447,8 +450,7 @@ pub fn staged_briefs(path: &str) -> Result<Vec<Brief>, AppError> {
     let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
     let diff = repo.diff_tree_to_index(head.as_ref(), None, None)?;
     let staged = diff_paths(&diff);
-    Ok(read_wip_dir(&wip_dir(&repo))
-        .briefs
+    Ok(tiered_drafts(&repo)
         .iter()
         .filter_map(|b| b.restricted_to(&staged))
         .collect())
@@ -777,8 +779,7 @@ pub struct WipSplit {
 
 pub fn wip_split(path: &str) -> Result<WipSplit, AppError> {
     let repo = Repository::open(path)?;
-    let (inferred, agents): (Vec<Brief>, Vec<Brief>) = read_wip_dir(&wip_dir(&repo))
-        .briefs
+    let (inferred, agents): (Vec<Brief>, Vec<Brief>) = tiered_drafts(&repo)
         .into_iter()
         .partition(|b| b.session == INFERRED);
     let claimed: HashSet<&String> = agents.iter().flat_map(|b| b.files()).collect();
@@ -903,24 +904,39 @@ mod tests {
     }
 
     #[test]
-    fn prompt_lists_riskiest_intent_first_across_briefs() {
-        let brief = |tier: Option<Tier>, title: &str| {
-            let mut b: Brief = serde_json::from_str(&draft("s", &[&["x.rs"]])).unwrap();
-            b.intents[0].title = title.into();
-            b.intents[0].tier = tier;
-            b
-        };
-        let ctx = prompt_context(&[
-            brief(Some(Tier::Low), "benign"),
-            brief(None, "unrated"),
-            brief(Some(Tier::High), "risky"),
-            brief(Some(Tier::Mid), "middling"),
-        ]);
-        let at = |t: &str| ctx.find(t).unwrap();
+    fn prompt_lists_riskiest_staged_intent_first_across_briefs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q"]);
+        let wip = dir.join(".git/prefetch/wip");
+        fs::create_dir_all(&wip).unwrap();
+        // Drafts sort by file name, so "a" (benign) would come first unsorted.
+        for (session, file, risk) in [
+            ("a", "benign.rs", Some(serde_json::json!({}))),
+            ("b", "unrated.rs", None),
+            ("c", "risky.rs", Some(serde_json::json!({ "oneWay": true }))),
+            (
+                "d",
+                "middling.rs",
+                Some(serde_json::json!({ "shared": true })),
+            ),
+        ] {
+            fs::write(dir.join(file), "x").unwrap();
+            let mut intent = serde_json::json!({ "title": file, "files": [file] });
+            if let Some(r) = risk {
+                intent["risk"] = r;
+            }
+            let d = serde_json::json!({ "intent": { "title": session }, "intents": [intent] });
+            fs::write(wip.join(format!("{session}.json")), d.to_string()).unwrap();
+        }
+        git(dir, &["add", "."]);
+
+        let ctx = prompt_context(&staged_briefs(dir.to_str().unwrap()).unwrap());
+        let at = |t: &str| ctx.find(&format!("] {t}")).unwrap();
         assert!(at("risky") < at("middling"));
         assert!(at("middling") < at("benign"));
         assert!(at("benign") < at("unrated"));
-        assert!(ctx.contains("[high risk, sub] risky"));
+        assert!(ctx.contains("[high risk, sub] risky.rs"));
     }
 
     #[test]

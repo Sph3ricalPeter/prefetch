@@ -110,7 +110,7 @@ pub fn suggest_commit_message(
         );
         instructions.push_str(MESSAGE_WITH_BRIEF);
         instructions.push_str(MESSAGE_FORMAT);
-        instructions.push_str(" Output ONLY the JSON object, no fences, no preamble.");
+        instructions.push_str(JSON_ONLY);
         let raw = run_claude(
             repo_path,
             claude,
@@ -145,17 +145,21 @@ const MESSAGE_WITH_BRIEF: &str = "\nReply with ONE JSON object: \
     {\"brief\": <your Change Brief, covering the files you were given, staged or not>, \
     \"message\": \"<git commit message for the STAGED changes only>\"}. \
     The message is written from your brief together with the other sessions' briefs, \
-    covering every intent with staged files. ";
+    about the intents with staged files. The other briefs carry each intent's risk \
+    `tier`; your own intents have none, so rank them by your risk answers: `oneWay` \
+    is high risk; `data`, `external`, `contract` or `shared` is mid; none is low. ";
 
-/// Message format shared by both suggestion prompts. The model used to keep
-/// only the lead intent; every risky one has to make it into the message.
+const JSON_ONLY: &str = " Output ONLY the JSON object, no fences, no preamble.";
+
+/// Message format shared by both suggestion prompts. Every high and mid risk
+/// intent must reach the message, however many intents there are.
 const MESSAGE_FORMAT: &str = "Rank the intents by importance: higher risk tier \
     first, then fix, then feat, then the rest. Line 1 is the subject: imperative \
     mood, the conventional-commit prefix and gist of the most important intent, \
     <=72 chars, no trailing period. Then a blank line, then a body with one short \
     plain-text line per intent saying why, most important first, wrapped at 72 \
-    chars. Never leave out a high or mid risk intent; leave out low risk or \
-    unrated ones only when the body would pass 8 lines. If an issue is listed, \
+    chars. Never leave out a high or mid risk intent; leave out low or unknown \
+    risk ones only when the body would pass 8 lines. If an issue is listed, \
     end the body with `Refs: <ID>`.";
 
 /// Untracked files aren't in `git diff`; their text, so the model sees what
@@ -362,7 +366,7 @@ pub fn generate_brief(
             only: &only,
         },
     );
-    instructions.push_str("\nOutput ONLY the JSON object, no fences, no preamble.");
+    instructions.push_str(JSON_ONLY);
 
     let raw = run_claude(
         repo_path,
