@@ -1,0 +1,17 @@
+{
+  "intent": {
+    "title": "Commit from the Brief tab without staging first",
+    "why": "With Amend last commit ticked, Summarize is off, so nothing got staged and the Brief tab's commit button stayed disabled until the user went to the Files tab and staged by hand."
+  },
+  "intents": [
+    {
+      "title": "Stage every change when committing from the Brief tab",
+      "why": "The Brief tab commits all changes, so its Commit and Amend buttons now count every changed file and stage the unstaged ones just before committing. A failed stage stops the commit rather than committing part of the changes.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["brief tab", "commit"],
+      "files": ["src/components/staging/commit-box.tsx"],
+      "risk": { "data": true, "why": "Commits now include files the user hadn't staged themselves." }
+    }
+  ]
+}
