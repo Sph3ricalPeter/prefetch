@@ -93,12 +93,14 @@ pub fn suggest_commit_message(
     let split = write_brief
         .then(|| brief::wip_split(repo_path))
         .transpose()?;
-    let stdout = if let Some(split) = split.filter(|s| !s.unclaimed.is_empty()) {
+    // Summarize always sees every brief: agent ones are input it may keep,
+    // rewrite or drop, not territory it has to stay out of.
+    let stdout = if let Some(split) = split {
         let unstaged = capture(repo_path, &["diff", "--stat=1000", "--patch"], &[])?;
         let input = format!(
             "=== STAGED (this commit) ===\n{staged}\n\
              === UNSTAGED (not in this commit) ===\n{unstaged}{}",
-            untracked_text(repo_path, &split.unclaimed)?
+            untracked_text(repo_path, &[])?
         );
         let mut instructions = brief_prompt(
             repo_path,
@@ -107,6 +109,7 @@ pub fn suggest_commit_message(
                 previous: split.inferred.as_slice(),
                 others: &split.agents,
                 only: &split.unclaimed,
+                review_others: true,
             },
         );
         instructions.push_str(MESSAGE_WITH_BRIEF);
@@ -120,9 +123,10 @@ pub fn suggest_commit_message(
             BRIEF_SYSTEM_PROMPT,
             with_instructions(&instructions, input),
         )?;
-        let (generated, message) = brief::parse_generated_with_message(&raw)?;
-        brief::write_inferred(repo_path, &generated, &split.unclaimed)?;
-        message
+        tracing::debug!(%raw, "summarize output");
+        let summary = brief::parse_summary(&raw)?;
+        brief::apply_summary(repo_path, &split.agents, &summary)?;
+        summary.message
     } else {
         let briefs = brief::staged_briefs(repo_path)?;
         let prompt = intent_prompt(&branch, &brief::prompt_context(&briefs), with_body);
@@ -143,12 +147,16 @@ fn with_instructions(instructions: &str, input: String) -> String {
 }
 
 const MESSAGE_WITH_BRIEF: &str = "\nReply with ONE JSON object: \
-    {\"brief\": <your Change Brief, covering the files you were given, staged or not>, \
+    {\"brief\": <your Change Brief for the files no agent brief covers after your \
+    edits, staged or not; null if there are none>, \
+    \"agents\": {\"<session>\": <that agent brief rewritten, or null to drop it>}, \
     \"message\": \"<git commit message for the STAGED changes only>\"}. \
-    The message is written from your brief together with the other sessions' briefs, \
-    about the intents with staged files. The other briefs carry each intent's risk \
-    `tier`; your own intents have none, so rank them by your risk answers: `oneWay` \
-    is high risk; `data`, `external`, `contract` or `shared` is mid; none is low. ";
+    Leave an agent brief out of `agents` to keep it as it is. \
+    The message is written from all the briefs as they stand after your edits, \
+    about the intents with staged files. The agent briefs carry each intent's risk \
+    `tier`; your own and rewritten intents have none, so rank them by their risk \
+    answers: `oneWay` is high risk; `data`, `external`, `contract` or `shared` is mid; \
+    none is low. ";
 
 const JSON_ONLY: &str = " Output ONLY the JSON object, no fences, no preamble.";
 
@@ -167,13 +175,14 @@ fn message_format(with_body: bool) -> String {
          body would pass 8 lines. If an issue is listed, end the body with \
          `Refs: <ID>`."
     } else {
-        "Write the subject line only, no body: the conventional-commit prefix of \
-         the most important intent, then the intents in a few words each, most \
-         important first, separated by `; ` (e.g. `fix: start seniors at 66; \
-         find the calendar arrow; add Vault reach check`). It must name every \
-         high risk intent; add mid risk ones while it stays under about 100 \
-         chars, low or unknown risk ones only if there are no others. No \
-         trailing period."
+        "Write the subject line only, no body: the intents in a few words each, \
+         grouped by conventional-commit type, each group starting with its own \
+         prefix, everything separated by `, ` (never `;`), groups ordered by \
+         their most important intent (e.g. `fix: start seniors at 66, find the \
+         calendar arrow, ci: add Vault reach check`). It must name every high risk intent; add mid \
+         risk ones while it stays under about 100 chars, low or unknown risk \
+         ones only if there are no others. Shorten words freely. No trailing \
+         period."
     };
     format!("{rank} {format}")
 }
@@ -216,6 +225,8 @@ struct BriefScope<'a> {
     others: &'a [brief::Brief],
     /// Files the brief covers; empty means all of them.
     only: &'a [String],
+    /// Summarize: `others` are input the model may keep, rewrite or drop.
+    review_others: bool,
 }
 
 /// Instructions for writing a brief of `subject`, with the project guidance
@@ -244,7 +255,36 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
              <existing>\n{json}\n</existing>\n"
         ));
     }
-    if !scope.others.is_empty() {
+    if !scope.others.is_empty() && scope.review_others {
+        let json = serde_json::to_string_pretty(scope.others).unwrap_or_default();
+        prompt.push_str(&format!(
+            "\nAgent sessions wrote briefs for some of these changes. They watched the \
+             work happen, so trust them for why it was done, and keep their risk answers \
+             (they ran the tests; you can't see that) unless the diff contradicts them. \
+             They are drafts written mid-work by sessions that couldn't see each \
+             other, so expect them to overlap and go stale. Read them as the reviewer \
+             of this commit will, and fix every one of these:\n\
+             - An intent that fixes, reworks or reviews code another intent adds in \
+             this same diff (a new file, or lines that aren't committed yet) is not a \
+             change of its own: the reviewer never sees the broken version. Fold it \
+             into the intent that adds the code (rewrite that brief's `why` to cover \
+             it) and remove it from its own brief.\n\
+             - The same work described in two briefs: keep it in the one whose goal \
+             it serves, remove it from the other.\n\
+             - A lead or intent that describes how the work came about (a review, a \
+             failing check, a backlog task) instead of what it changes: rewrite it.\n\
+             - Intents that no longer match the diff: rewrite or remove them.\n\
+             A brief left with no intents is dropped. Keep a brief untouched only \
+             when none of these apply. A rewrite keeps its session's files; your \
+             own brief covers every file no agent brief covers after your edits. When \
+             one of your files is part of an intent in an agent brief (a record of its \
+             results, a follow-up it needed), give it an intent of its own with \
+             `\"joins\": \"<that brief's session>\"` and a `why` that says how it fits. \
+             Joined intents are shown in that brief, so your lead `intent` describes \
+             only the intents that don't join one, or all of them if every intent joins.\n\
+             <agent-briefs>\n{json}\n</agent-briefs>\n"
+        ));
+    } else if !scope.others.is_empty() {
         let json = serde_json::to_string_pretty(scope.others).unwrap_or_default();
         prompt.push_str(&format!(
             "\nOther agent sessions already describe some of these changes. Their \
@@ -258,10 +298,12 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
         ));
     }
     if !scope.only.is_empty() {
-        prompt.push_str(&format!(
-            "\nYour brief covers exactly these files:\n{}\n",
-            scope.only.join("\n")
-        ));
+        let lead = if scope.review_others {
+            "Files no agent brief covers yet"
+        } else {
+            "Your brief covers exactly these files"
+        };
+        prompt.push_str(&format!("\n{lead}:\n{}\n", scope.only.join("\n")));
     }
     prompt
 }
@@ -380,6 +422,7 @@ pub fn generate_brief(
             previous: &previous,
             others: &others,
             only: &only,
+            review_others: false,
         },
     );
     instructions.push_str(JSON_ONLY);

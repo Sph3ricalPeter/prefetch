@@ -105,17 +105,31 @@ export function riskReasons(intent: BriefIntent, inferred = false): string[] {
 }
 
 /** Reading order: high risk, then medium, then fix › feat › the rest;
- *  unrelated intents last. Stable otherwise, so the agent's order holds. */
-export function sortIntents<T extends { intent: BriefIntent }>(list: T[]): T[] {
-  const key = ({ intent }: T) => [
-    intent.kind === "unrelated" ? 1 : 0,
-    TIER_RANK[intent.tier ?? ""] ?? 2,
-    TYPE_RANK[intentType(intent) ?? ""] ?? 2,
+ *  unrelated intents last. The commit-message prompt ranks the same way. */
+function compareIntents(a: BriefIntent, b: BriefIntent): number {
+  const key = (i: BriefIntent) => [
+    i.kind === "unrelated" ? 1 : 0,
+    TIER_RANK[i.tier ?? ""] ?? 2,
+    TYPE_RANK[intentType(i) ?? ""] ?? 2,
   ];
+  const ka = key(a);
+  const kb = key(b);
+  return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+}
+
+/** Intents in reading order. Stable otherwise, so the agent's order holds. */
+export function sortIntents<T extends { intent: BriefIntent }>(list: T[]): T[] {
+  return [...list].sort((a, b) => compareIntents(a.intent, b.intent));
+}
+
+/** Briefs by their most important intent, so cards read in the same order
+ *  as the suggested commit message. */
+export function sortBriefs<T extends { intents: { intent: BriefIntent }[] }>(list: T[]): T[] {
+  const top = (b: T) => sortIntents(b.intents)[0]?.intent;
   return [...list].sort((a, b) => {
-    const ka = key(a);
-    const kb = key(b);
-    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+    const ta = top(a);
+    const tb = top(b);
+    return ta && tb ? compareIntents(ta, tb) : ta ? -1 : tb ? 1 : 0;
   });
 }
 

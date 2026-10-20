@@ -755,21 +755,117 @@ pub fn parse_generated(raw: &str) -> Result<Brief, AppError> {
     Ok(b.normalized())
 }
 
-/// `{"brief": ..., "message": "..."}` from model output: the brief (as
-/// [`parse_generated`]) and the raw commit message.
-pub fn parse_generated_with_message(raw: &str) -> Result<(Brief, String), AppError> {
-    let text = strip_fences(raw);
-    let v: serde_json::Value = serde_json::from_str(text)
-        .map_err(|e| AppError::Other(format!("Claude returned invalid JSON: {e}")))?;
+/// What Summarize returns: the inferred brief, its verdict on agent briefs,
+/// and the commit message.
+pub struct Summary {
+    pub inferred: Option<Brief>,
+    /// Session → rewritten brief, or `None` to drop it. Absent: kept as is.
+    pub agents: HashMap<String, Option<Brief>>,
+    pub message: String,
+}
+
+/// `{"brief": ..., "agents": {...}, "message": "..."}` from model output.
+pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
+    let invalid =
+        |e: serde_json::Error| AppError::Other(format!("Claude returned invalid JSON: {e}"));
+    let v: serde_json::Value = serde_json::from_str(strip_fences(raw)).map_err(invalid)?;
+    let inferred = match &v["brief"] {
+        serde_json::Value::Null => None,
+        b => Some(parse_generated(&b.to_string())?),
+    };
+    // Keyed by session as asked, but models also key by file name or send a
+    // list of briefs carrying their `session`.
+    let entries: Vec<(String, serde_json::Value)> = match &v["agents"] {
+        serde_json::Value::Object(map) => map.iter().map(|(k, b)| (k.clone(), b.clone())).collect(),
+        serde_json::Value::Array(list) => list
+            .iter()
+            .filter_map(|b| Some((b["session"].as_str()?.to_string(), b.clone())))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut agents = HashMap::new();
+    for (key, b) in entries {
+        let session = key.trim().trim_end_matches(".json").to_string();
+        let rewrite = match b {
+            serde_json::Value::Null => None,
+            // "keep" or any other note: leave the draft alone.
+            serde_json::Value::String(s) if s.eq_ignore_ascii_case("drop") => None,
+            serde_json::Value::String(_) => continue,
+            b => Some(
+                serde_json::from_value::<Brief>(b)
+                    .map_err(invalid)?
+                    .normalized(),
+            ),
+        };
+        agents.insert(session, rewrite);
+    }
+    tracing::info!(
+        edits = ?agents.iter().map(|(k, v)| (k, v.is_some())).collect::<Vec<_>>(),
+        has_brief = !v["brief"].is_null(),
+        "summary parsed"
+    );
     let message = v["message"].as_str().unwrap_or_default().to_string();
-    Ok((parse_generated(&v["brief"].to_string())?, message))
+    Ok(Summary {
+        inferred,
+        agents,
+        message,
+    })
+}
+
+/// Write Summarize's edits: rewritten agent drafts (kept to the files their
+/// session claimed), dropped ones deleted, then the inferred brief for every
+/// changed file no agent draft claims afterwards. Sessions not in `agents`
+/// (or unknown to `current`) are left alone.
+pub fn apply_summary(path: &str, current: &[Brief], summary: &Summary) -> Result<(), AppError> {
+    let repo = Repository::open(path)?;
+    let dir = wip_dir(&repo);
+    let write_err = |e: std::io::Error| AppError::Other(format!("Write brief: {e}"));
+    let unknown: Vec<&String> = summary
+        .agents
+        .keys()
+        .filter(|k| !current.iter().any(|a| &a.session == *k))
+        .collect();
+    if !unknown.is_empty() {
+        tracing::warn!(?unknown, "summary edits name no current draft; ignored");
+    }
+    for agent in current {
+        let Some(edit) = summary.agents.get(&agent.session) else {
+            continue;
+        };
+        let target = dir.join(format!("{}.json", agent.session));
+        let own: HashSet<String> = agent.files().cloned().collect();
+        match edit.as_ref().and_then(|b| b.restricted_to(&own)) {
+            Some(mut b) => {
+                b.session = agent.session.clone();
+                b.inferred = false;
+                let json = serde_json::to_string_pretty(&b)
+                    .map_err(|e| AppError::Other(format!("Serialize brief: {e}")))?;
+                fs::write(&target, json).map_err(write_err)?;
+            }
+            None => fs::remove_file(&target).or_else(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Ok(())
+                } else {
+                    Err(write_err(e))
+                }
+            })?,
+        }
+    }
+    let unclaimed = wip_split(path)?.unclaimed;
+    match &summary.inferred {
+        Some(b) => write_inferred(path, b, &unclaimed),
+        None => {
+            let _ = fs::remove_file(dir.join(format!("{INFERRED}.json")));
+            Ok(())
+        }
+    }
 }
 
 /// Session name of the brief Prefetch infers for the working tree.
 pub const INFERRED: &str = "inferred";
 
 /// Changes as owned by briefs (the working tree, or one commit's note): the
-/// briefs agent sessions wrote (Prefetch never edits them), the inferred one,
+/// briefs agent sessions wrote (only Summarize edits them), the inferred one,
 /// and the changed files no agent brief claims, which inference covers.
 pub struct WipSplit {
     pub agents: Vec<Brief>,
@@ -829,8 +925,20 @@ pub fn prompt_context(briefs: &[Brief]) -> String {
         s.push('\n');
     }
     let mut intents: Vec<&Intent> = briefs.iter().flat_map(|b| &b.intents).collect();
-    // Stable: same tier keeps brief order.
-    intents.sort_by_key(|i| std::cmp::Reverse(i.tier));
+    // The Brief view's order (`sortIntents` in src/lib/brief.ts), so the
+    // message lists intents the way the cards read. Stable within a rank.
+    let type_rank = |t: &str| match t {
+        "fix" => 0,
+        "feat" => 1,
+        _ => 2,
+    };
+    intents.sort_by_key(|i| {
+        (
+            i.kind == "unrelated",
+            std::cmp::Reverse(i.tier),
+            type_rank(&i.commit_type),
+        )
+    });
     if !intents.is_empty() {
         s.push_str("Intents, most important first:\n");
     }
@@ -901,6 +1009,44 @@ mod tests {
             1
         );
         assert!(parse_note("{}").is_err());
+    }
+
+    #[test]
+    fn summary_keeps_rewrites_and_drops_agent_drafts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let path = dir.to_str().unwrap();
+        git(dir, &["init", "-q"]);
+        for f in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            fs::write(dir.join(f), "x").unwrap();
+        }
+        let wip = dir.join(".git/prefetch/wip");
+        fs::create_dir_all(&wip).unwrap();
+        fs::write(wip.join("keep.json"), draft("keep", &[&["a.rs"]])).unwrap();
+        fs::write(wip.join("fix.json"), draft("fix", &[&["b.rs"]])).unwrap();
+        fs::write(wip.join("gone.json"), draft("gone", &[&["c.rs"]])).unwrap();
+        let agents = wip_split(path).unwrap().agents;
+
+        // The rewrite tries to grab d.rs too; it may only keep its own b.rs.
+        let s = parse_summary(
+            r#"{"brief":{"intent":{"title":"inf"},"intents":[{"title":"i","files":["a.rs","c.rs","d.rs"]}]},
+                "agents":{"fix":{"intent":{"title":"Never send twice"},"intents":[{"title":"r","files":["b.rs","d.rs"]}]},
+                          "gone":null,"../evil":null},
+                "message":"fix: x"}"#,
+        )
+        .unwrap();
+        apply_summary(path, &agents, &s).unwrap();
+
+        let briefs = read_wip(path).unwrap().briefs;
+        let by = |s: &str| briefs.iter().find(|b| b.session == s);
+        assert_eq!(by("keep").unwrap().intent.title, "lead");
+        let fix = by("fix").unwrap();
+        assert_eq!(fix.intent.title, "Never send twice");
+        assert!(!fix.inferred);
+        assert_eq!(fix.intents[0].files, ["b.rs"]);
+        assert!(by("gone").is_none() && !wip.join("gone.json").exists());
+        // The dropped draft's c.rs and the free d.rs fall to inference.
+        assert_eq!(by(INFERRED).unwrap().intents[0].files, ["c.rs", "d.rs"]);
     }
 
     #[test]
@@ -1121,12 +1267,13 @@ mod tests {
         assert_eq!(joins, ["", "x"]);
         assert_eq!(b.intents[0].commit_type, "fix");
         assert!(parse_generated("not json").is_err());
-        let (with_msg, msg) = parse_generated_with_message(
+        let s = parse_summary(
             "{\"brief\":{\"intent\":{\"title\":\"t\"}},\"message\":\"fix: x\\n\\nwhy\"}",
         )
         .unwrap();
-        assert!(with_msg.inferred);
-        assert_eq!(msg, "fix: x\n\nwhy");
+        assert!(s.inferred.unwrap().inferred);
+        assert!(s.agents.is_empty());
+        assert_eq!(s.message, "fix: x\n\nwhy");
 
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().to_str().unwrap();

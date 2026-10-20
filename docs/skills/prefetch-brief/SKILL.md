@@ -31,7 +31,8 @@ Several agents can work in the same working tree at once. Each one keeps its own
 ## When
 
 - Write the whole file again after each meaningful batch of edits, and before you end your turn.
-- If the file is gone, Prefetch used it for a commit. Write a new file that describes only the work that is still uncommitted.
+- Read your file before you write it again. When the user summarizes their changes, Prefetch may rewrite your draft. Keep its corrections and add your new work.
+- If the file is gone, Prefetch used it for a commit, or dropped it because nothing it described was still in the diff. Write a new file that describes only the work that is still uncommitted.
 
 ## Format
 

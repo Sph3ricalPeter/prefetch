@@ -20,7 +20,7 @@ import { buildFileTree, collectDirPaths } from "@/lib/file-tree";
 import { cn } from "@/lib/utils";
 import { COMMIT_TYPE_META } from "@/lib/commit-type";
 import { COMMIT_TYPE_ICONS } from "@/lib/commit-type-icons";
-import { TIER_META, intentType, matchBriefs, riskReasons, sortIntents, type ShownIntent } from "@/lib/brief";
+import { TIER_META, intentType, matchBriefs, riskReasons, sortBriefs, sortIntents, type ShownIntent } from "@/lib/brief";
 import type { Brief, FileStatus, RiskTier } from "@/types/git";
 
 /** DOM twins of the canvas icons in TIER_META. */
@@ -66,7 +66,7 @@ export function BriefView({
         </p>
       ))}
 
-      {shown.map(({ brief, intents }) => {
+      {sortBriefs(shown).map(({ brief, intents }) => {
         const key = brief.session || brief.intent.title;
         return (
           <BriefCard
