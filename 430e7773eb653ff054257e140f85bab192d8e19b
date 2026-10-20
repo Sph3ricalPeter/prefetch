@@ -1,0 +1,17 @@
+{
+  "intent": {
+    "title": "Name every risky intent when the message has no description",
+    "why": "With \"Suggest description\" off, the suggested message kept only its first line, which named one intent, so several high-risk changes went unmentioned."
+  },
+  "intents": [
+    {
+      "title": "Write a subject that lists the risky intents",
+      "why": "When no description is wanted, Claude is now asked for a subject line that names every high-risk intent, then medium ones while it stays under about 100 characters, instead of writing a description that gets thrown away.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["ai commit message"],
+      "files": ["src-tauri/src/git/ai.rs", "src-tauri/src/commands/ai.rs", "src/lib/commands.ts", "src/components/staging/commit-box.tsx"],
+      "risk": { "contract": true, "why": "The suggest command takes a new argument, so the app and its backend have to match." }
+    }
+  ]
+}
