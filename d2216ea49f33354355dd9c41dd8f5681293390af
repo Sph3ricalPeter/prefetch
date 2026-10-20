@@ -1,0 +1,26 @@
+{
+  "intent": {
+    "title": "Suggested commit messages cover every risky intent",
+    "why": "With three intents staged, the suggested message described only a harmless one and left out a high-risk and a mid-risk change entirely."
+  },
+  "intents": [
+    {
+      "title": "Show the model every intent, riskiest first",
+      "why": "The model now sees each intent's risk level and concern, with all intents from all briefs in one list ordered by risk, so a risky change can't hide behind a harmless lead.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["ai commit message", "change brief"],
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": { "shared": false, "tested": true }
+    },
+    {
+      "title": "Require one body line per intent in suggestions",
+      "why": "The message now gives one line per intent, most important first, never drops a high or mid risk one, and only drops low-risk ones when the body would get too long.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["ai commit message"],
+      "files": ["src-tauri/src/git/ai.rs"],
+      "risk": {}
+    }
+  ]
+}
