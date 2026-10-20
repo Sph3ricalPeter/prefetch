@@ -165,14 +165,21 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
     : "";
   const unresolvedCount = fileStatuses.filter((f) => f.is_conflicted).length;
 
-  const stagedCount = fileStatuses.filter((f) => f.is_staged).length;
-  const canCommit =
-    stagedCount > 0 && commitMessage.trim().length > 0 && !isLoading && !isSuggesting;
-  const canContinue = unresolvedCount === 0 && !isLoading;
-  const canSuggest = claudeAvailable && stagedCount > 0 && !isOperationInProgress && !amendMode;
-
   // Without Claude there's no Summarize, so the Brief tab keeps the typed message.
   const summarizing = briefMode && claudeAvailable && !isOperationInProgress;
+  // The Brief tab commits every change, staging what isn't staged yet.
+  const unstagedPaths = [...new Set(fileStatuses.filter((f) => !f.is_staged).map((f) => f.path))];
+  const stagedCount = summarizing
+    ? new Set(fileStatuses.map((f) => f.path)).size
+    : fileStatuses.filter((f) => f.is_staged).length;
+  const canCommit =
+    stagedCount > 0 &&
+    commitMessage.trim().length > 0 &&
+    !isLoading &&
+    !isSuggesting &&
+    !(summarizing && unresolvedCount > 0);
+  const canContinue = unresolvedCount === 0 && !isLoading;
+  const canSuggest = claudeAvailable && stagedCount > 0 && !isOperationInProgress && !amendMode;
   // Conflicts need resolving first: staging them would mark them resolved.
   const canSummarize =
     fileStatuses.length > 0 && unresolvedCount === 0 && !amendMode && !isLoading;
@@ -180,9 +187,7 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
   const handleSuggest = async (writeBrief: boolean) => {
     setIsSuggesting(true);
     try {
-      const unstaged = writeBrief
-        ? [...new Set(fileStatuses.filter((f) => !f.is_staged).map((f) => f.path))]
-        : [];
+      const unstaged = writeBrief ? unstagedPaths : [];
       if (unstaged.length > 0) await stage(unstaged);
       const s = useRepoStore.getState();
       // stage() toasts its own failure; don't summarize a subset as if it were everything.
@@ -217,10 +222,15 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
     }
   };
 
-  const handleCommit = () => {
-    if (canCommit) {
-      commit(commitMessage, amendMode);
+  const handleCommit = async () => {
+    if (!canCommit) return;
+    if (summarizing && unstagedPaths.length > 0) {
+      await stage(unstagedPaths);
+      // stage() toasts its own failure; don't commit a subset of the changes.
+      const left = useRepoStore.getState().fileStatuses;
+      if (left.some((f) => !f.is_staged && unstagedPaths.includes(f.path))) return;
     }
+    commit(commitMessage, amendMode);
   };
 
   const handleContinue = () => {
