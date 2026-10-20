@@ -81,6 +81,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
 ## Rules
 
 - **`intent`** is the lead goal. Write `why` from the user's request and the problem: what they asked for and what was wrong. Do not narrate the diff.
+- **Describe the product change, not the process.** How the work came about (a code review, a failing check, a lint run, a release) is never an intent. A fix a review turned up is titled by what it fixes ("Never send a file twice on retry"), not "Fix review findings". If your edits correct work that another draft or a recent commit describes, take your lead intent from that work's goal.
 - **Every file you changed belongs to exactly one intent.** Paths are repo-relative with forward slashes.
 - **`kind`** is one of:
   - `sub`: a part of the lead goal.
