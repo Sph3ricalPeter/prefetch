@@ -1,0 +1,26 @@
+{
+  "intent": {
+    "title": "Suggested commit messages cover every risky intent",
+    "why": "Risky intents could still be left out of the suggested message because the risk levels never actually reached the model."
+  },
+  "intents": [
+    {
+      "title": "Give the message writer each intent's real risk level",
+      "why": "Agent briefs were read without working out their risk level, so every intent looked equally unknown and the riskiest-first order did nothing. Project risk rules now count too.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["ai commit message", "change brief"],
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": { "shared": true, "tested": true, "why": "The same reading of briefs feeds both ways of suggesting a message." }
+    },
+    {
+      "title": "Make the message instructions agree with each other",
+      "why": "The instructions no longer say both \"cover every intent\" and \"low risk ones may be left out\", use one name for unknown risk, and tell the model how to rate the intents it writes itself.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["ai commit message"],
+      "files": ["src-tauri/src/git/ai.rs"],
+      "risk": {}
+    }
+  ]
+}
