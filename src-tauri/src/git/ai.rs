@@ -109,6 +109,8 @@ pub fn suggest_commit_message(
             },
         );
         instructions.push_str(MESSAGE_WITH_BRIEF);
+        instructions.push_str(MESSAGE_FORMAT);
+        instructions.push_str(" Output ONLY the JSON object, no fences, no preamble.");
         let raw = run_claude(
             repo_path,
             claude,
@@ -142,13 +144,19 @@ fn with_instructions(instructions: &str, input: String) -> String {
 const MESSAGE_WITH_BRIEF: &str = "\nReply with ONE JSON object: \
     {\"brief\": <your Change Brief, covering the files you were given, staged or not>, \
     \"message\": \"<git commit message for the STAGED changes only>\"}. \
-    The message is written from your brief together with the other sessions' briefs: \
-    line 1 is the subject: imperative mood, \
-    the conventional-commit prefix of the most important staged intent (high risk \
-    first, then fix, then feat), <=72 chars, no trailing period. Then a blank line, \
-    then a body of 1-4 short plain-text lines explaining why, wrapped at 72 chars. \
-    If an issue is listed, end the body with `Refs: <ID>`. \
-    Output ONLY the JSON object, no fences, no preamble.";
+    The message is written from your brief together with the other sessions' briefs, \
+    covering every intent with staged files. ";
+
+/// Message format shared by both suggestion prompts. The model used to keep
+/// only the lead intent; every risky one has to make it into the message.
+const MESSAGE_FORMAT: &str = "Rank the intents by importance: higher risk tier \
+    first, then fix, then feat, then the rest. Line 1 is the subject: imperative \
+    mood, the conventional-commit prefix and gist of the most important intent, \
+    <=72 chars, no trailing period. Then a blank line, then a body with one short \
+    plain-text line per intent saying why, most important first, wrapped at 72 \
+    chars. Never leave out a high or mid risk intent; leave out low risk or \
+    unrated ones only when the body would pass 8 lines. If an issue is listed, \
+    end the body with `Refs: <ID>`.";
 
 /// Untracked files aren't in `git diff`; their text, so the model sees what
 /// they are. Binary or large ones go by name only.
@@ -378,18 +386,14 @@ fn intent_prompt(branch: &str, intent: &str) -> String {
     } else {
         format!(
             "The Change Brief below records the intent behind them. Trust it for WHY; \
-             trust the diff for WHAT. Lead with the lead intent, not a list of files.\n\n\
+             trust the diff for WHAT. Describe intents, not a list of files.\n\n\
              <intent>\n{intent}\n</intent>\n\n"
         )
     };
     format!(
         "Write a git commit message for the staged changes on stdin (branch: {branch}); \
          a diffstat comes first, then the diff.\n\n\
-         {context}Format: line 1 is the subject: imperative mood, the conventional-commit prefix \
-         of the most important intent (fix over feat over the rest), <=72 chars, no trailing period. \
-         Then a blank line, then a body of 1-4 short plain-text lines explaining why, \
-         wrapped at 72 chars. If an issue is listed, end the body with `Refs: <ID>`. \
-         Output ONLY the message, no fences, no preamble."
+         {context}{MESSAGE_FORMAT} Output ONLY the message, no fences, no preamble."
     )
 }
 

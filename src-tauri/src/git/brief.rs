@@ -811,7 +811,9 @@ pub fn write_inferred(path: &str, generated: &Brief, unclaimed: &[String]) -> Re
     fs::write(&target, json).map_err(|e| AppError::Other(format!("Write brief: {e}")))
 }
 
-/// Plain-text rendering for the commit-message prompt.
+/// Plain-text rendering for the commit-message prompt: each brief's lead,
+/// then every intent across them, riskiest first, so the model can't miss
+/// a risky one behind a benign lead.
 pub fn prompt_context(briefs: &[Brief]) -> String {
     let mut s = String::new();
     for b in briefs {
@@ -823,20 +825,34 @@ pub fn prompt_context(briefs: &[Brief]) -> String {
             s.push_str(format!("Issue: {} {}", i.id, i.title).trim_end());
             s.push('\n');
         }
-        for i in &b.intents {
-            let tag = if i.commit_type.is_empty() {
-                i.kind.clone()
-            } else {
-                format!("{}, {}", i.kind, i.commit_type)
-            };
-            s.push_str(&format!("- [{tag}] {}", i.title));
-            if !i.why.is_empty() {
-                s.push_str(&format!(" — {}", i.why));
-            }
-            if !i.files.is_empty() {
-                s.push_str(&format!(" ({})", i.files.join(", ")));
-            }
-            s.push('\n');
+        s.push('\n');
+    }
+    let mut intents: Vec<&Intent> = briefs.iter().flat_map(|b| &b.intents).collect();
+    // Stable: same tier keeps brief order.
+    intents.sort_by_key(|i| std::cmp::Reverse(i.tier));
+    if !intents.is_empty() {
+        s.push_str("Intents, most important first:\n");
+    }
+    for i in intents {
+        let tier = match i.tier {
+            Some(Tier::High) => "high risk",
+            Some(Tier::Mid) => "mid risk",
+            Some(Tier::Low) => "low risk",
+            None => "risk unknown",
+        };
+        let mut tag = vec![tier, i.kind.as_str()];
+        if !i.commit_type.is_empty() {
+            tag.push(&i.commit_type);
+        }
+        s.push_str(&format!("- [{}] {}", tag.join(", "), i.title));
+        if !i.why.is_empty() {
+            s.push_str(&format!(" — {}", i.why));
+        }
+        if let Some(r) = i.risk.as_ref().filter(|r| !r.why.is_empty()) {
+            s.push_str(&format!("; concern: {}", r.why));
+        }
+        if !i.files.is_empty() {
+            s.push_str(&format!(" ({})", i.files.join(", ")));
         }
         s.push('\n');
     }
@@ -884,6 +900,27 @@ mod tests {
             1
         );
         assert!(parse_note("{}").is_err());
+    }
+
+    #[test]
+    fn prompt_lists_riskiest_intent_first_across_briefs() {
+        let brief = |tier: Option<Tier>, title: &str| {
+            let mut b: Brief = serde_json::from_str(&draft("s", &[&["x.rs"]])).unwrap();
+            b.intents[0].title = title.into();
+            b.intents[0].tier = tier;
+            b
+        };
+        let ctx = prompt_context(&[
+            brief(Some(Tier::Low), "benign"),
+            brief(None, "unrated"),
+            brief(Some(Tier::High), "risky"),
+            brief(Some(Tier::Mid), "middling"),
+        ]);
+        let at = |t: &str| ctx.find(t).unwrap();
+        assert!(at("risky") < at("middling"));
+        assert!(at("middling") < at("benign"));
+        assert!(at("benign") < at("unrated"));
+        assert!(ctx.contains("[high risk, sub] risky"));
     }
 
     #[test]
