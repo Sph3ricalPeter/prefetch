@@ -1,0 +1,44 @@
+{
+  "intent": {
+    "title": "Summarize reviews every brief, not just the uncovered files",
+    "why": "Pressing Summarize again could never fix an agent's brief, so a brief titled after a code review stayed no matter how often the user re-summarized; and a subject-only message filed every change under the first one's type."
+  },
+  "intents": [
+    {
+      "title": "Let Summarize keep, rewrite or drop agent briefs",
+      "why": "Summarize now always sends every brief to Claude, which keeps the ones that are right, rewrites ones that misdescribe the change, and drops ones with nothing left in the diff. A rewrite can't take another brief's files, and files of a dropped brief fall to Prefetch's own brief. Edits named by file name or sent as a list are understood too, and the log records what was applied.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["change brief", "ai commit message"],
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": { "data": true, "tested": true, "why": "Summarize now rewrites and deletes the agents' draft files in the repository." }
+    },
+    {
+      "title": "Tell Claude what makes an agent brief wrong",
+      "why": "Told only to keep briefs that are right, Claude kept them all. It now has to fold a fix to code added in the same diff into the feature that adds it, remove work described twice, and rewrite leads that describe a review instead of a change. A subject-only message gives each kind of change its own prefix (fix:, ci:, ...), separated by commas.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["ai commit message"],
+      "files": ["src-tauri/src/git/ai.rs"],
+      "risk": { "shared": true }
+    },
+    {
+      "title": "Tell agents their draft may be rewritten",
+      "why": "Agents now read their draft before writing it again and keep Prefetch's corrections, so their next update doesn't undo a summary.",
+      "kind": "sub",
+      "type": "docs",
+      "tags": ["change brief", "agent skill"],
+      "files": ["docs/skills/prefetch-brief/SKILL.md"],
+      "risk": { "shared": true }
+    },
+    {
+      "title": "Show briefs in the same order as the commit message",
+      "why": "Brief cards came in file-name order while the message lists changes by importance. Cards now sort by their most important intent, and the message prompt ranks intents by the same rule.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["change brief"],
+      "files": ["src/lib/brief.ts", "src/components/layout/brief-view.tsx"],
+      "risk": {}
+    }
+  ]
+}
