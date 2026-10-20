@@ -1,0 +1,25 @@
+{
+  "intent": {
+    "title": "Each changed file belongs to exactly one intent",
+    "why": "A file edited for two reasons showed in full under each intent, so a reader couldn't tell which part belonged where. The user wants such changes merged into one intent instead of split into hunks."
+  },
+  "intents": [
+    {
+      "title": "Merge intents that share a file when summarizing",
+      "why": "Summarize is told to merge intents that share a file into one covering all their changes, and may move files between briefs to do it. Afterwards Prefetch makes sure no file is left in two intents and drops briefs left empty.",
+      "kind": "sub",
+      "type": "feat",
+      "tags": ["change brief"],
+      "files": ["src-tauri/src/git/brief.rs", "src-tauri/src/git/ai.rs"],
+      "risk": { "data": true, "tested": true, "why": "Summarize now also edits drafts it wasn't asked to change, when a file they share moves elsewhere." }
+    },
+    {
+      "title": "Shelve the hunk-level intents proposal",
+      "kind": "sub",
+      "type": "docs",
+      "tags": ["change brief"],
+      "files": ["docs/research/hunk-intents.md"],
+      "risk": {}
+    }
+  ]
+}
