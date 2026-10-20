@@ -1,0 +1,17 @@
+{
+  "intent": {
+    "title": "Keep change briefs about the product, not the process",
+    "why": "Agents that fixed code during a review wrote briefs titled \"Fix review findings\", which tells the reader nothing about what changed for users."
+  },
+  "intents": [
+    {
+      "title": "Tell agents to describe what a fix changes",
+      "why": "The brief rules now say how the work came about is never an intent, and that fixes to earlier work take that work's goal as their lead. The in-app brief writer reads the same rules.",
+      "kind": "sub",
+      "type": "docs",
+      "tags": ["change brief", "agent skill"],
+      "files": ["docs/skills/prefetch-brief/SKILL.md"],
+      "risk": { "shared": true, "why": "The same text steers both agents and the in-app brief and commit message generator." }
+    }
+  ]
+}
