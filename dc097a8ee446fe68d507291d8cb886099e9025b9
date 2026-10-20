@@ -1,0 +1,34 @@
+{
+  "intent": {
+    "title": "Summarize never loses an agent's brief by accident",
+    "why": "Summarize could delete a high-risk intent just because its draft sorted later, overwrite a draft an agent wrote while Claude was thinking, or change drafts and then fail on an empty message."
+  },
+  "intents": [
+    {
+      "title": "Only change agent drafts Summarize meant to change",
+      "why": "Drafts are read again before writing, and one its agent changed or removed meanwhile is left as the agent has it. A file leaves an untouched draft only when a rewrite merged it in, and the reply is checked before any draft is touched.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["change brief"],
+      "files": ["src-tauri/src/git/brief.rs"],
+      "risk": { "data": true, "tested": true, "why": "Decides which agent drafts get rewritten or deleted." }
+    },
+    {
+      "title": "Rank merged intents and order messages like the Brief view",
+      "why": "A merged agent intent now keeps the highest risk level of the intents it came from, the message ranks low and unknown risk the same way the cards do, and the prompt's example no longer comes from another project.",
+      "kind": "sub",
+      "type": "fix",
+      "tags": ["ai commit message"],
+      "files": ["src-tauri/src/git/ai.rs", "src-tauri/src/commands/ai.rs", "src/lib/commands.ts"],
+      "risk": {}
+    },
+    {
+      "title": "Share the stage-everything step in the commit box",
+      "kind": "enabling",
+      "type": "refactor",
+      "tags": ["brief tab"],
+      "files": ["src/components/staging/commit-box.tsx"],
+      "risk": {}
+    }
+  ]
+}
