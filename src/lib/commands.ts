@@ -520,7 +520,8 @@ export async function aiAvailable(): Promise<boolean> {
 }
 
 /** Ask Claude Code for a commit message describing the staged diff; with
- *  `writeBrief` it also rewrites the inferred Change Brief in the same call.
+ *  `writeBrief` it also reviews the Change Briefs (agent drafts included)
+ *  in the same call.
  *  Without `withBody` the subject alone names the risky intents. */
 export async function suggestCommitMessage(
   model: string,

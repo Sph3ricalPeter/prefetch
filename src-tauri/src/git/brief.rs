@@ -813,58 +813,74 @@ pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
 }
 
 /// Write Summarize's edits: rewritten agent drafts, dropped ones deleted,
-/// every file left in only one intent, then the inferred brief for every
-/// changed file no agent draft claims afterwards. Drafts Summarize didn't
-/// edit change only when a file they share moves elsewhere.
-pub fn apply_summary(path: &str, current: &[Brief], summary: &Summary) -> Result<(), AppError> {
+/// then the inferred brief for every changed file no agent draft claims
+/// afterwards. `shown` is what the model saw; a draft its agent changed or
+/// removed since then is left as the agent has it now.
+pub fn apply_summary(path: &str, shown: &[Brief], summary: &Summary) -> Result<(), AppError> {
     let repo = Repository::open(path)?;
     let dir = wip_dir(&repo);
     let write_err = |e: std::io::Error| AppError::Other(format!("Write brief: {e}"));
-    let unknown: Vec<&String> = summary
+    let fresh: Vec<Brief> = tiered_drafts(&repo)
+        .into_iter()
+        .filter(|b| b.session != INFERRED)
+        .collect();
+    let stale: Vec<&String> = summary
         .agents
         .keys()
-        .filter(|k| !current.iter().any(|a| &a.session == *k))
+        .filter(|k| !fresh.iter().any(|b| &b.session == *k && shown.contains(b)))
         .collect();
-    if !unknown.is_empty() {
-        tracing::warn!(?unknown, "summary edits name no current draft; ignored");
+    if !stale.is_empty() {
+        tracing::warn!(?stale, "summary edits name no unchanged draft; ignored");
     }
     // A rewrite may take any changed file: merging two sessions' intents on
-    // one file moves it between briefs. Rewrites go first so their merges win.
+    // one file moves it between briefs.
     let dirty = dirty_paths(&repo)?;
-    let mut drafts: Vec<(String, Option<Brief>, bool)> = Vec::new();
-    for agent in current {
-        match summary.agents.get(&agent.session) {
-            Some(edit) => drafts.insert(
-                drafts.iter().filter(|d| d.2).count(),
-                (
+    // (session, brief or None to drop, needs writing, edited by Summarize)
+    let mut drafts: Vec<(String, Option<Brief>, bool, bool)> = fresh
+        .iter()
+        .map(|agent| {
+            let edit = summary
+                .agents
+                .get(&agent.session)
+                .filter(|_| shown.contains(agent));
+            match edit {
+                Some(e) => (
                     agent.session.clone(),
-                    edit.as_ref().and_then(|b| b.restricted_to(&dirty)),
+                    e.as_ref().and_then(|b| b.restricted_to(&dirty)),
+                    true,
                     true,
                 ),
-            ),
-            None => drafts.push((agent.session.clone(), Some(agent.clone()), false)),
-        }
-    }
-    // One file, one intent: a file already claimed leaves every later intent,
-    // and an intent or brief left with no files goes.
-    let mut seen: HashSet<String> = HashSet::new();
-    for (_, brief, changed) in &mut drafts {
-        let Some(b) = brief else { continue };
-        let before = b.intents.clone();
-        b.intents.retain_mut(|i| {
-            if i.files.is_empty() {
-                return true;
+                None => (agent.session.clone(), Some(agent.clone()), false, false),
             }
-            i.files.retain(|f| seen.insert(f.clone()));
-            !i.files.is_empty()
-        });
-        if b.intents != before {
-            *changed = true;
-        }
-        if !b.intents.iter().any(|i| !i.files.is_empty()) {
-            *brief = None;
+        })
+        .collect();
+    // One file, one intent: a file a rewrite claims leaves every other intent,
+    // and an intent or brief left with no files goes. Overlaps between drafts
+    // Summarize left alone stay (the view shows a shared file once), so an
+    // untouched intent is never lost to an arbitrary order.
+    let mut claimed: HashSet<String> = HashSet::new();
+    for edited in [true, false] {
+        for (_, brief, write, _) in drafts.iter_mut().filter(|d| d.3 == edited) {
+            let Some(b) = brief else { continue };
+            let before = b.intents.clone();
+            b.intents.retain_mut(|i| {
+                if i.files.is_empty() {
+                    return true;
+                }
+                if edited {
+                    i.files.retain(|f| claimed.insert(f.clone()));
+                } else {
+                    i.files.retain(|f| !claimed.contains(f));
+                }
+                !i.files.is_empty()
+            });
+            *write |= b.intents != before;
+            if !b.intents.iter().any(|i| !i.files.is_empty()) {
+                *brief = None;
+            }
         }
     }
+    let drafts = drafts.into_iter().map(|(s, b, w, _)| (s, b, w));
     for (session, brief, changed) in drafts {
         if !changed {
             continue;
@@ -932,7 +948,7 @@ pub fn wip_split(path: &str) -> Result<WipSplit, AppError> {
 
 /// Store the inferred brief, narrowed to `unclaimed` so it never repeats a
 /// file an agent describes. Nothing left: the inferred draft is removed.
-pub fn write_inferred(path: &str, generated: &Brief, unclaimed: &[String]) -> Result<(), AppError> {
+fn write_inferred(path: &str, generated: &Brief, unclaimed: &[String]) -> Result<(), AppError> {
     let repo = Repository::open(path)?;
     let dir = wip_dir(&repo);
     let target = dir.join(format!("{INFERRED}.json"));
@@ -966,17 +982,18 @@ pub fn prompt_context(briefs: &[Brief]) -> String {
     let mut intents: Vec<&Intent> = briefs.iter().flat_map(|b| &b.intents).collect();
     // The Brief view's order (`sortIntents` in src/lib/brief.ts), so the
     // message lists intents the way the cards read. Stable within a rank.
-    let type_rank = |t: &str| match t {
-        "fix" => 0,
-        "feat" => 1,
-        _ => 2,
-    };
     intents.sort_by_key(|i| {
-        (
-            i.kind == "unrelated",
-            std::cmp::Reverse(i.tier),
-            type_rank(&i.commit_type),
-        )
+        let tier = match i.tier {
+            Some(Tier::High) => 0,
+            Some(Tier::Mid) => 1,
+            _ => 2,
+        };
+        let kind = match i.commit_type.to_lowercase().as_str() {
+            "fix" => 0,
+            "feat" => 1,
+            _ => 2,
+        };
+        (i.kind == "unrelated", tier, kind)
     });
     if !intents.is_empty() {
         s.push_str("Intents, most important first:\n");
@@ -1066,14 +1083,21 @@ mod tests {
         fs::write(wip.join("fix.json"), draft("fix", &[&["b.rs"]])).unwrap();
         fs::write(wip.join("dup.json"), draft("dup", &[&["f.rs"], &["f.rs"]])).unwrap();
         fs::write(wip.join("gone.json"), draft("gone", &[&["c.rs"]])).unwrap();
+        fs::write(wip.join("busy.json"), draft("busy", &[&["g.rs"]])).unwrap();
         let agents = wip_split(path).unwrap().agents;
 
         // The rewrite merges in share's a.rs and the free d.rs.
         let s = parse_summary(
             r#"{"brief":{"intent":{"title":"inf"},"intents":[{"title":"i","files":["a.rs","c.rs","d.rs"]}]},
                 "agents":{"fix":{"intent":{"title":"Never send twice"},"intents":[{"title":"r","files":["b.rs","d.rs","a.rs"]}]},
-                          "gone":null,"../evil":null},
+                          "gone":null,"busy":null,"../evil":null},
                 "message":"fix: x"}"#,
+        )
+        .unwrap();
+        // busy's agent rewrites its draft while Claude runs: its newer draft wins.
+        fs::write(
+            wip.join("busy.json"),
+            draft("busy", &[&["g.rs"], &["h.rs"]]),
         )
         .unwrap();
         apply_summary(path, &agents, &s).unwrap();
@@ -1085,18 +1109,16 @@ mod tests {
         assert_eq!(fix.intent.title, "Never send twice");
         assert!(!fix.inferred);
         assert_eq!(fix.intents[0].files, ["b.rs", "d.rs", "a.rs"]);
-        // share lost its only file to the merge; dup keeps f.rs in one intent.
+        // share lost its only file to the merge. Drafts Summarize left alone
+        // keep their own overlaps rather than lose an intent to file order.
         assert!(by("share").is_none() && !wip.join("share.json").exists());
-        assert_eq!(by("dup").unwrap().intents.len(), 1);
+        assert_eq!(by("dup").unwrap().intents.len(), 2);
         assert!(by("gone").is_none() && !wip.join("gone.json").exists());
+        assert!(fs::read_to_string(wip.join("busy.json"))
+            .unwrap()
+            .contains("h.rs"));
         // Only the dropped draft's c.rs is left for inference.
         assert_eq!(by(INFERRED).unwrap().intents[0].files, ["c.rs"]);
-        // No file in two intents anywhere.
-        let mut all: Vec<&String> = briefs.iter().flat_map(|b| b.files()).collect();
-        let n = all.len();
-        all.sort();
-        all.dedup();
-        assert_eq!(all.len(), n);
     }
 
     #[test]

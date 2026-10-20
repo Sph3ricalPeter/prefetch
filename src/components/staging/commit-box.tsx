@@ -184,14 +184,21 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
   const canSummarize =
     fileStatuses.length > 0 && unresolvedCount === 0 && !amendMode && !isLoading;
 
+  /** Stage every unstaged change; false when some stayed unstaged (stage()
+   *  toasts its own failure), so the caller doesn't act on a subset. */
+  const stageRest = async () => {
+    if (unstagedPaths.length === 0) return true;
+    await stage(unstagedPaths);
+    return !useRepoStore
+      .getState()
+      .fileStatuses.some((f) => !f.is_staged && unstagedPaths.includes(f.path));
+  };
+
   const handleSuggest = async (writeBrief: boolean) => {
     setIsSuggesting(true);
     try {
-      const unstaged = writeBrief ? unstagedPaths : [];
-      if (unstaged.length > 0) await stage(unstaged);
+      if (writeBrief && !(await stageRest())) return;
       const s = useRepoStore.getState();
-      // stage() toasts its own failure; don't summarize a subset as if it were everything.
-      if (s.fileStatuses.some((f) => !f.is_staged && unstaged.includes(f.path))) return;
       if (!s.fileStatuses.some((f) => f.is_staged)) return;
       const before = {
         repoPath: s.repoPath,
@@ -224,12 +231,7 @@ export function CommitBox({ briefMode = false }: { briefMode?: boolean }) {
 
   const handleCommit = async () => {
     if (!canCommit) return;
-    if (summarizing && unstagedPaths.length > 0) {
-      await stage(unstagedPaths);
-      // stage() toasts its own failure; don't commit a subset of the changes.
-      const left = useRepoStore.getState().fileStatuses;
-      if (left.some((f) => !f.is_staged && unstagedPaths.includes(f.path))) return;
-    }
+    if (summarizing && !(await stageRest())) return;
     commit(commitMessage, amendMode);
   };
 

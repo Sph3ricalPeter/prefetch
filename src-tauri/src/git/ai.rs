@@ -64,10 +64,10 @@ pub struct CommitSuggestion {
     pub body: String,
 }
 
-/// Commit message for the staged diff. With `write_brief` (the Brief tab), one
-/// call also writes the inferred brief for every change no agent describes
-/// (stored as the draft, the earlier one as input). Otherwise, or when agents
-/// describe everything, the briefs covering the staged files are context only.
+/// Commit message for the staged diff. With `write_brief` (Summarize on the
+/// Brief tab), the same call reviews every brief: agent drafts are kept,
+/// rewritten or dropped, and the inferred brief covers whatever none claims.
+/// Otherwise the briefs covering the staged files are context only.
 ///
 /// Deliberately takes no git lock: the diff is captured up front and the
 /// model call can run for several seconds.
@@ -100,7 +100,7 @@ pub fn suggest_commit_message(
         let input = format!(
             "=== STAGED (this commit) ===\n{staged}\n\
              === UNSTAGED (not in this commit) ===\n{unstaged}{}",
-            untracked_text(repo_path, &[])?
+            untracked_text(repo_path)?
         );
         let mut instructions = brief_prompt(
             repo_path,
@@ -125,6 +125,10 @@ pub fn suggest_commit_message(
         )?;
         tracing::debug!(%raw, "summarize output");
         let summary = brief::parse_summary(&raw)?;
+        // Check the reply is whole before it touches anyone's draft.
+        if parse_suggestion(&summary.message).is_none() {
+            return Err(AppError::Other("Claude returned an empty message".into()));
+        }
         brief::apply_summary(repo_path, &split.agents, &summary)?;
         summary.message
     } else {
@@ -154,18 +158,19 @@ const MESSAGE_WITH_BRIEF: &str = "\nReply with ONE JSON object: \
     Leave an agent brief out of `agents` to keep it as it is. \
     The message is written from all the briefs as they stand after your edits, \
     about the intents with staged files. The agent briefs carry each intent's risk \
-    `tier`; your own and rewritten intents have none, so rank them by their risk \
+    `tier`: a rewritten or merged intent ranks at the highest tier among the \
+    intents it came from. Your own intents have none, so rank them by their risk \
     answers: `oneWay` is high risk; `data`, `external`, `contract` or `shared` is mid; \
     none is low. ";
 
 const JSON_ONLY: &str = " Output ONLY the JSON object, no fences, no preamble.";
 
-/// Message format shared by both suggestion prompts. Every high and mid risk
-/// intent must reach the message, however many intents there are; without a
-/// body the subject has to carry them.
+/// Message format shared by both suggestion prompts, ranking intents like the
+/// Brief view. With a body every high and mid risk intent gets a line; a
+/// subject alone must name every high risk one and as many mid ones as fit.
 fn message_format(with_body: bool) -> String {
     let rank = "Rank the intents by importance: higher risk tier first, then fix, \
-        then feat, then the rest.";
+        then feat, then the rest; unrelated intents last.";
     let format = if with_body {
         "Line 1 is the subject: imperative mood, the conventional-commit prefix \
          and gist of the most important intent, <=72 chars, no trailing period. \
@@ -178,9 +183,10 @@ fn message_format(with_body: bool) -> String {
         "Write the subject line only, no body: the intents in a few words each, \
          grouped by conventional-commit type, each group starting with its own \
          prefix, everything separated by `, ` (never `;`), groups ordered by \
-         their most important intent (e.g. `fix: start seniors at 66, find the \
-         calendar arrow, ci: add Vault reach check`). It must name every high risk intent; add mid \
-         risk ones while it stays under about 100 chars, low or unknown risk \
+         their most important intent (e.g. `fix: stop double uploads, find the \
+         date picker arrow, ci: add a reach check job`). It must name every high \
+         risk intent; add mid risk ones while it stays under about 100 chars, \
+         low or unknown risk \
          ones only if there are no others. Shorten words freely. No trailing \
          period."
     };
@@ -189,20 +195,15 @@ fn message_format(with_body: bool) -> String {
 
 /// Untracked files aren't in `git diff`; their text, so the model sees what
 /// they are. Binary or large ones go by name only.
-fn untracked_text(repo_path: &str, only: &[String]) -> Result<String, AppError> {
-    // -z: names unquoted, so non-ASCII paths still match `only`.
+fn untracked_text(repo_path: &str) -> Result<String, AppError> {
+    // -z: names unquoted, so non-ASCII paths come through as they are.
     let untracked = capture(
         repo_path,
         &["ls-files", "-z", "--others", "--exclude-standard"],
         &[],
     )?;
     let mut out = String::new();
-    let wanted = |f: &&str| only.is_empty() || only.iter().any(|o| o == f);
-    for file in untracked
-        .split('\0')
-        .filter(|l| !l.is_empty())
-        .filter(wanted)
-    {
+    for file in untracked.split('\0').filter(|l| !l.is_empty()) {
         let full = Path::new(repo_path).join(file);
         let small = std::fs::metadata(&full).is_ok_and(|m| m.len() <= 20 * 1024);
         let text = small
@@ -221,9 +222,11 @@ fn untracked_text(repo_path: &str, only: &[String]) -> Result<String, AppError> 
 struct BriefScope<'a> {
     /// Earlier version of the brief being rewritten.
     previous: &'a [brief::Brief],
-    /// Other sessions' briefs: context only, their files are off limits.
+    /// Other sessions' briefs: context only and their files off limits, unless
+    /// `review_others`.
     others: &'a [brief::Brief],
-    /// Files the brief covers; empty means all of them.
+    /// Files the brief covers (with `review_others`: no brief covers yet);
+    /// empty means all of them.
     only: &'a [String],
     /// Summarize: `others` are input the model may keep, rewrite or drop.
     review_others: bool,

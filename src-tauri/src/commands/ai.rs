@@ -31,7 +31,7 @@ pub async fn generate_brief(
 }
 
 /// Suggest a commit message for the staged diff via `claude -p`; with
-/// `write_brief` it also rewrites the inferred Change Brief.
+/// `write_brief` it also reviews the Change Briefs (agent drafts included).
 #[tauri::command]
 pub async fn suggest_commit_message(
     state: State<'_, AppState>,
