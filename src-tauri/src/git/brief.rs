@@ -812,10 +812,10 @@ pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
     })
 }
 
-/// Write Summarize's edits: rewritten agent drafts (kept to the files their
-/// session claimed), dropped ones deleted, then the inferred brief for every
-/// changed file no agent draft claims afterwards. Sessions not in `agents`
-/// (or unknown to `current`) are left alone.
+/// Write Summarize's edits: rewritten agent drafts, dropped ones deleted,
+/// every file left in only one intent, then the inferred brief for every
+/// changed file no agent draft claims afterwards. Drafts Summarize didn't
+/// edit change only when a file they share moves elsewhere.
 pub fn apply_summary(path: &str, current: &[Brief], summary: &Summary) -> Result<(), AppError> {
     let repo = Repository::open(path)?;
     let dir = wip_dir(&repo);
@@ -828,16 +828,55 @@ pub fn apply_summary(path: &str, current: &[Brief], summary: &Summary) -> Result
     if !unknown.is_empty() {
         tracing::warn!(?unknown, "summary edits name no current draft; ignored");
     }
+    // A rewrite may take any changed file: merging two sessions' intents on
+    // one file moves it between briefs. Rewrites go first so their merges win.
+    let dirty = dirty_paths(&repo)?;
+    let mut drafts: Vec<(String, Option<Brief>, bool)> = Vec::new();
     for agent in current {
-        let Some(edit) = summary.agents.get(&agent.session) else {
+        match summary.agents.get(&agent.session) {
+            Some(edit) => drafts.insert(
+                drafts.iter().filter(|d| d.2).count(),
+                (
+                    agent.session.clone(),
+                    edit.as_ref().and_then(|b| b.restricted_to(&dirty)),
+                    true,
+                ),
+            ),
+            None => drafts.push((agent.session.clone(), Some(agent.clone()), false)),
+        }
+    }
+    // One file, one intent: a file already claimed leaves every later intent,
+    // and an intent or brief left with no files goes.
+    let mut seen: HashSet<String> = HashSet::new();
+    for (_, brief, changed) in &mut drafts {
+        let Some(b) = brief else { continue };
+        let before = b.intents.clone();
+        b.intents.retain_mut(|i| {
+            if i.files.is_empty() {
+                return true;
+            }
+            i.files.retain(|f| seen.insert(f.clone()));
+            !i.files.is_empty()
+        });
+        if b.intents != before {
+            *changed = true;
+        }
+        if !b.intents.iter().any(|i| !i.files.is_empty()) {
+            *brief = None;
+        }
+    }
+    for (session, brief, changed) in drafts {
+        if !changed {
             continue;
-        };
-        let target = dir.join(format!("{}.json", agent.session));
-        let own: HashSet<String> = agent.files().cloned().collect();
-        match edit.as_ref().and_then(|b| b.restricted_to(&own)) {
+        }
+        let target = dir.join(format!("{session}.json"));
+        match brief {
             Some(mut b) => {
-                b.session = agent.session.clone();
+                b.session = session;
                 b.inferred = false;
+                for i in &mut b.intents {
+                    (i.tier, i.pinned) = (None, false);
+                }
                 let json = serde_json::to_string_pretty(&b)
                     .map_err(|e| AppError::Other(format!("Serialize brief: {e}")))?;
                 fs::write(&target, json).map_err(write_err)?;
@@ -1017,20 +1056,22 @@ mod tests {
         let dir = tmp.path();
         let path = dir.to_str().unwrap();
         git(dir, &["init", "-q"]);
-        for f in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+        for f in ["a.rs", "b.rs", "c.rs", "d.rs", "e.rs", "f.rs"] {
             fs::write(dir.join(f), "x").unwrap();
         }
         let wip = dir.join(".git/prefetch/wip");
         fs::create_dir_all(&wip).unwrap();
-        fs::write(wip.join("keep.json"), draft("keep", &[&["a.rs"]])).unwrap();
+        fs::write(wip.join("keep.json"), draft("keep", &[&["e.rs"]])).unwrap();
+        fs::write(wip.join("share.json"), draft("share", &[&["a.rs"]])).unwrap();
         fs::write(wip.join("fix.json"), draft("fix", &[&["b.rs"]])).unwrap();
+        fs::write(wip.join("dup.json"), draft("dup", &[&["f.rs"], &["f.rs"]])).unwrap();
         fs::write(wip.join("gone.json"), draft("gone", &[&["c.rs"]])).unwrap();
         let agents = wip_split(path).unwrap().agents;
 
-        // The rewrite tries to grab d.rs too; it may only keep its own b.rs.
+        // The rewrite merges in share's a.rs and the free d.rs.
         let s = parse_summary(
             r#"{"brief":{"intent":{"title":"inf"},"intents":[{"title":"i","files":["a.rs","c.rs","d.rs"]}]},
-                "agents":{"fix":{"intent":{"title":"Never send twice"},"intents":[{"title":"r","files":["b.rs","d.rs"]}]},
+                "agents":{"fix":{"intent":{"title":"Never send twice"},"intents":[{"title":"r","files":["b.rs","d.rs","a.rs"]}]},
                           "gone":null,"../evil":null},
                 "message":"fix: x"}"#,
         )
@@ -1043,10 +1084,19 @@ mod tests {
         let fix = by("fix").unwrap();
         assert_eq!(fix.intent.title, "Never send twice");
         assert!(!fix.inferred);
-        assert_eq!(fix.intents[0].files, ["b.rs"]);
+        assert_eq!(fix.intents[0].files, ["b.rs", "d.rs", "a.rs"]);
+        // share lost its only file to the merge; dup keeps f.rs in one intent.
+        assert!(by("share").is_none() && !wip.join("share.json").exists());
+        assert_eq!(by("dup").unwrap().intents.len(), 1);
         assert!(by("gone").is_none() && !wip.join("gone.json").exists());
-        // The dropped draft's c.rs and the free d.rs fall to inference.
-        assert_eq!(by(INFERRED).unwrap().intents[0].files, ["c.rs", "d.rs"]);
+        // Only the dropped draft's c.rs is left for inference.
+        assert_eq!(by(INFERRED).unwrap().intents[0].files, ["c.rs"]);
+        // No file in two intents anywhere.
+        let mut all: Vec<&String> = briefs.iter().flat_map(|b| b.files()).collect();
+        let n = all.len();
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), n);
     }
 
     #[test]

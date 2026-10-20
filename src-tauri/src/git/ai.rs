@@ -274,9 +274,15 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
              - A lead or intent that describes how the work came about (a review, a \
              failing check, a backlog task) instead of what it changes: rewrite it.\n\
              - Intents that no longer match the diff: rewrite or remove them.\n\
+             - One file, one intent: every changed file must appear in exactly one \
+             intent across all briefs, yours included. When intents in the same or \
+             different briefs share a file, merge them into one intent that covers \
+             all their changes, in the brief whose goal it serves, and remove them \
+             from the others.\n\
              A brief left with no intents is dropped. Keep a brief untouched only \
-             when none of these apply. A rewrite keeps its session's files; your \
-             own brief covers every file no agent brief covers after your edits. When \
+             when none of these apply. A rewrite may take over files from the briefs \
+             it merges with; your own brief covers every file no agent brief covers \
+             after your edits. When \
              one of your files is part of an intent in an agent brief (a record of its \
              results, a follow-up it needed), give it an intent of its own with \
              `\"joins\": \"<that brief's session>\"` and a `why` that says how it fits. \

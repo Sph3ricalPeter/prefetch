@@ -1,6 +1,9 @@
 # Hunk-level intents: tie each intent to the lines that realise it
 
-Status: research / proposal. No code changed.
+Status: shelved. Instead of splitting files into hunks, Summarize enforces
+one file, one intent: intents that share a file are merged into one that
+covers all its changes (`apply_summary` in `src-tauri/src/git/brief.rs`).
+Kept for reference if per-hunk attribution is ever needed.
 
 ## 1. Problem, in today's code
 
