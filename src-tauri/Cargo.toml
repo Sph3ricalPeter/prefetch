@@ -19,11 +19,13 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-anyhow = "1"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
 tauri-plugin-fs = { version = "2.5.0", features = ["watch"] }
 tauri-plugin-os = "2.3.2"
-git2 = { version = "0.20", default-features = false }
+# No default features: ssh/https pull openssl-sys, which links Homebrew OpenSSL on the
+# macOS runner and crashes the app at launch elsewhere (#92). Network ops use the git CLI.
+# Vendored so a runner-installed libgit2 can't get linked dynamically either.
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 tokio = { version = "1.52.1", features = ["sync", "rt", "net", "io-util", "time", "macros"] }
 notify = "8"
 tauri-plugin-dialog = "2"
