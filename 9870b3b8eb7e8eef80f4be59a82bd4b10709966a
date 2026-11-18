@@ -1,0 +1,1144 @@
+[
+  {
+    "intent": {
+      "title": "Every Change Brief carries the story of its change",
+      "why": "The Brief tab alone was hard to follow: intent cards list whole files and the reader has to work out how the change hangs together. The agent that writes a brief now writes the story with it, so the story is there without a button press or a wait, and the brief reads as its short summary.",
+      "kind": "sub"
+    },
+    "intents": [
+      {
+        "title": "Show the story a brief tells, with no model call",
+        "why": "A brief can now carry a story whose steps point at files and short anchor text. Prefetch places those steps on the current diff every time the story is read, so it never goes stale, and the story travels into the commit note with the brief. Briefs without a story still get the Claude-written story as before.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "change brief"
+        ],
+        "files": [
+          "src-tauri/src/git/brief.rs",
+          "src-tauri/src/git/story.rs",
+          "src-tauri/src/commands/story.rs"
+        ],
+        "risk": {
+          "shared": true,
+          "data": true,
+          "contract": true,
+          "tested": true,
+          "why": "Adds an optional part to the brief format and the commit notes; older builds ignore it, and a malformed story is dropped without failing the brief."
+        }
+      },
+      {
+        "title": "Briefs Prefetch writes come with a story too",
+        "why": "Generate brief and Summarize follow the same spec, so the briefs they write carry a story in the same format, and Summarize keeps an agent's story when it rewrites that agent's brief.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "ai"
+        ],
+        "files": [
+          "src-tauri/src/git/ai.rs"
+        ],
+        "risk": {
+          "shared": true,
+          "tested": true
+        }
+      },
+      {
+        "title": "Clicking a file in an intent opens its place in the story",
+        "why": "In the Brief tab, a file in an intent card now opens the story at the step that explains it, when a story is at hand without a model call; otherwise it opens the file's diff as before. Several briefs read as one story with a chapter per brief.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "brief view"
+        ],
+        "files": [
+          "src/types/git.ts",
+          "src/stores/repo-store.ts",
+          "src/components/layout/brief-view.tsx",
+          "src/components/layout/detail-panel.tsx",
+          "src/components/layout/story-view.tsx"
+        ],
+        "risk": {
+          "shared": true,
+          "contract": true,
+          "why": "The story payload between Rust and the app gained fields; checked by typecheck and build, not by clicking through the app."
+        }
+      },
+      {
+        "title": "Teach agents to write the story with the brief",
+        "why": "The skill now asks for the story and the intents together, with the intents as its short summary, and the reminder hook mentions the story.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change brief",
+          "agent skill"
+        ],
+        "files": [
+          "docs/skills/prefetch-brief/SKILL.md",
+          "docs/skills/prefetch-brief/hook.js"
+        ],
+        "risk": {
+          "contract": true,
+          "tested": true,
+          "why": "The skill is also the spec Prefetch gives Claude; a live run with a small model returned usable stories."
+        }
+      }
+    ],
+    "story": {
+      "approach": "A brief gains an optional `story` whose steps point at code by file and anchor text; Prefetch resolves those references against the diff each time the story is read, and the app opens that story from the Brief tab.",
+      "steps": [
+        {
+          "title": "Add the story part to the brief format",
+          "why": "`BriefStory` holds the approach and the steps, each with `CodeRef`s of a file and optional `at` text. `lenient_story` parses it by hand so a malformed story becomes none instead of rejecting the draft, and narrowing a brief to some files narrows its references too.",
+          "intent": "Show the story a brief tells, with no model call",
+          "code": [
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "pub struct BriefStory"
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "s.restricted_to(paths)"
+            }
+          ]
+        },
+        {
+          "title": "Place the steps on the diff's pieces",
+          "why": "`from_briefs` is the pure resolver: anchored references claim the pieces whose changed lines contain their text (whitespace ignored), then whole-file references take what is left of their file, the earlier step winning each time. Unclaimed pieces become leftovers. Briefs are ordered like the Brief tab using the shared `intent_rank`.",
+          "intent": "Show the story a brief tells, with no model call",
+          "code": [
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "pub fn from_briefs"
+            },
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "pub struct Chapter"
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "pub fn intent_rank"
+            }
+          ]
+        },
+        {
+          "title": "Read a brief's story first, the cached one second",
+          "why": "`read_commit` and `read_worktree` build the story from the note or drafts when any brief has one, and only otherwise fall back to the cached Claude-written story. The two commands keep their names, so the app's calls are unchanged.",
+          "intent": "Show the story a brief tells, with no model call",
+          "code": [
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "pub fn note_briefs"
+            },
+            {
+              "file": "src-tauri/src/commands/story.rs",
+              "at": "from its brief note"
+            },
+            {
+              "file": "src-tauri/src/commands/story.rs",
+              "at": "from the drafts, else"
+            }
+          ]
+        },
+        {
+          "title": "Ask Claude for a story when Prefetch writes a brief",
+          "why": "`brief_prompt` asks for the story alongside the intents and to keep a story when rewriting a brief; `apply_summary` keeps the agent's story if Summarize's rewrite drops it.",
+          "intent": "Briefs Prefetch writes come with a story too",
+          "code": [
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "Write the `story` too"
+            },
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "reasons and story where the diff"
+            },
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "A rewrite keeps the brief's"
+            },
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "story::note_briefs(repo_path"
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "A rewrite that leaves the story out"
+            }
+          ]
+        },
+        {
+          "title": "Carry chapters and a scroll target to the view",
+          "why": "The `Story` type gains `chapters` and `fromBrief`, and `openStory` takes an optional `StoryAt`: it scrolls to the first step serving that intent and showing that file, and opens the regular diff instead of calling Claude when there is no story at hand.",
+          "intent": "Clicking a file in an intent opens its place in the story",
+          "code": [
+            {
+              "file": "src/types/git.ts",
+              "at": "export interface BriefStory"
+            },
+            {
+              "file": "src/types/git.ts",
+              "at": "export interface StoryChapter"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "export interface StoryAt"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "function storyTarget"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "openStory: async (commitId, regenerate = false, at)"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "JSON.stringify(story) !== JSON.stringify(now.story)"
+            }
+          ]
+        },
+        {
+          "title": "Open the story from an intent's file list",
+          "why": "`BriefView` passes the intent a file was clicked in; the working-changes and commit panels open the story there when a brief tells one or a story is already open, and the regular diff otherwise.",
+          "intent": "Clicking a file in an intent opens its place in the story",
+          "code": [
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "intent?: BriefIntent) => void"
+            },
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "openStory(null, false, { path: f.path"
+            },
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "openStory(commit.id, false, { path: f.path"
+            },
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "const told"
+            },
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "told: boolean"
+            }
+          ]
+        },
+        {
+          "title": "Show chapters and scroll to the clicked step",
+          "why": "`StoryView` heads each brief's steps with its lead and approach, scrolls to a new focus, opens Side changes when the target is there, and hides Regenerate on a brief's own story.",
+          "intent": "Clicking a file in an intent opens its place in the story",
+          "code": [
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "function ChapterHeader"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "const focused = useRef(0)"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "canRegenerate"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "state.generating"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "forceOpen"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "data-leftovers"
+            }
+          ]
+        },
+        {
+          "title": "Rewrite the skill around the story",
+          "why": "`SKILL.md` gives one complete example and the rules for steps and `code` references, and asks for the intents as the story's summary; `hook.js` reminds agents to update the story.",
+          "intent": "Teach agents to write the story with the brief",
+          "code": [
+            {
+              "file": "docs/skills/prefetch-brief/SKILL.md"
+            },
+            {
+              "file": "docs/skills/prefetch-brief/hook.js"
+            }
+          ]
+        },
+        {
+          "title": "Test resolution, the note round trip and old formats",
+          "why": "`from_briefs_resolution_rules` pins every rule; `brief_story_travels_into_the_note_and_back` commits part of a tree and reads the story back from the note; the brief tests check old drafts, malformed stories and Summarize keeping a story.",
+          "intent": "Show the story a brief tells, with no model call",
+          "code": [
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "fn from_briefs_resolution_rules"
+            },
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "fn brief_story_travels_into_the_note_and_back"
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "fn story_part_is_optional_and_lenient"
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "fn summary_rewrite_keeps_the_agent_story"
+            },
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "told.from_brief"
+            }
+          ]
+        }
+      ]
+    },
+    "issues": [
+      {
+        "id": "#93",
+        "title": "Change stories"
+      }
+    ],
+    "session": "brief-stories"
+  },
+  {
+    "intent": {
+      "title": "Only briefs write stories, and Summarize refreshes them",
+      "why": "It was unclear what wrote which story, and Summarize again never updated a story. A story is now part of its brief: whatever writes or rewrites a brief writes its story, and nothing else does."
+    },
+    "intents": [
+      {
+        "title": "Remove the separate model-written story",
+        "why": "The Story button, Regenerate and their cached, possibly stale stories duplicated what briefs now carry, so they are gone. Stories are read from the briefs and placed on the current diff.",
+        "kind": "sub",
+        "type": "refactor",
+        "tags": [
+          "change stories"
+        ],
+        "files": [
+          "src-tauri/src/git/story.rs",
+          "src-tauri/src/commands/story.rs",
+          "src-tauri/src/lib.rs",
+          "src/lib/commands.ts",
+          "src/types/git.ts",
+          "src/components/layout/story-view.tsx",
+          "src/components/layout/detail-panel.tsx"
+        ],
+        "risk": {
+          "shared": true,
+          "tested": true,
+          "why": "Removes two Tauri commands and fields from the story shape the frontend reads."
+        }
+      },
+      {
+        "title": "Summarize and Generate brief write every story again",
+        "why": "Running Summarize again now returns a new story for every brief it shows, including agent drafts whose intents it leaves alone and drafts with no story yet. Generate brief does the same for a commit. A malformed story keeps the old one and never fails the commit message.",
+        "kind": "sub",
+        "type": "fix",
+        "tags": [
+          "change stories",
+          "commit message"
+        ],
+        "files": [
+          "src-tauri/src/git/ai.rs",
+          "src-tauri/src/git/brief.rs"
+        ],
+        "risk": {
+          "shared": true,
+          "contract": true,
+          "tested": true,
+          "why": "Changes the JSON contract Summarize and Generate brief ask Claude for, and rewrites agent drafts."
+        }
+      },
+      {
+        "title": "Point at Summarize or Generate brief when no story exists",
+        "why": "The Brief tab now says there is no story yet and which existing button writes one, and it re-reads the story when a brief's story changes.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "brief view"
+        ],
+        "files": [
+          "src/components/layout/brief-view.tsx",
+          "src/stores/repo-store.ts"
+        ],
+        "risk": {
+          "tested": false
+        }
+      },
+      {
+        "title": "Mark the old story design as superseded",
+        "kind": "unrelated",
+        "type": "docs",
+        "tags": [
+          "docs"
+        ],
+        "files": [
+          "docs/research/change-stories.md"
+        ],
+        "risk": {}
+      }
+    ],
+    "story": {
+      "approach": "The reply contract gains story-only entries, `apply_summary` and `generate_brief` take every story Claude sends through one helper, and the model-only path and its UI are deleted.",
+      "steps": [
+        {
+          "title": "Add `restory` and story-only entries to the summary",
+          "why": "`Summary.stories` holds new stories for agent briefs whose intents stand, parsed from `{\"story\": ...}` entries. `Brief::restory` narrows a new story to the brief's own files and keeps the old one when nothing usable came back.",
+          "intent": "Summarize and Generate brief write every story again",
+          "code": [
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "pub fn restory("
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "pub stories: HashMap<String, BriefStory>"
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "No lead intent: not a rewrite, just its story."
+            }
+          ]
+        },
+        {
+          "title": "Write the new stories in `apply_summary`",
+          "why": "Rewrites, story-only updates and the inferred brief all go through `restory`, so the old story is input, not something preserved, and a bad story falls back to the previous one.",
+          "intent": "Summarize and Generate brief write every story again",
+          "code": [
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "Intents left as they are; the story may still be new."
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "As with the agents: a missing or malformed story keeps the old one."
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "fn summarize_rewrites_every_story"
+            }
+          ]
+        },
+        {
+          "title": "Ask Claude for every story, on Summarize and on commits",
+          "why": "`STORY_AGAIN` replaces the old keep-the-story rules, `MESSAGE_WITH_BRIEF` asks for an entry per agent brief, and `generate_brief` now uses `COMMIT_REPLY` so a commit whose files are all agent-covered can still refresh its stories.",
+          "intent": "Summarize and Generate brief write every story again",
+          "code": [
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "const STORY_AGAIN"
+            },
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "const COMMIT_REPLY"
+            },
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "brief::parse_summary(&raw)?;"
+            }
+          ]
+        },
+        {
+          "title": "Delete the model-only story and its cache",
+          "why": "`validate`, `parse_reply`, `render_input`, the fingerprint and the `stories/` cache go; `read_commit` and `read_worktree` only resolve the briefs' own stories.",
+          "intent": "Remove the separate model-only story",
+          "code": [
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "pub fn read_worktree"
+            },
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "pub fn read_commit"
+            },
+            {
+              "file": "src-tauri/src/commands/story.rs",
+              "at": "get_worktree_story"
+            },
+            {
+              "file": "src-tauri/src/lib.rs",
+              "at": "commands::story::get_worktree_story"
+            },
+            {
+              "file": "src/lib/commands.ts",
+              "at": "getWorktreeStory"
+            },
+            {
+              "file": "src/types/git.ts",
+              "at": "One per brief with a story"
+            }
+          ]
+        },
+        {
+          "title": "Drop the Story button and Regenerate from the UI",
+          "why": "`ReadStoryButton` goes from the detail panel, and the story view loses Regenerate, the stale banner and the generating state.",
+          "intent": "Remove the separate model-only story",
+          "code": [
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "Regenerate brief and story with Claude"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "Couldn't show the story"
+            }
+          ]
+        },
+        {
+          "title": "Re-read stories in place and hint when there is none",
+          "why": "`peekStory` re-reads a loaded story through `rereadStory` when a brief's story changes, and `NoStoryHint` points at Summarize or Generate brief.",
+          "intent": "Point at Summarize or Generate brief when no story exists",
+          "code": [
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "async function rereadStory"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "openStory: async (commitId, at)"
+            },
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "function NoStoryHint"
+            },
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "const stories = JSON.stringify"
+            }
+          ]
+        },
+        {
+          "title": "Note the superseded design",
+          "why": "Short notes in the research doc say which sections describe the removed path.",
+          "intent": "Mark the old story design as superseded",
+          "code": [
+            {
+              "file": "docs/research/change-stories.md",
+              "at": "Superseded"
+            }
+          ]
+        }
+      ]
+    },
+    "session": "stories-in-briefs"
+  },
+  {
+    "intent": {
+      "title": "Read the working changes as a story before committing",
+      "why": "Reviewing uncommitted agent work is the main use of stories, but they only existed for commits."
+    },
+    "intents": [
+      {
+        "title": "Build story pieces for the working tree",
+        "why": "One HEAD-to-worktree diff per tracked file, so a partly staged file shows each change once; untracked files are read the way the Working Changes list reads them.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "git ops"
+        ],
+        "files": [
+          "src-tauri/src/git/repository.rs",
+          "src-tauri/src/git/story.rs"
+        ],
+        "risk": {
+          "shared": false,
+          "tested": true
+        }
+      },
+      {
+        "title": "Mark a working-tree story stale when the tree moves on",
+        "why": "The story is cached with a fingerprint of its pieces; a read recomputes it, so a story is never shown as current for a tree it does not describe.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories"
+        ],
+        "files": [
+          "src-tauri/src/git/story.rs",
+          "src-tauri/src/commands/story.rs",
+          "src-tauri/src/lib.rs",
+          "src/lib/commands.ts",
+          "src/types/git.ts"
+        ],
+        "risk": {
+          "shared": false,
+          "contract": true,
+          "tested": true,
+          "why": "Story gains fingerprint and stale fields; commit stories keep them empty."
+        }
+      },
+      {
+        "title": "Feed the agents' drafts into the working-tree story",
+        "why": "Steps carry the intents, tiers and types the Brief tab shows, from every session's draft at once.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "briefs"
+        ],
+        "files": [
+          "src-tauri/src/git/ai.rs",
+          "src-tauri/src/git/brief.rs"
+        ],
+        "risk": {
+          "shared": true,
+          "tested": true,
+          "why": "The commit story prompt now goes through the shared builder; its text is unchanged."
+        }
+      },
+      {
+        "title": "Open the working changes' story from the Working Changes header",
+        "why": "A Story button next to the Brief / Files tabs opens it in the centre panel; a watcher refresh re-reads it so the stale notice appears on its own, with Regenerate.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "ui"
+        ],
+        "files": [
+          "src/stores/repo-store.ts",
+          "src/components/layout/detail-panel.tsx",
+          "src/components/layout/graph-panel.tsx",
+          "src/components/layout/story-view.tsx"
+        ],
+        "risk": {
+          "shared": true,
+          "tested": false,
+          "why": "loadStatus and reloadAll now also re-read an open working-changes story; not exercised in the running app."
+        }
+      }
+    ],
+    "session": "worktree-stories"
+  },
+  {
+    "intent": {
+      "title": "Make the Brief tab the story's table of contents",
+      "why": "The owner found the Brief tab and the story disconnected: nothing showed which steps explain which intent, file lists were collapsed, the story ignored the brief's order, its text was squeezed to the left, and its top bar navigated differently from the diff viewer."
+    },
+    "intents": [
+      {
+        "title": "Order and number the story's steps the way the Brief tab reads",
+        "why": "Steps are grouped under their intent in brief order and intent order, numbered in that order, so step 1 and 2 under an intent are steps 1 and 2 in both panes.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories"
+        ],
+        "files": [
+          "src/lib/brief.ts"
+        ],
+        "risk": {
+          "shared": true,
+          "why": "Overrides the story's dependency order across intents on purpose."
+        }
+      },
+      {
+        "title": "List each intent's steps and files in the Brief tab",
+        "why": "Intent cards show their story steps with the files each touches, always visible. Clicking a brief, intent, step or file opens the story showing only that part, and shows it as selected; clicking it again shows the whole story.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "brief view"
+        ],
+        "files": [
+          "src/components/layout/brief-view.tsx",
+          "src/stores/repo-store.ts",
+          "src/components/layout/detail-panel.tsx",
+          "src/components/layout/graph-panel.tsx"
+        ],
+        "risk": {
+          "shared": true,
+          "why": "The story now stays loaded in the background, and the working-changes one is re-read on every status poll."
+        }
+      },
+      {
+        "title": "Give the story full width, intent headings and the diff viewer's top bar",
+        "why": "The text uses the panel's width like the code, each intent's steps sit under a heading like its card, risk labels link to their steps, and a back arrow replaces Close, as in the diff viewer.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "diff view"
+        ],
+        "files": [
+          "src/components/layout/story-view.tsx",
+          "src/components/staging/diff-toolbar.tsx"
+        ],
+        "risk": {
+          "shared": true,
+          "why": "The diff toolbar gained an optional title slot used by every diff."
+        }
+      }
+    ],
+    "story": {
+      "approach": "One shared function groups and numbers the steps by the briefs, both panes render from it, and the store keeps the story loaded with a picked part so the Brief tab can drive what the story shows.",
+      "steps": [
+        {
+          "title": "Group and number the steps in brief order",
+          "why": "`storyOutline` puts each step under the intent it serves, in `sortBriefs` / `sortIntents` order, then unclaimed steps, then unrelated intents, and numbers them. `briefKey` / `intentKey` name a pick across re-reads.",
+          "intent": "Order and number the story's steps the way the Brief tab reads",
+          "code": [
+            {
+              "file": "src/lib/brief.ts",
+              "at": "export function storyOutline"
+            },
+            {
+              "file": "src/lib/brief.ts",
+              "at": "export const briefKey"
+            },
+            {
+              "file": "src/lib/brief.ts",
+              "at": "export function pieceCounts"
+            },
+            {
+              "file": "src/lib/brief.ts",
+              "at": "Story, StoryPiece, StoryStep"
+            }
+          ]
+        },
+        {
+          "title": "Keep the story loaded and remember the picked part",
+          "why": "`StoryState` gains `open` and `pick`; `peekStory` loads it for the Brief tab without a model call, `closeStory` keeps it loaded, and `openStory` shows a picked part and scrolls via `storyFocus`.",
+          "intent": "List each intent's steps and files in the Brief tab",
+          "code": [
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "export interface StoryPick"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "function storyFocus"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "peekStory: async"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "const pick = at?.pick ?? null;"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "A loaded story stays for the Brief tab"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "Load the story without showing it"
+            },
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "reads the whole diff on every poll"
+            }
+          ]
+        },
+        {
+          "title": "List steps under intents in the Brief tab",
+          "why": "`BriefView` peeks the story when a brief tells one, `StepList` shows each step and its files, and brief and intent headers pick their part while the chevron still collapses.",
+          "intent": "List each intent's steps and files in the Brief tab",
+          "code": [
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "interface StoryNav"
+            },
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "function StepList"
+            },
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "function HeaderChevron"
+            },
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "nav.choose"
+            },
+            {
+              "file": "src/components/layout/brief-view.tsx",
+              "at": "Other changes"
+            }
+          ]
+        },
+        {
+          "title": "Wire the panels to the open flag",
+          "why": "The centre panel and the Story button check `open`, and the detail panel passes `commitId` to `BriefView`, which now decides when a file click opens the story.",
+          "intent": "List each intent's steps and files in the Brief tab",
+          "code": [
+            {
+              "file": "src/components/layout/graph-panel.tsx",
+              "at": "!!s.story?.open"
+            },
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "commitId={null}"
+            },
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "commitId={commit.id}"
+            },
+            {
+              "file": "src/components/layout/detail-panel.tsx",
+              "at": "!!s.story?.open"
+            }
+          ]
+        },
+        {
+          "title": "Render the story from the outline",
+          "why": "`StoryView` renders groups under intent headings, filters to the pick, uses the diff viewer's `DiffToolbar` with a back arrow and a `title` slot, and turns risky steps into `RiskChip` links.",
+          "intent": "Give the story full width, intent headings and the diff viewer's top bar",
+          "code": [
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "storyOutline(story, shown)"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "<DiffToolbar"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "function StepGroup"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "function RiskChip"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "function BriefHeader"
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "OutlineStep & { commitId"
+            },
+            {
+              "file": "src/components/staging/diff-toolbar.tsx",
+              "at": "title?: React.ReactNode"
+            },
+            {
+              "file": "src/components/staging/diff-toolbar.tsx",
+              "at": "{title ??"
+            }
+          ]
+        }
+      ]
+    },
+    "issues": [
+      {
+        "id": "#93",
+        "title": "[feat] Change stories P1 — read a commit as an ordered, narrated diff",
+        "url": "",
+        "criteria": []
+      }
+    ],
+    "session": "story-toc"
+  },
+  {
+    "intent": {
+      "title": "Calmer, easier-to-scan story layout",
+      "why": "The story repeated the same risk label on the intent, on every step and again in a \"Look closely\" row, and it was hard to see where one step ended and the next began."
+    },
+    "intents": [
+      {
+        "title": "Mark risk once per intent and separate the steps",
+        "why": "A risky intent's whole section now gets the Brief tab card's tint and one stripe, and its label appears only on the heading. Each step's number sits in a gutter with the step indented beside it, with more space between steps.",
+        "kind": "sub",
+        "type": "style",
+        "tags": [
+          "change stories"
+        ],
+        "files": [
+          "src/components/layout/story-view.tsx"
+        ],
+        "risk": {}
+      }
+    ],
+    "story": {
+      "approach": "Steps take their intent's tier, so marking each step only repeated the heading above it. Risk is now shown on the intent section as a whole, and steps are told apart by layout instead.",
+      "steps": [
+        {
+          "title": "Tint the intent section like its Brief card",
+          "why": "`RISKY` gains a `tint` class, and `StepGroup` wraps a risky intent's steps in the card's fading gradient with a single stripe.",
+          "intent": "Mark risk once per intent and separate the steps",
+          "code": [
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "tint: \"from-orange-500/8\""
+            },
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "bg-linear-to-r to-transparent to-70%"
+            }
+          ]
+        },
+        {
+          "title": "Drop the per-step badges and stripes",
+          "why": "`RiskChip` is now only the heading's label, the \"Look closely\" row is removed, and step titles render through `Narration`.",
+          "intent": "Mark risk once per intent and separate the steps",
+          "code": [
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "Its steps share the tier, so they carry none"
+            }
+          ]
+        },
+        {
+          "title": "Put each step's number in a gutter",
+          "why": "`StepBlock` indents its title, why and code beside the number, and steps get more space between them.",
+          "intent": "Mark risk once per intent and separate the steps",
+          "code": [
+            {
+              "file": "src/components/layout/story-view.tsx",
+              "at": "The number sits in a gutter"
+            }
+          ]
+        }
+      ]
+    },
+    "session": "story-fewer-badges"
+  },
+  {
+    "intent": {
+      "title": "Read a commit as an ordered, narrated story",
+      "why": "The Brief view lists intents with whole files, so a reader has to open each file and hunt for the part that matters. A story walks through the commit in the order you would explain it, with each step's code right under its explanation."
+    },
+    "intents": [
+      {
+        "title": "Show a commit's story in the centre panel",
+        "why": "A Story button on the commit view opens the story where the diff normally shows: the approach, the numbered steps with their code, side changes, and every part the story did not cover. Opening a whole file and going back returns to the story.",
+        "kind": "sub",
+        "type": "feat",
+        "tags": [
+          "change stories",
+          "diff view"
+        ],
+        "files": [
+          "src/components/layout/story-view.tsx",
+          "src/components/layout/graph-panel.tsx",
+          "src/components/layout/detail-panel.tsx",
+          "src/components/layout/brief-view.tsx",
+          "src/components/ui/diff-stat.tsx",
+          "src/stores/repo-store.ts",
+          "src/lib/commands.ts",
+          "src/types/git.ts"
+        ],
+        "risk": {
+          "shared": true,
+          "why": "Depends on two new backend commands written at the same time; checked only against a hand-written story."
+        }
+      },
+      {
+        "title": "Share hunk drawing between the diff viewer and stories",
+        "why": "Story code has to look exactly like the diff viewer's, so the lines of a hunk and their syntax highlighting now live in one place both use.",
+        "kind": "enabling",
+        "type": "refactor",
+        "tags": [
+          "diff view"
+        ],
+        "files": [
+          "src/components/staging/diff-viewer-body.tsx",
+          "src/hooks/use-hunk-tokens.ts"
+        ],
+        "risk": {
+          "shared": true,
+          "why": "Every diff in the app now renders through the shared code."
+        }
+      }
+    ],
+    "issues": [
+      {
+        "id": "#93",
+        "title": "[feat] Change stories P1 — read a commit as an ordered, narrated diff",
+        "url": "",
+        "criteria": []
+      }
+    ],
+    "session": "change-stories-ui"
+  },
+  {
+    "intent": {
+      "title": "Keep change stories accurate as briefs and code change",
+      "why": "A story could show code under the wrong brief, lose an agent's story when Prefetch wrote a commit's brief, or flip back to an older version while the working tree changed."
+    },
+    "intents": [
+      {
+        "title": "An old story never claims another brief's files",
+        "why": "When Summarize rewrites a brief without a usable story, the old story is kept only for the files that brief still covers, so it can't take over code that moved to another brief.",
+        "kind": "sub",
+        "type": "fix",
+        "tags": [
+          "change stories",
+          "change brief"
+        ],
+        "files": [
+          "src-tauri/src/git/brief.rs"
+        ],
+        "risk": {
+          "shared": true,
+          "data": true,
+          "why": "Summarize writes agent drafts on disk with this story."
+        }
+      },
+      {
+        "title": "Generate brief keeps every agent's story",
+        "why": "Agent briefs with no name could get the same stand-in name as another brief and swap stories, and a story the model returned inside a full brief was ignored.",
+        "kind": "sub",
+        "type": "fix",
+        "tags": [
+          "change stories",
+          "ai"
+        ],
+        "files": [
+          "src-tauri/src/git/ai.rs"
+        ],
+        "risk": {
+          "shared": true,
+          "data": true,
+          "why": "Writes the commit's brief note."
+        }
+      },
+      {
+        "title": "A slower, older story read never replaces a newer one",
+        "why": "Background re-reads of the open story could overlap and finish out of order, showing an out-of-date story and piling up work on big trees. Now one runs at a time and a request made meanwhile runs right after it.",
+        "kind": "sub",
+        "type": "fix",
+        "tags": [
+          "change stories"
+        ],
+        "files": [
+          "src/stores/repo-store.ts"
+        ],
+        "risk": {
+          "shared": true
+        }
+      },
+      {
+        "title": "Tidy the story and diff-drawing code",
+        "why": "Helpers only the story module uses are no longer public, and names and comments say what the code does now.",
+        "kind": "enabling",
+        "type": "refactor",
+        "tags": [
+          "change stories",
+          "diff view"
+        ],
+        "files": [
+          "src-tauri/src/git/story.rs",
+          "src/hooks/use-hunk-tokens.ts",
+          "src/components/staging/diff-viewer-body.tsx"
+        ],
+        "risk": {}
+      },
+      {
+        "title": "Mark the story design doc as built",
+        "kind": "sub",
+        "type": "docs",
+        "tags": [
+          "docs"
+        ],
+        "files": [
+          "docs/research/change-stories.md"
+        ],
+        "risk": {}
+      }
+    ],
+    "story": {
+      "approach": "Each fix sits where every caller passes through: Summarize's write of a rewritten draft, Generate brief's reading of the model reply, and the store's single re-read path.",
+      "steps": [
+        {
+          "title": "Narrow a kept story to the rewrite's own files",
+          "why": "`apply_summary` starts the rewrite with no story and falls back to the agent's old one through `restory`, which drops every step pointing at files the rewrite no longer has.",
+          "intent": "An old story never claims another brief's files",
+          "code": [
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "b.restory(agent.story.as_ref());"
+            },
+            {
+              "file": "src-tauri/src/git/brief.rs",
+              "at": "the model saw; a draft its agent changed or removed since then is left as"
+            }
+          ]
+        },
+        {
+          "title": "Give unnamed agent briefs unique stand-in names",
+          "why": "`generate_brief` skips any `brief-N` name a real session already uses, so the model never sees two briefs under one key.",
+          "intent": "Generate brief keeps every agent's story",
+          "code": [
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "find(|s| !taken.contains(s))"
+            }
+          ]
+        },
+        {
+          "title": "Accept a story echoed inside a full brief",
+          "why": "When the model sends the whole agent brief instead of just its story, that brief lands in `agents`; its story is now used the same way.",
+          "intent": "Generate brief keeps every agent's story",
+          "code": [
+            {
+              "file": "src-tauri/src/git/ai.rs",
+              "at": "its story still counts"
+            }
+          ]
+        },
+        {
+          "title": "Run story re-reads one at a time",
+          "why": "`rereadStory` now runs `rereadOnce` in a loop guarded by a flag; a request made during a read is remembered and run after it, so the last result shown is always the newest.",
+          "intent": "A slower, older story read never replaces a newer one",
+          "code": [
+            {
+              "file": "src/stores/repo-store.ts",
+              "at": "rereadOnce"
+            }
+          ]
+        },
+        {
+          "title": "Hide module-only story helpers and fix stale comments",
+          "why": "The story module's internal helpers lose `pub`; comments refer to `PIECE_CHANGED_LINES` instead of repeating its value; `isChangeLine` becomes `checkable`, since it now also depends on whether lines can be selected.",
+          "intent": "Tidy the story and diff-drawing code",
+          "code": [
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "PIECE_CHANGED_LINES` mark"
+            },
+            {
+              "file": "src-tauri/src/git/story.rs",
+              "at": "fn from_briefs("
+            },
+            {
+              "file": "src/hooks/use-hunk-tokens.ts",
+              "at": "referentially stable"
+            },
+            {
+              "file": "src/components/staging/diff-viewer-body.tsx",
+              "at": "checkable"
+            }
+          ]
+        },
+        {
+          "title": "Update the design doc's status line",
+          "why": "It said the design was not started, under a note saying it was built.",
+          "intent": "Mark the story design doc as built",
+          "code": [
+            {
+              "file": "docs/research/change-stories.md",
+              "at": "Status: built"
+            }
+          ]
+        }
+      ]
+    },
+    "session": "story-accuracy"
+  }
+]
