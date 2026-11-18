@@ -8,6 +8,7 @@ pub mod lfs;
 pub mod parse;
 pub mod profile;
 pub mod repository;
+pub mod story;
 pub mod types;
 pub mod unity_schema;
 pub mod unity_yaml;

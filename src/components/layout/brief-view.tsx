@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -7,6 +7,7 @@ import {
   Flame,
   ScrollText,
   ShieldCheck,
+  Sparkles,
   Tag,
   type LucideIcon,
 } from "lucide-react";
@@ -14,14 +15,28 @@ import { CommitFileRow, CommitFileTreeView } from "@/components/layout/detail-pa
 import { DiffStat } from "@/components/ui/diff-stat";
 import { SectionHeader } from "@/components/ui/section-header";
 import { openUrl } from "@/lib/commands";
-import { useRepoStore } from "@/stores/repo-store";
+import { useRepoStore, type StoryPick } from "@/stores/repo-store";
 import { useTreeCollapseStore } from "@/stores/tree-collapse-store";
 import { buildFileTree, collectDirPaths } from "@/lib/file-tree";
 import { cn } from "@/lib/utils";
 import { COMMIT_TYPE_META } from "@/lib/commit-type";
 import { COMMIT_TYPE_ICONS } from "@/lib/commit-type-icons";
-import { TIER_META, intentType, matchBriefs, riskReasons, sortBriefs, sortIntents, type ShownIntent } from "@/lib/brief";
-import type { Brief, FileStatus, RiskTier } from "@/types/git";
+import {
+  TIER_META,
+  briefKey,
+  intentKey,
+  intentType,
+  matchBriefs,
+  pieceCounts,
+  riskReasons,
+  sortBriefs,
+  sortIntents,
+  storyOutline,
+  type OutlineGroup,
+  type OutlineStep,
+  type ShownIntent,
+} from "@/lib/brief";
+import type { Brief, FileStatus, RiskTier, StoryPiece } from "@/types/git";
 
 /** DOM twins of the canvas icons in TIER_META. */
 const TIER_ICONS: Record<RiskTier | "none", LucideIcon> = {
@@ -31,7 +46,7 @@ const TIER_ICONS: Record<RiskTier | "none", LucideIcon> = {
   none: ScrollText,
 };
 
-function InferredBadge() {
+export function InferredBadge() {
   return (
     <span
       className="shrink-0 text-caption font-semibold text-faint"
@@ -42,21 +57,63 @@ function InferredBadge() {
   );
 }
 
+/** The story as the Brief tab lists it: its steps under their intents. */
+interface StoryNav {
+  outline: OutlineGroup[];
+  /** What the open story shows; null when closed or showing it all. */
+  pick: StoryPick | null;
+  /** Show only this part of the story; picking it again shows it all. */
+  choose: (pick: StoryPick) => void;
+  /** Every file in view, for the files under each step. */
+  files: Map<string, FileStatus>;
+}
+
+const samePick = (a: StoryPick | null, b: StoryPick) =>
+  !!a && a.brief === b.brief && a.intent === b.intent && a.step === b.step && a.path === b.path;
+
 export function BriefView({
+  commitId,
   briefs,
   files,
   errors = [],
   selectedFilePath,
   onFileClick,
 }: {
+  /** Whose story the steps come from: a commit, or null for the working changes. */
+  commitId: string | null;
   briefs: Brief[];
   files: FileStatus[];
   /** Drafts that failed to parse, shown so a bad agent write isn't silent. */
   errors?: string[];
   selectedFilePath: string | null;
+  /** Opens the file's diff. */
   onFileClick: (file: FileStatus) => void;
 }) {
   const { shown, unclaimed } = matchBriefs(briefs, files);
+  const state = useRepoStore((s) => (s.story?.commitId === commitId ? s.story : null));
+  const peekStory = useRepoStore((s) => s.peekStory);
+  const openStory = useRepoStore((s) => s.openStory);
+  const told = shown.some((s) => s.brief.story);
+  const loaded = state !== null;
+  // Summarize or Generate brief rewrote the stories: re-read them in place.
+  const stories = JSON.stringify(shown.map((s) => s.brief.story ?? null));
+  // The story the briefs tell is listed under its intents; reading it never calls Claude.
+  useEffect(() => {
+    if (told || loaded) peekStory(commitId);
+  }, [told, loaded, commitId, stories, peekStory]);
+  const pick = state?.open ? state.pick : null;
+  const nav: StoryNav = {
+    outline: state?.story ? storyOutline(state.story, shown) : [],
+    pick,
+    choose: (next) => openStory(commitId, samePick(pick, next) ? undefined : { pick: next, path: next.path }),
+    // A partly staged file has two rows; the staged one is listed last, so it wins.
+    files: new Map([...files].sort((a, b) => Number(a.is_staged) - Number(b.is_staged)).map((f) => [f.path, f])),
+  };
+  // A file listed in an intent card opens the story there when one is at hand.
+  const openFile = (f: FileStatus) => {
+    if (told || state?.open) openStory(commitId, { path: f.path, fallback: () => onFileClick(f) });
+    else onFileClick(f);
+  };
 
   return (
     <div className="flex flex-col gap-2">
@@ -66,19 +123,18 @@ export function BriefView({
         </p>
       ))}
 
-      {sortBriefs(shown).map(({ brief, intents }) => {
-        const key = brief.session || brief.intent.title;
-        return (
-          <BriefCard
-            key={key}
-            brief={brief}
-            intents={intents}
-            storageKey={`brief:${key}`}
-            selectedFilePath={selectedFilePath}
-            onFileClick={onFileClick}
-          />
-        );
-      })}
+      {!told && files.length > 0 && <NoStoryHint commitId={commitId} />}
+
+      {sortBriefs(shown).map(({ brief, intents }) => (
+        <BriefCard
+          key={briefKey(brief)}
+          brief={brief}
+          intents={intents}
+          selectedFilePath={selectedFilePath}
+          onFileClick={openFile}
+          nav={nav}
+        />
+      ))}
 
       {unclaimed.length > 0 && (
         <section className="rounded-md border border-border bg-card px-4 pt-2 pb-3">
@@ -90,22 +146,66 @@ export function BriefView({
   );
 }
 
+/** What writes the story when no brief in view tells one: the button that
+ *  writes the brief writes its story too. */
+function NoStoryHint({ commitId }: { commitId: string | null }) {
+  const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
+  return (
+    <p className="rounded-md border border-dashed border-border px-4 py-2 text-xs leading-relaxed text-muted-foreground">
+      <span className="font-medium text-foreground">No story yet. </span>
+      {!claudeAvailable ? (
+        "An agent writes one with its brief (the prefetch-brief skill)."
+      ) : commitId === null ? (
+        "Summarize, below, writes the brief and a step-by-step story of these changes."
+      ) : (
+        <>
+          Generate brief (<Sparkles className="inline h-3 w-3 align-middle" /> in the bar above) writes one for this commit.
+        </>
+      )}
+    </p>
+  );
+}
+
+/** The chevron of a card header that is itself a button (it picks the
+ *  story part): a nested toggle, so a span, as elsewhere in the app. */
+function HeaderChevron({ open, onToggle }: { open: boolean; onToggle: (e: MouseEvent) => void }) {
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <span
+      role="button"
+      aria-label={open ? "Collapse" : "Expand"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle(e);
+      }}
+      className="-m-0.5 shrink-0 rounded-xs p-0.5 text-dim transition-colors hover:text-foreground"
+    >
+      <Chevron className="h-3 w-3" />
+    </span>
+  );
+}
+
 /** One card per brief: the lead intent heads it, its intents sit inside.
- *  Clicking the header collapses the intents; alt-click opens or closes
- *  everything inside, down to the folders. */
+ *  The chevron collapses the intents; alt-click opens or closes everything
+ *  inside, down to the folders. With a story, clicking the header shows that
+ *  brief's steps; without one, it collapses too. */
 function BriefCard({
   brief,
   intents,
-  storageKey,
   selectedFilePath,
   onFileClick,
+  nav,
 }: {
   brief: Brief;
   intents: ShownIntent[];
-  storageKey: string;
   selectedFilePath: string | null;
   onFileClick: (file: FileStatus) => void;
+  nav: StoryNav;
 }) {
+  const key = briefKey(brief);
+  const storageKey = `brief:${key}`;
+  const told = nav.outline.some((g) => g.owner?.brief === brief);
+  const picked = nav.pick?.brief === key && nav.pick.intent === undefined;
   const [open, setOpen] = useState(true);
   // Alt-click remounts the intent cards (new epoch) opened or closed.
   const [all, setAll] = useState({ epoch: 0, open: false });
@@ -126,13 +226,14 @@ function BriefCard({
       setCollapsed(keyOf(s), next ? [] : buildFileTree(s.files).flatMap(collectDirPaths)),
     );
   };
-  const Chevron = open ? ChevronDown : ChevronRight;
   return (
     <section className="rounded-md border border-border bg-card animate-fade-in">
-      <div className="px-4 pt-2 pb-3">
-        <button onClick={toggle} className="block w-full text-left">
+      <div className={cn("rounded-md px-4 pt-2 pb-3", picked && "bg-card-hover")}>
+        <button onClick={told ? () => nav.choose({ brief: key }) : toggle} className="block w-full text-left">
           <div className="flex items-center gap-2 pb-1.5">
-            <Chevron className="-ml-1 h-3 w-3 shrink-0 text-dim" />
+            <span className="-ml-1 flex">
+              <HeaderChevron open={open} onToggle={toggle} />
+            </span>
             <span className="text-caption font-semibold text-muted-foreground">Intent</span>
             {brief.inferred && <InferredBadge />}
             {brief.session && !brief.inferred && (
@@ -171,11 +272,13 @@ function BriefCard({
             <IntentCard
               key={`${all.epoch}:${keyOf(s)}`}
               shown={s}
+              brief={brief}
               fromDiff={!!brief.inferred || !!s.inferred}
               defaultOpen={all.open}
               storageKey={keyOf(s)}
               selectedFilePath={selectedFilePath}
               onFileClick={onFileClick}
+              nav={nav}
             />
           ))}
         </div>
@@ -220,31 +323,43 @@ function Chip({ className, children }: { className: string; children: React.Reac
 }
 
 /** One intent as a card tinted by its risk tier. Collapsed: tier icon,
- *  `type:` and title, with the risk line under it. Expanded adds the why and a
- *  collapsed "Changes" section holding the files. */
+ *  `type:` and title, with the risk line under it. Expanded adds the why.
+ *  With a story, its steps follow, always shown, each with its files, and
+ *  clicking the header shows that intent's steps. A collapsed "Changes"
+ *  section holds the files no step shows (all of them without a story). */
 function IntentCard({
   shown: { intent, files, inferred },
+  brief,
   fromDiff,
   defaultOpen = false,
   storageKey,
   selectedFilePath,
   onFileClick,
+  nav,
 }: {
   shown: ShownIntent;
+  /** The brief whose card it sits in. */
+  brief: Brief;
   /** Risk answers come from an inferred brief. */
   fromDiff: boolean;
   defaultOpen?: boolean;
   storageKey: string;
   selectedFilePath: string | null;
   onFileClick: (file: FileStatus) => void;
+  nav: StoryNav;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [filesOpen, setFilesOpen] = useState(defaultOpen);
   const setCollapsed = useTreeCollapseStore((s) => s.setCollapsed);
+  const steps = nav.outline.find((g) => g.owner?.brief === brief && g.owner.intent === intent)?.steps ?? [];
+  const here: StoryPick = { brief: briefKey(brief), intent: intentKey(brief, intent) };
+  const picked = !!nav.pick && nav.pick.intent === here.intent && nav.pick.step === undefined;
+  const inSteps = new Set(steps.flatMap((s) => s.step.pieces.map((p) => p.path)));
+  const rest = files.filter((f) => !inSteps.has(f.path));
   // Alt-click opens or closes everything below, like folders in the file trees.
   const setSubtree = (next: boolean) => {
     setFilesOpen(next);
-    setCollapsed(storageKey, next ? [] : buildFileTree(files).flatMap(collectDirPaths));
+    setCollapsed(storageKey, next ? [] : buildFileTree(rest).flatMap(collectDirPaths));
   };
   const toggleCard = (e: MouseEvent) => {
     setOpen(!open);
@@ -281,14 +396,13 @@ function IntentCard({
         style={tierColor ? { backgroundColor: tierColor } : undefined}
       />
       {/* Title and why stay pinned while you scroll through the files below. */}
-      <div className="sticky top-0 z-10 bg-card" style={tint}>
-        <button onClick={toggleCard} className="block w-full px-3 py-2 text-left">
+      <div className={cn("sticky top-0 z-10", picked ? "bg-card-hover" : "bg-card")} style={tint}>
+        <button
+          onClick={steps.length > 0 ? () => nav.choose(here) : toggleCard}
+          className="block w-full px-3 py-2 text-left"
+        >
           <div className={cn("flex items-center gap-1.5", high ? "text-sm" : "text-xs")}>
-            {open ? (
-              <ChevronDown className="h-3 w-3 shrink-0 text-dim" />
-            ) : (
-              <ChevronRight className="h-3 w-3 shrink-0 text-dim" />
-            )}
+            <HeaderChevron open={open} onToggle={toggleCard} />
             {TierIcon && tier && (
               <span title={TIER_META[tier].label} className="shrink-0" style={{ color: tierColor }}>
                 <TierIcon className={iconSize} />
@@ -348,21 +462,77 @@ function IntentCard({
         )}
       </div>
 
-      {open && files.length > 0 && (
+      {steps.length > 0 && <StepList steps={steps} at={here} nav={nav} selectedFilePath={selectedFilePath} />}
+
+      {(open || steps.length > 0) && rest.length > 0 && (
         <div className="px-3 pb-2 pl-[30px]">
           <SectionHeader
-            label="Changes"
-            count={files.length}
+            label={steps.length > 0 ? "Other changes" : "Changes"}
+            count={rest.length}
             isOpen={filesOpen}
             onToggle={toggleFiles}
-            stats={<DiffStat files={files} />}
+            stats={<DiffStat files={rest} />}
             className="px-0 py-1"
           />
           {filesOpen && (
-            <Files files={files} storageKey={storageKey} selectedFilePath={selectedFilePath} onFileClick={onFileClick} />
+            <Files files={rest} storageKey={storageKey} selectedFilePath={selectedFilePath} onFileClick={onFileClick} />
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** An intent's story steps, numbered as in the story, each with the files
+ *  it shows and their line counts within the step. */
+function StepList({
+  steps,
+  at,
+  nav,
+  selectedFilePath,
+}: {
+  steps: OutlineStep[];
+  /** The intent, as picked. */
+  at: StoryPick;
+  nav: StoryNav;
+  selectedFilePath: string | null;
+}) {
+  return (
+    <div className="flex flex-col gap-1 px-3 pb-2 pl-[22px]">
+      {steps.map(({ step, i, n }) => {
+        const here = { ...at, step: i };
+        const byFile = new Map<string, StoryPiece[]>();
+        for (const p of step.pieces) byFile.set(p.path, [...(byFile.get(p.path) ?? []), p]);
+        return (
+          <div key={i}>
+            <button
+              onClick={() => nav.choose(here)}
+              className={cn(
+                "flex w-full items-baseline gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors",
+                samePick(nav.pick, here) ? "bg-card-hover text-accent-foreground" : "hover:bg-card-hover",
+              )}
+            >
+              <span className="min-w-3 shrink-0 text-right font-semibold tabular-nums text-dim">{n}</span>
+              <span className="min-w-0 font-medium text-foreground">{step.title}</span>
+            </button>
+            <div className="pl-5">
+              {[...byFile].map(([path, pieces]) => {
+                const file = nav.files.get(path);
+                if (!file) return null;
+                const pick = { ...here, path };
+                return (
+                  <CommitFileRow
+                    key={path}
+                    file={{ ...file, ...pieceCounts(pieces) }}
+                    isSelected={samePick(nav.pick, pick) || (!nav.pick && selectedFilePath === path)}
+                    onClick={() => nav.choose(pick)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

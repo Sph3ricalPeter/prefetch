@@ -6,6 +6,7 @@ import { useThemeStore } from "@/stores/theme-store";
 import { getDataAttrFromEvent, cn } from "@/lib/utils";
 import { FILTER_DIM_CLASS } from "@/lib/constants";
 import { useInViewSearch } from "@/hooks/use-in-view-search";
+import { useHunkTokens } from "@/hooks/use-hunk-tokens";
 import { SearchNav } from "@/components/ui/search-nav";
 import { DiffMinimap } from "@/components/staging/diff-minimap";
 import {
@@ -94,13 +95,7 @@ export function DiffViewerBody({ diff, filePath, expandCtx, interactive = false,
  *  Session-only; a few dozen bytes per file viewed. */
 const scrollMemory = new Map<string, number>();
 
-/** Minimum gap between syntax-highlight state flushes. One frame's worth: short
- *  enough that highlighting still appears to stream in, long enough that a
- *  many-hunk diff doesn't re-render the row list once per hunk. */
-const HIGHLIGHT_FLUSH_MS = 16;
-
 function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, staged = false, commitSha, toolbarProps }: DiffViewerBodyProps) {
-  const [tokensByHunk, setTokensByHunk] = useState<Map<number, ThemedToken[][]>>(new Map());
   const [fileTokens, setFileTokens] = useState<ThemedToken[][] | null>(null);
   const [oldFileTokens, setOldFileTokens] = useState<ThemedToken[][] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -170,48 +165,7 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
   );
 
   // Highlight hunks progressively — render each batch as it finishes.
-  // Yields between hunks so clicks/renders can interrupt long highlighting runs.
-  //
-  // Flushes are time-batched rather than per-hunk: every setTokensByHunk re-renders
-  // the whole hunk list, and even with DiffLine memoized that costs ~20 ms of element
-  // creation plus memo compares per 14k rows (and re-allocates hunkChangeKeys for
-  // every hunk). A Unity .prefab diff is many small hunks — at 300 of them, 350 ms of
-  // tokenization turned into ~12 s of reconciliation churn, quadratic in hunk count.
-  // Batching makes it linear again and still paints long before the last hunk lands.
-  useEffect(() => {
-    let cancelled = false;
-    const tokenMap = new Map<number, Awaited<ReturnType<typeof highlightLines>>>();
-    async function highlight() {
-      let dirty = false;
-      let lastFlush = performance.now();
-      const flush = () => {
-        dirty = false;
-        lastFlush = performance.now();
-        setTokensByHunk(new Map(tokenMap));
-      };
-      for (let hi = 0; hi < diff.hunks.length; hi++) {
-        if (cancelled) return;
-        const hunk = diff.hunks[hi];
-        if (hunk.lines.length > 5000 || !lang) continue;
-        const code = hunk.lines.map((l) => l.content).join("\n");
-        try {
-          const tokens = await highlightLines(code, lang, shikiThemeId);
-          if (!cancelled) {
-            tokenMap.set(hi, tokens);
-            dirty = true;
-            if (performance.now() - lastFlush >= HIGHLIGHT_FLUSH_MS) flush();
-          }
-        } catch { /* fallback: no highlighting */ }
-        await yieldToMacrotask();
-      }
-      if (!cancelled && dirty) flush();
-    }
-    highlight();
-    return () => {
-      cancelled = true;
-      setTokensByHunk(new Map());
-    };
-  }, [diff, lang, shikiThemeId]);
+  const tokensByHunk = useHunkTokens(diff.hunks, lang);
 
   // Highlight full file for expanded context lines.
   // Deferred behind a macrotask so the click→render→paint cycle gets priority.
@@ -509,33 +463,18 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
                     containIntrinsicSize: `auto ${hunk.lines.length * 20}px`,
                   }}
                 >
-                  {diffViewMode === "side-by-side" ? (
-                    <SideBySideHunk
-                      hunk={hunk}
-                      hunkIndex={hi}
-                      hunkTokens={hunkTokens}
-                      wrapClass={wrapClass}
-                      selectedLines={selectedLines}
-                      fileTokens={fileTokens}
-                      oldFileTokens={oldFileTokens}
-                      intraLineRanges={intraLineRanges}
-                      searchQuery={searchQuery}
-                    />
-                  ) : (
-                    hunk.lines.map((line, li) => (
-                      <DiffLine
-                        key={li}
-                        line={line}
-                        hunkIndex={hi}
-                        lineIndex={li}
-                        tokens={resolveLineTokens(line, li, hunkTokens, fileTokens, oldFileTokens)}
-                        ranges={intraLineRanges.get(li)}
-                        isSelected={selectedLines.has(`${hi}:${li}`)}
-                        wrapClass={wrapClass}
-                        dimmed={searchQuery !== "" && !line.content.toLowerCase().includes(searchQuery)}
-                      />
-                    ))
-                  )}
+                  <HunkLines
+                    hunk={hunk}
+                    hunkIndex={hi}
+                    hunkTokens={hunkTokens}
+                    intraLineRanges={intraLineRanges}
+                    split={diffViewMode === "side-by-side"}
+                    wrapClass={wrapClass}
+                    selectedLines={selectedLines}
+                    fileTokens={fileTokens}
+                    oldFileTokens={oldFileTokens}
+                    searchQuery={searchQuery}
+                  />
                 </div>
               </div>
             );
@@ -564,6 +503,73 @@ function DiffViewerBodyInner({ diff, filePath, expandCtx, interactive = false, s
       )}
     </div>
   );
+}
+
+// ── One hunk's lines (unified or split) ────────────────────────────────────
+
+interface HunkLinesProps {
+  hunk: DiffHunk;
+  hunkIndex: number;
+  hunkTokens?: ThemedToken[][];
+  intraLineRanges: Map<number, CharRange[]>;
+  split: boolean;
+  wrapClass: string;
+  selectedLines?: Set<string>;
+  fileTokens?: ThemedToken[][] | null;
+  oldFileTokens?: ThemedToken[][] | null;
+  /** Lowercased filter query; lines not containing it are dimmed. Empty = off. */
+  searchQuery?: string;
+  /** False drops the line checkboxes (the story view has no selection). */
+  selectable?: boolean;
+}
+
+const NO_SELECTION = new Set<string>();
+
+/** One hunk's lines as the diff viewer draws them. The story view uses it
+ *  too, read-only: no selection, no expanded context. */
+export function HunkLines({
+  hunk,
+  hunkIndex,
+  hunkTokens,
+  intraLineRanges,
+  split,
+  wrapClass,
+  selectedLines = NO_SELECTION,
+  fileTokens = null,
+  oldFileTokens = null,
+  searchQuery = "",
+  selectable = true,
+}: HunkLinesProps) {
+  if (split) {
+    return (
+      <SideBySideHunk
+        hunk={hunk}
+        hunkIndex={hunkIndex}
+        hunkTokens={hunkTokens}
+        wrapClass={wrapClass}
+        selectedLines={selectedLines}
+        fileTokens={fileTokens}
+        oldFileTokens={oldFileTokens}
+        intraLineRanges={intraLineRanges}
+        searchQuery={searchQuery}
+        selectable={selectable}
+      />
+    );
+  }
+  return hunk.lines.map((line, li) => (
+    <DiffLine
+      key={li}
+      line={line}
+      hunkIndex={hunkIndex}
+      lineIndex={li}
+      tokens={resolveLineTokens(line, li, hunkTokens, fileTokens, oldFileTokens)}
+      ranges={intraLineRanges.get(li)}
+      isSelected={selectedLines.has(`${hunkIndex}:${li}`)}
+      wrapClass={wrapClass}
+      dimmed={searchQuery !== "" && !line.content.toLowerCase().includes(searchQuery)}
+      selectable={selectable}
+    />
+  ));
 }
 
 /**
@@ -596,6 +602,7 @@ interface DiffLineProps {
   wrapClass: string;
   /** Dimmed when a filter query is active and this line doesn't match it. */
   dimmed: boolean;
+  selectable: boolean;
 }
 
 const DiffLine = memo(DiffLineImpl);
@@ -609,8 +616,9 @@ function DiffLineImpl({
   isSelected,
   wrapClass,
   dimmed,
+  selectable,
 }: DiffLineProps) {
-  const isChangeLine = line.origin === "+" || line.origin === "-";
+  const checkable = selectable && (line.origin === "+" || line.origin === "-");
   const isContext = line.origin === " ";
 
   const bgClass = isSelected
@@ -636,11 +644,11 @@ function DiffLineImpl({
         dimmed ? FILTER_DIM_CLASS : isContext && "opacity-80",
       )}
       style={LINE_CONTAINMENT}
-      data-line-key={isChangeLine ? `${hunkIndex}:${lineIndex}` : undefined}
+      data-line-key={checkable ? `${hunkIndex}:${lineIndex}` : undefined}
     >
       {/* Selection checkbox */}
       <span className="w-5 shrink-0 flex items-center justify-center select-none">
-        {isChangeLine && (
+        {checkable && (
           <span
             className={`flex items-center justify-center w-3.5 h-3.5 rounded-xs border transition-colors ${
               isSelected
@@ -685,6 +693,7 @@ interface SideBySideHunkProps {
   intraLineRanges: Map<number, CharRange[]>;
   /** Lowercased filter query; lines not containing it are dimmed. Empty = off. */
   searchQuery: string;
+  selectable: boolean;
 }
 
 interface SideBySidePair {
@@ -760,6 +769,7 @@ function SideBySideHunk({
   oldFileTokens,
   intraLineRanges,
   searchQuery,
+  selectable,
 }: SideBySideHunkProps) {
   const pairs = useMemo(() => buildSideBySidePairs(hunk), [hunk]);
 
@@ -795,6 +805,7 @@ function SideBySideHunk({
               side="left"
               oppositeLine={pair.right}
               dimmed={leftDimmed}
+              selectable={selectable}
             />
             {/* Right (new) side */}
             <SideBySideCell
@@ -808,6 +819,7 @@ function SideBySideHunk({
               side="right"
               oppositeLine={pair.left}
               dimmed={rightDimmed}
+              selectable={selectable}
             />
           </div>
         );
@@ -828,6 +840,7 @@ interface SideBySideCellProps {
   oppositeLine: DiffLine | null;
   /** Dimmed when a filter query is active and this line doesn't match it. */
   dimmed: boolean;
+  selectable: boolean;
 }
 
 const SideBySideCell = memo(SideBySideCellImpl);
@@ -843,8 +856,9 @@ function SideBySideCellImpl({
   side,
   oppositeLine,
   dimmed,
+  selectable,
 }: SideBySideCellProps) {
-  const isChangeLine = line !== null && (line.origin === "+" || line.origin === "-");
+  const checkable = selectable && line !== null && (line.origin === "+" || line.origin === "-");
   const isContext = line !== null && line.origin === " ";
   const isEmpty = line === null;
 
@@ -869,12 +883,12 @@ function SideBySideCellImpl({
         dimmed ? FILTER_DIM_CLASS : isContext && "opacity-80",
       )}
       style={LINE_CONTAINMENT}
-      data-line-key={isChangeLine && lineIdx !== null ? `${hunkIndex}:${lineIdx}` : undefined}
+      data-line-key={checkable && lineIdx !== null ? `${hunkIndex}:${lineIdx}` : undefined}
     >
       {line ? (
         <>
           {/* Selection checkbox */}
-          {isChangeLine && (
+          {checkable && (
             <span className="w-5 shrink-0 flex items-center justify-center select-none">
               <span
                 className={`flex items-center justify-center w-3 h-3 rounded-xs border transition-colors ${
@@ -887,7 +901,7 @@ function SideBySideCellImpl({
               </span>
             </span>
           )}
-          {!isChangeLine && <span className="w-5 shrink-0" />}
+          {!checkable && <span className="w-5 shrink-0" />}
           {/* Line number */}
           <span className="w-9 shrink-0 text-right pr-2 select-none text-muted-foreground/30 group-hover/diffpair:text-foreground text-caption">
             {side === "left" ? (line.old_lineno ?? "") : (line.new_lineno ?? "")}

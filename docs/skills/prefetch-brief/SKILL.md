@@ -1,13 +1,19 @@
 ---
 name: prefetch-brief
-description: Record WHY you are changing code as a Prefetch Change Brief draft, so the person who reviews and commits your work sees the intent, not just the diff. Use whenever you edit files in a git repository; keep the draft current as you work.
+description: Record WHY you are changing code, and how the change works step by step, as a Prefetch Change Brief draft, so the person who reviews and commits your work can follow it, not just see the diff. Use whenever you edit files in a git repository; keep the draft current as you work.
 ---
 
 # Prefetch Change Brief
 
 Prefetch (a git client) shows a "Brief" view of the working changes and uses it
 to write the commit message. When the commit lands, the brief is stored as a git note
-on that commit. The brief carries what the diff cannot: the goal and the reasons for it.
+on that commit. The brief carries what the diff cannot: the goal, the reasons for it,
+and a story that walks the reader through the code in the order it makes sense.
+
+The brief has two parts that you write together:
+
+- The **story** explains how the change works, step by step. Prefetch shows each step with the parts of the diff it points at.
+- The **intents** are the short summary of the story. Each intent's title and `why` say in a sentence or two what its steps add up to.
 
 ## Where
 
@@ -25,7 +31,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
 
 - Before you write, read the other `*.json` files in the `wip/` folder.
 - Never edit or delete another session's draft. `inferred.json` belongs to Prefetch; leave it alone too.
-- List a file only if you changed it. If another draft already lists a file that you also changed, list it in your draft too.
+- List a file only if you changed it. If another draft already lists a file that you also changed, list it in your draft too, and give every story reference to that file an `at`, so your steps point only at your part of it.
 - Write the draft with your file-writing tool, not with a shell command, so Prefetch can tell which draft is yours.
 
 ## When
@@ -58,6 +64,7 @@ Several agents can work in the same working tree at once. Each one keeps its own
     },
     {
       "title": "Share the diff-range logic between views",
+      "why": "The reset warning needs the same list of changed lines as the diff view.",
       "kind": "enabling",
       "type": "refactor",
       "tags": ["diff view"],
@@ -73,16 +80,42 @@ Several agents can work in the same working tree at once. Each one keeps its own
       "risk": {}
     }
   ],
+  "story": {
+    "approach": "Reset to Remote now stashes the uncommitted edits, resets, and always puts the edits back.",
+    "steps": [
+      {
+        "title": "Move the diff-range helper into shared utilities",
+        "why": "`diffRange` now lives in the shared utilities, so the reset code can use it to tell whether there is anything to stash.",
+        "intent": "Share the diff-range logic between views",
+        "code": [{ "file": "src/lib/utils.ts", "at": "export function diffRange" }]
+      },
+      {
+        "title": "Stash before the reset, restore after",
+        "why": "`resetToRemote` stashes first and pops the stash in a `finally` block, so a failed reset still gives the edits back.",
+        "intent": "Set edits aside before a reset",
+        "code": [
+          { "file": "src/stores/repo-store.ts", "at": "resetToRemote: async" },
+          { "file": "src/stores/repo-store.ts", "at": "stashPop(" }
+        ]
+      },
+      {
+        "title": "Fix a typo in the README",
+        "why": "A misspelled word in the install steps.",
+        "intent": "Fix typo in README",
+        "code": [{ "file": "README.md" }]
+      }
+    ]
+  },
   "issues": [
     { "id": "NL-123", "title": "Reset loses work", "url": "https://...", "criteria": ["Dirty tree is never reset without a stash"] }
   ]
 }
 ```
 
-## Rules
+## Rules for the intents
 
 - **`intent`** is the lead goal. Write `why` from the user's request and the problem: what they asked for and what was wrong. Do not narrate the diff.
-- **Describe the product change, not the process.** How the work came about (a code review, a failing check, a lint run, a release) is never an intent. A fix a review turned up is titled by what it fixes ("Never send a file twice on retry"), not "Fix review findings". If your edits correct work that another draft or a recent commit describes, take your lead intent from that work's goal.
+- **Describe the product change, not the process.** How the work came about (a code review, a failing check, a lint run, a release) is never an intent or a step. A fix a review turned up is titled by what it fixes ("Never send a file twice on retry"), not "Fix review findings". If your edits correct work that another draft or a recent commit describes, take your lead intent from that work's goal.
 - **Every file you changed belongs to exactly one intent.** Paths are repo-relative with forward slashes.
 - **`kind`** is one of:
   - `sub`: a part of the lead goal.
@@ -99,9 +132,23 @@ Several agents can work in the same working tree at once. Each one keeps its own
   - `oneWay`: `git revert` would not fully undo it (data already migrated or sent, published releases, deleted remote state).
   - `why`: one line naming the main concern. Leave it out when every answer is `false`.
 - **Project rules.** Read the `guidance` in `.prefetch/risk.json` before you answer (see "Project risk guidance" below). Its `rules` pin tiers for paths; you do not apply them yourself.
-- **Plain language.** Write every title and `why` for a teammate who has not seen the code or this conversation. Use everyday words and full sentences. Say what changes and why it matters, not how the code does it. Leave out function, file and variable names, ticket numbers and internal shorthand unless the reader needs them.
+- **Plain language.** Write every intent title and `why` for a teammate who has not seen the code or this conversation. Use everyday words and full sentences. Say what changes and why it matters, not how the code does it. Leave out function, file and variable names, ticket numbers and internal shorthand unless the reader needs them. The story's steps are the one place for names (see below).
 - **Keep it short.** Titles are about 8 words. A `why` is one or two sentences.
 - **`issues`** is optional. Add an issue only if the work is tied to a tracker issue that you saw: one the user gave you, one in the branch name, or one from a tracker tool. Never invent IDs. If there is no issue, leave out the field. Add `criteria` only if you have the acceptance criteria.
+
+## Rules for the story
+
+- **Order** the steps the way you would walk a colleague through the change: data shapes and contracts first, then the logic that uses them, then the wiring (call sites, commands, UI), then tests, then unrelated changes. No step depends on a later one. Write 2 to 8 steps; a tiny change can have one.
+- **`approach`** is one or two sentences on how the change reaches its goal.
+- **A step** has a `title` of about 8 words saying what it does, a `why` of one or two sentences saying what it does and why the reader needs it before the next step, the `intent` it serves (that intent's `title`, copied exactly), and its `code`.
+- **Names are allowed here.** A step's `title` and `why` may name a function, type or file in backticks, because the code is shown right under them. Everything else in the plain-language rule still holds, and so does the process rule.
+- **`code`** says which parts of the diff the step explains. It is a list of `{ "file": "<path>", "at": "<text>" }`:
+  - `file` is repo-relative with forward slashes.
+  - `at` is optional: a short piece of text copied from a line you added or removed in that file, such as a function name or a distinctive fragment. Pick text that appears only in the lines you mean: every part of that file's diff containing it goes to this step.
+  - Without `at`, the step takes every part of the file that no `at` in any step takes.
+  - Prefetch finds `at` again in the current diff every time it shows the story, ignoring whitespace. An `at` that no longer appears matches nothing, so when you rewrite the draft, check that each `at` is still in your changes.
+- **Cover every file you changed.** A part of the diff that no step points at shows under "Not in the story".
+- **Then summarize.** Once the steps are written, make each intent's title and `why` say what its steps add up to, and the lead intent what the whole story achieves.
 
 ## Project risk guidance
 

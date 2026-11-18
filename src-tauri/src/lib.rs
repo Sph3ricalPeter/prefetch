@@ -193,6 +193,9 @@ pub fn run() {
             commands::brief::get_brief_sync,
             commands::brief::set_brief_sync,
             commands::brief::sync_briefs,
+            // Change stories
+            commands::story::get_commit_story,
+            commands::story::get_worktree_story,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

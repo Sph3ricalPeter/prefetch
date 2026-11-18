@@ -20,6 +20,7 @@ import type {
   PrInfo,
   RebaseProgress,
   StashInfo,
+  Story,
   TagInfo,
   UndoAction,
   WipBriefs,
@@ -72,6 +73,8 @@ import {
   attachCommitBrief,
   getBriefMarks,
   generateBrief as generateBriefCmd,
+  getCommitStory,
+  getWorktreeStory,
   syncBriefs,
   getStashes,
   stashPush as stashPushCmd,
@@ -335,6 +338,115 @@ async function reloadAfterMergeLike(
   return conflict;
 }
 
+export interface StoryState {
+  /** null: the working changes. */
+  commitId: string | null;
+  story: Story | null;
+  /** Shown in the centre panel. False: loaded only for the Brief tab, which
+   *  lists the steps under their intents. */
+  open: boolean;
+  loading: boolean;
+  error: string | null;
+  /** The part picked in the Brief tab, shown alone; null shows it all. */
+  pick: StoryPick | null;
+  /** Where to scroll once shown: a step (index into `story.steps`) or the
+   *  leftovers, and a file in it; no step is the top. `seq` changes per
+   *  request, so the same target can be asked for again. */
+  focus: { step?: number | "leftovers"; path?: string; seq: number } | null;
+}
+
+/** A brief, an intent in it, a step of that intent (index into
+ *  `story.steps`) or a file of that step, as picked in the Brief tab. Keys
+ *  from `briefKey` / `intentKey`. */
+export interface StoryPick {
+  brief: string;
+  intent?: string;
+  step?: number;
+  path?: string;
+}
+
+/** Where to open the story. */
+export interface StoryAt {
+  /** Show only this part. */
+  pick?: StoryPick;
+  /** Scroll to this file: in `pick.step` when given, else where it first shows. */
+  path?: string;
+  /** No story at hand, or (for `path`) none of this file in it: open the
+   *  regular diff instead. */
+  fallback?: () => void;
+}
+
+/** Bumped per story request, so a slow one that lost the race is dropped. */
+let storySeq = 0;
+let focusSeq = 0;
+
+/** The story the briefs tell: a commit's, or the working changes' (`null`).
+ *  Never calls Claude: whatever writes a brief writes its story. */
+const readStory = (commitId: string | null) =>
+  commitId === null ? getWorktreeStory() : getCommitStory(commitId);
+
+/** Where `at` scrolls in `story`; undefined when its file is nowhere in it. */
+function storyFocus(story: Story, at: StoryAt | undefined): StoryState["focus"] | undefined {
+  if (at?.pick?.step !== undefined) return { step: at.pick.step, path: at.path, seq: ++focusSeq };
+  if (at?.path) {
+    const shows = (s: { pieces: Story["leftovers"] }) => s.pieces.some((p) => p.path === at.path);
+    const i = story.steps.findIndex(shows);
+    const step = i >= 0 ? i : shows({ pieces: story.leftovers }) ? "leftovers" : null;
+    return step === null ? undefined : { step, path: at.path, seq: ++focusSeq };
+  }
+  return at?.pick ? { seq: ++focusSeq } : null;
+}
+
+/** Re-read the story loaded for `commitId` in place, keeping what is shown:
+ *  the briefs were rewritten, or the tree moved. Drops it once there is none. */
+// One re-read at a time: overlapping ones share a seq, so a slow older read
+// could land last. A request during one runs again after it, with fresh data.
+let rereading = false;
+let rereadNext: string | null | undefined;
+async function rereadStory(commitId: string | null, get: () => RepoState, set: (s: Partial<RepoState>) => void) {
+  if (rereading) {
+    rereadNext = commitId;
+    return;
+  }
+  rereading = true;
+  try {
+    let next: string | null | undefined = commitId;
+    while (next !== undefined) {
+      rereadNext = undefined;
+      await rereadOnce(next, get, set);
+      next = rereadNext;
+    }
+  } finally {
+    rereading = false;
+  }
+}
+
+async function rereadOnce(commitId: string | null, get: () => RepoState, set: (s: Partial<RepoState>) => void) {
+  const open = get().story;
+  if (!open || open.commitId !== commitId || open.loading) return;
+  const seq = storySeq;
+  try {
+    const story = await readStory(commitId);
+    const now = get().story;
+    if (seq !== storySeq || !now || now.commitId !== commitId) return;
+    if (!story) {
+      if (!now.story) return;
+      storySeq++;
+      set({ story: null });
+    } else if (JSON.stringify(story) !== JSON.stringify(now.story)) set({ story: { ...now, story, error: null } });
+  } catch {
+    // Background check: the next poll or brief change tries again.
+  }
+}
+
+/** Follow the tree with a loaded working-changes story. */
+// ponytail: reads the whole diff on every poll while a worktree story is
+// loaded (the Brief tab keeps one whenever a draft tells a story); compare
+// file stats first if that gets slow on big trees.
+function refreshWorktreeStory(get: () => RepoState, set: (s: Partial<RepoState>) => void) {
+  if (get().story?.story) rereadStory(null, get, set);
+}
+
 interface RepoState {
   repoPath: string | null;
   repoName: string | null;
@@ -388,8 +500,21 @@ interface RepoState {
   /** Right-column view when a brief exists. */
   detailTab: "brief" | "files";
   setDetailTab: (tab: "brief" | "files") => void;
-  /** Infer a commit's brief with Claude. */
+  /** Infer a commit's brief with Claude, and write every brief's story again. */
   generateBrief: (commitId: string) => Promise<void>;
+  /** The story loaded for `commitId` (null: no commit, the working changes);
+   *  in the centre panel while `open` and `commitId` is the selected commit. */
+  story: StoryState | null;
+  /** Open the story the briefs of a commit, or of the working changes for
+   *  `null`, tell. With `at`, show that part; no story at hand (or none of
+   *  `at.path` in it) opens the regular diff instead. Without `at`, the whole
+   *  story. Never calls Claude. */
+  openStory: (commitId: string | null, at?: StoryAt) => Promise<void>;
+  /** Load the story without showing it, for the Brief tab, or re-read it in
+   *  place once loaded (the briefs changed). Never calls Claude. */
+  peekStory: (commitId: string | null) => Promise<void>;
+  /** Hide the story; a loaded one stays for the Brief tab. */
+  closeStory: () => void;
 
   commitMessage: string;
   commitDescription: string;
@@ -787,6 +912,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
   wipBriefs: { briefs: [], errors: [] },
   commitBrief: null,
   detailTab: "brief",
+  story: null,
   filterInput: "",
   filterQuery: "",
   commitMessage: "",
@@ -869,6 +995,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       commitFilesLoading: false,
       wipBriefs: { briefs: [], errors: [] },
       commitBrief: null,
+      story: null,
       commitMessage: "",
       commitDescription: "",
       amendMode: false,
@@ -1035,6 +1162,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       // in-place edit (typo fix etc.) leaves additions/deletions unchanged but
       // still mutates content, and the diff viewer needs to reflect it.
       get().refreshActiveDiff();
+      refreshWorktreeStory(get, set);
       // Skip state update if nothing changed — avoids an unnecessary React
       // re-render on every 5-second poll when no files have been modified.
       const current = get().fileStatuses;
@@ -1430,6 +1558,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       commitFiles: [],
       commitFilesLoading: !!id,
       commitBrief: null,
+      story: null,
       ciSelectedJobId: null,
       ciJobLog: null,
     });
@@ -1830,6 +1959,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
       activeDiff: null,
       commitFiles: [],
       commitFilesLoading: true,
+      story: null,
       ciSelectedJobId: null,
       ciJobLog: null,
     });
@@ -2438,6 +2568,7 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
         update.undoInfo = undoAction;
       }
       set(update);
+      refreshWorktreeStory(get, set);
       if (conflict.in_progress) analyzeConflictFiles(statuses, set).catch(() => {});
     } catch {
       // Silently handle — these are background refreshes from the file watcher
@@ -2549,6 +2680,82 @@ export const useRepoStore = create<RepoState>()((set, get) => ({
     } catch (e) {
       showError("Generate brief", e, { id: toastId });
     }
+  },
+
+  openStory: async (commitId, at) => {
+    const pick = at?.pick ?? null;
+    // Already loaded (shown, or kept for the Brief tab): show it there.
+    const loaded = get().story;
+    if (loaded?.commitId === commitId && loaded.story && !loaded.loading) {
+      const focus = storyFocus(loaded.story, at);
+      if (focus === undefined) {
+        at?.fallback?.();
+        return;
+      }
+      get().clearDiff();
+      set({ story: { ...loaded, open: true, pick, focus } });
+      return;
+    }
+    const seq = ++storySeq;
+    get().clearDiff();
+    const base: StoryState = {
+      commitId,
+      story: null,
+      open: true,
+      loading: true,
+      error: null,
+      pick,
+      focus: null,
+    };
+    set({ story: base });
+    const live = () => seq === storySeq && get().story?.commitId === commitId;
+    try {
+      const story = await readStory(commitId);
+      const focus = story ? storyFocus(story, at) : undefined;
+      // No story at hand, or none of this file in it: the regular diff.
+      if (!story || focus === undefined) {
+        if (live()) {
+          get().closeStory();
+          at?.fallback?.();
+        }
+        return;
+      }
+      if (live()) set({ story: { ...base, story, loading: false, focus } });
+    } catch (e) {
+      if (live()) set({ story: { ...base, loading: false, error: errorMessage(e) } });
+      showError("Show story", e);
+    }
+  },
+
+  peekStory: async (commitId) => {
+    if (get().story?.commitId === commitId) return rereadStory(commitId, get, set);
+    const seq = ++storySeq;
+    const base: StoryState = {
+      commitId,
+      story: null,
+      open: false,
+      loading: true,
+      error: null,
+      pick: null,
+      focus: null,
+    };
+    set({ story: base });
+    const done = (patch: Partial<StoryState>) => {
+      if (seq === storySeq && get().story?.commitId === commitId) set({ story: { ...base, loading: false, ...patch } });
+    };
+    try {
+      done({ story: await readStory(commitId) });
+    } catch (e) {
+      // Not shown: the Brief tab just lists files, as without a story.
+      done({ error: errorMessage(e) });
+    }
+  },
+
+  closeStory: () => {
+    storySeq++;
+    const s = get().story;
+    // A loaded story stays for the Brief tab's step lists.
+    set({ story: s?.story ? { ...s, open: false, pick: null, focus: null } : null });
   },
 
   setFileViewMode: (mode) => {

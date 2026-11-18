@@ -42,6 +42,140 @@ pub struct Brief {
     /// Written by Prefetch from the diff alone, not by the agent that did the work.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub inferred: bool,
+    /// How the change works, step by step (#93). Optional, and read leniently:
+    /// a malformed story is dropped, never the brief.
+    #[serde(
+        default,
+        deserialize_with = "lenient_story",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub story: Option<BriefStory>,
+}
+
+/// The story part of a brief. Steps point at code by file and anchor text,
+/// never by hunk: `story::from_briefs` resolves them against whatever the
+/// diff is when the story is read.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BriefStory {
+    pub approach: String,
+    pub steps: Vec<BriefStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BriefStep {
+    pub title: String,
+    pub why: String,
+    /// Title of the intent it serves; empty for none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub intent: String,
+    pub code: Vec<CodeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CodeRef {
+    /// Repo-relative, forward slashes.
+    pub file: String,
+    /// Text from the changed lines; empty means the whole file.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub at: String,
+}
+
+fn lenient_story<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<BriefStory>, D::Error> {
+    Ok(BriefStory::from_value(&serde_json::Value::deserialize(d)?))
+}
+
+impl BriefStory {
+    /// Whatever parses: a step needs some `code`, and a `code` entry is a path
+    /// or `{"file", "at"}` (`at` may be a list: one reference each). No steps:
+    /// no story.
+    fn from_value(v: &serde_json::Value) -> Option<Self> {
+        let text = |v: &serde_json::Value, k: &str| {
+            v.get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        let steps: Vec<BriefStep> = v
+            .get("steps")?
+            .as_array()?
+            .iter()
+            .filter_map(|s| {
+                let code: Vec<CodeRef> = s
+                    .get("code")?
+                    .as_array()?
+                    .iter()
+                    .flat_map(code_refs)
+                    .collect();
+                (!code.is_empty()).then(|| BriefStep {
+                    title: text(s, "title"),
+                    why: text(s, "why"),
+                    intent: text(s, "intent"),
+                    code,
+                })
+            })
+            .collect();
+        (!steps.is_empty()).then(|| BriefStory {
+            approach: text(v, "approach"),
+            steps,
+        })
+    }
+
+    /// Only the references into `paths`; a step left with none goes.
+    fn restricted_to(&self, paths: &HashSet<String>) -> Option<BriefStory> {
+        let steps: Vec<BriefStep> = self
+            .steps
+            .iter()
+            .filter_map(|s| {
+                let code: Vec<CodeRef> = s
+                    .code
+                    .iter()
+                    .filter(|c| paths.contains(&c.file))
+                    .cloned()
+                    .collect();
+                (!code.is_empty()).then(|| BriefStep { code, ..s.clone() })
+            })
+            .collect();
+        (!steps.is_empty()).then(|| BriefStory {
+            steps,
+            ..self.clone()
+        })
+    }
+}
+
+fn code_refs(v: &serde_json::Value) -> Vec<CodeRef> {
+    use serde_json::Value;
+    let file = match v {
+        Value::String(s) => Some(s.as_str()),
+        _ => v
+            .get("file")
+            .or_else(|| v.get("path"))
+            .and_then(Value::as_str),
+    };
+    let Some(file) = file.map(normalize).filter(|f| !f.is_empty()) else {
+        return Vec::new();
+    };
+    let at: Vec<String> = match v.get("at") {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(|a| a.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let at: Vec<String> = at.into_iter().filter(|a| !a.trim().is_empty()).collect();
+    if at.is_empty() {
+        return vec![CodeRef {
+            file,
+            at: String::new(),
+        }];
+    }
+    at.into_iter()
+        .map(|at| CodeRef {
+            file: file.clone(),
+            at,
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -286,6 +420,20 @@ impl Brief {
         self.intents.iter().flat_map(|i| &i.files)
     }
 
+    /// Take a story Claude wrote for this brief, narrowed to the brief's own
+    /// files so a step can't claim another brief's code. Nothing left (none
+    /// given, malformed, or all elsewhere): the old story stays. True when it
+    /// changed.
+    pub fn restory(&mut self, story: Option<&BriefStory>) -> bool {
+        let files: HashSet<String> = self.files().cloned().collect();
+        let Some(story) = story.and_then(|s| s.restricted_to(&files)) else {
+            return false;
+        };
+        let changed = self.story.as_ref() != Some(&story);
+        self.story = Some(story);
+        changed
+    }
+
     /// This brief narrowed to `paths`, or `None` when it touches none of them.
     /// Intents without files are conceptual and always kept.
     pub fn restricted_to(&self, paths: &HashSet<String>) -> Option<Brief> {
@@ -310,9 +458,26 @@ impl Brief {
             .collect();
         Some(Brief {
             intents,
+            story: self.story.as_ref().and_then(|s| s.restricted_to(paths)),
             ..self.clone()
         })
     }
+}
+
+/// Reading rank of an intent, lowest first: the Brief view's `sortIntents`
+/// (src/lib/brief.ts). Unrelated last, then high, mid, the rest; fix, feat, the rest.
+pub fn intent_rank(i: &Intent) -> (bool, u8, u8) {
+    let tier = match i.tier {
+        Some(Tier::High) => 0,
+        Some(Tier::Mid) => 1,
+        _ => 2,
+    };
+    let kind = match i.commit_type.to_lowercase().as_str() {
+        "fix" => 0,
+        "feat" => 1,
+        _ => 2,
+    };
+    (i.kind == "unrelated", tier, kind)
 }
 
 /// Every changed path in the working tree, untracked included.
@@ -411,6 +576,17 @@ pub fn read_wip(path: &str) -> Result<WipBriefs, AppError> {
         briefs: drafts.into_iter().map(|(_, b)| b).collect(),
         errors,
     })
+}
+
+/// The drafts the Brief view shows: [`read_wip`], narrowed to the changed
+/// files (`matchBriefs` in src/lib/brief.ts drops the same stale ones).
+pub fn wip_in_view(path: &str) -> Result<Vec<Brief>, AppError> {
+    let dirty = dirty_paths(&Repository::open(path)?)?;
+    Ok(read_wip(path)?
+        .briefs
+        .iter()
+        .filter_map(|b| b.restricted_to(&dirty))
+        .collect())
 }
 
 /// A file several drafts list (sessions that both edited it) shows once:
@@ -756,15 +932,21 @@ pub fn parse_generated(raw: &str) -> Result<Brief, AppError> {
 }
 
 /// What Summarize returns: the inferred brief, its verdict on agent briefs,
-/// and the commit message.
+/// and the commit message. Generate brief's reply has the same shape, with
+/// stories only for its agent briefs and no message.
 pub struct Summary {
     pub inferred: Option<Brief>,
     /// Session → rewritten brief, or `None` to drop it. Absent: kept as is.
     pub agents: HashMap<String, Option<Brief>>,
+    /// Session → a new story for an agent brief whose intents stand. A
+    /// malformed one is left out, so the brief keeps its old story.
+    pub stories: HashMap<String, BriefStory>,
     pub message: String,
 }
 
-/// `{"brief": ..., "agents": {...}, "message": "..."}` from model output.
+/// `{"brief": ..., "agents": {...}, "message": "..."}` from model output. An
+/// `agents` entry is a rewritten brief, null (or `"drop"`) to drop it, or
+/// `{"story": ...}` for a new story alone.
 pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
     let invalid =
         |e: serde_json::Error| AppError::Other(format!("Claude returned invalid JSON: {e}"));
@@ -784,6 +966,7 @@ pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
         _ => Vec::new(),
     };
     let mut agents = HashMap::new();
+    let mut stories = HashMap::new();
     for (key, b) in entries {
         let session = key.trim().trim_end_matches(".json").to_string();
         let rewrite = match b {
@@ -791,6 +974,16 @@ pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
             // "keep" or any other note: leave the draft alone.
             serde_json::Value::String(s) if s.eq_ignore_ascii_case("drop") => None,
             serde_json::Value::String(_) => continue,
+            // No lead intent: not a rewrite, just its story.
+            b if b.get("intent").is_none_or(serde_json::Value::is_null) => {
+                match b.get("story").and_then(BriefStory::from_value) {
+                    Some(s) => {
+                        stories.insert(session, s);
+                    }
+                    None => tracing::warn!(%session, "summary story unreadable; old one kept"),
+                }
+                continue;
+            }
             b => Some(
                 serde_json::from_value::<Brief>(b)
                     .map_err(invalid)?
@@ -801,6 +994,7 @@ pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
     }
     tracing::info!(
         edits = ?agents.iter().map(|(k, v)| (k, v.is_some())).collect::<Vec<_>>(),
+        stories = ?stories.keys().collect::<Vec<_>>(),
         has_brief = !v["brief"].is_null(),
         "summary parsed"
     );
@@ -808,14 +1002,17 @@ pub fn parse_summary(raw: &str) -> Result<Summary, AppError> {
     Ok(Summary {
         inferred,
         agents,
+        stories,
         message,
     })
 }
 
-/// Write Summarize's edits: rewritten agent drafts, dropped ones deleted,
-/// then the inferred brief for every changed file no agent draft claims
-/// afterwards. `shown` is what the model saw; a draft its agent changed or
-/// removed since then is left as the agent has it now.
+/// Write Summarize's edits: rewritten agent drafts, dropped ones deleted, new
+/// stories for the ones it left alone, then the inferred brief for every
+/// changed file no agent draft claims afterwards. Every story Claude sends
+/// replaces the old one; a missing or malformed one keeps it. `shown` is what
+/// the model saw; a draft its agent changed or removed since then is left as
+/// the agent has it now.
 pub fn apply_summary(path: &str, shown: &[Brief], summary: &Summary) -> Result<(), AppError> {
     let repo = Repository::open(path)?;
     let dir = wip_dir(&repo);
@@ -827,6 +1024,7 @@ pub fn apply_summary(path: &str, shown: &[Brief], summary: &Summary) -> Result<(
     let stale: Vec<&String> = summary
         .agents
         .keys()
+        .chain(summary.stories.keys())
         .filter(|k| !fresh.iter().any(|b| &b.session == *k && shown.contains(b)))
         .collect();
     if !stale.is_empty() {
@@ -846,11 +1044,31 @@ pub fn apply_summary(path: &str, shown: &[Brief], summary: &Summary) -> Result<(
             match edit {
                 Some(e) => (
                     agent.session.clone(),
-                    e.as_ref().and_then(|b| b.restricted_to(&dirty)),
+                    e.as_ref().and_then(|rewrite| {
+                        // A rewrite whose story is missing or malformed keeps the
+                        // agent's, narrowed to the files the rewrite still has.
+                        let mut b = Brief {
+                            story: None,
+                            ..rewrite.clone()
+                        };
+                        if !b.restory(rewrite.story.as_ref()) {
+                            b.restory(agent.story.as_ref());
+                        }
+                        b.restricted_to(&dirty)
+                    }),
                     true,
                     true,
                 ),
-                None => (agent.session.clone(), Some(agent.clone()), false, false),
+                // Intents left as they are; the story may still be new.
+                None => {
+                    let mut b = agent.clone();
+                    let story = summary
+                        .stories
+                        .get(&agent.session)
+                        .filter(|_| shown.contains(agent));
+                    let write = b.restory(story);
+                    (agent.session.clone(), Some(b), write, false)
+                }
             }
         })
         .collect();
@@ -906,9 +1124,17 @@ pub fn apply_summary(path: &str, shown: &[Brief], summary: &Summary) -> Result<(
             })?,
         }
     }
-    let unclaimed = wip_split(path)?.unclaimed;
+    let split = wip_split(path)?;
     match &summary.inferred {
-        Some(b) => write_inferred(path, b, &unclaimed),
+        Some(generated) => {
+            // As with the agents: a missing or malformed story keeps the old one.
+            let mut b = Brief {
+                story: split.inferred.and_then(|i| i.story),
+                ..generated.clone()
+            };
+            b.restory(generated.story.as_ref());
+            write_inferred(path, &b, &split.unclaimed)
+        }
         None => {
             let _ = fs::remove_file(dir.join(format!("{INFERRED}.json")));
             Ok(())
@@ -980,21 +1206,9 @@ pub fn prompt_context(briefs: &[Brief]) -> String {
         s.push('\n');
     }
     let mut intents: Vec<&Intent> = briefs.iter().flat_map(|b| &b.intents).collect();
-    // The Brief view's order (`sortIntents` in src/lib/brief.ts), so the
-    // message lists intents the way the cards read. Stable within a rank.
-    intents.sort_by_key(|i| {
-        let tier = match i.tier {
-            Some(Tier::High) => 0,
-            Some(Tier::Mid) => 1,
-            _ => 2,
-        };
-        let kind = match i.commit_type.to_lowercase().as_str() {
-            "fix" => 0,
-            "feat" => 1,
-            _ => 2,
-        };
-        (i.kind == "unrelated", tier, kind)
-    });
+    // The Brief view's order, so the message lists intents the way the cards
+    // read. Stable within a rank.
+    intents.sort_by_key(|i| intent_rank(i));
     if !intents.is_empty() {
         s.push_str("Intents, most important first:\n");
     }
@@ -1065,6 +1279,162 @@ mod tests {
             1
         );
         assert!(parse_note("{}").is_err());
+    }
+
+    #[test]
+    fn story_part_is_optional_and_lenient() {
+        // Old drafts and notes: no story, and nothing else changes.
+        let old: Brief = serde_json::from_str(&draft("s", &[&["a.rs"]])).unwrap();
+        assert!(old.story.is_none());
+        assert!(!serde_json::to_string(&old).unwrap().contains("story"));
+
+        let with = |story: &str| -> Brief {
+            let raw = format!(
+                r#"{{"intent":{{"title":"t"}},"intents":[{{"title":"i","files":["a.rs"]}}],"story":{story}}}"#
+            );
+            serde_json::from_str::<Brief>(&raw).unwrap().normalized()
+        };
+        // Malformed stories drop, the brief stays.
+        for bad in [
+            "null",
+            "3",
+            r#""text""#,
+            "{}",
+            r#"{"steps":"x"}"#,
+            r#"{"steps":[{"title":"no code"}]}"#,
+        ] {
+            assert!(with(bad).story.is_none(), "{bad}");
+            // Nor does it fail a generated brief or Summarize's reply.
+            let raw = format!(r#"{{"intent":{{"title":"t"}},"story":{bad}}}"#);
+            assert!(parse_generated(&raw).unwrap().story.is_none());
+            let raw = format!(r#"{{"brief":{raw},"agents":{{"x":{raw}}},"message":"m"}}"#);
+            assert!(parse_summary(&raw).is_ok());
+        }
+        let s = with(
+            r#"{"approach":" A. ","steps":[
+                {"title":"Bad code","code":[3, {"at":"x"}, ""]},
+                {"title":7,"why":null,"intent":"i","code":["./src\\a.rs", {"path":"b.rs","at":["fn a","","fn b"]}, {"file":"c.rs","at":null}]}]}"#,
+        )
+        .story
+        .unwrap();
+        assert_eq!(s.approach, "A.");
+        assert_eq!(s.steps.len(), 1);
+        let step = &s.steps[0];
+        assert_eq!(
+            (step.title.as_str(), step.why.as_str(), step.intent.as_str()),
+            ("", "", "i")
+        );
+        let code: Vec<(&str, &str)> = step
+            .code
+            .iter()
+            .map(|c| (c.file.as_str(), c.at.as_str()))
+            .collect();
+        assert_eq!(
+            code,
+            [
+                ("src/a.rs", ""),
+                ("b.rs", "fn a"),
+                ("b.rs", "fn b"),
+                ("c.rs", "")
+            ]
+        );
+
+        // Narrowing keeps only references into the paths.
+        let b = Brief {
+            story: Some(s),
+            ..old.clone()
+        };
+        let r = b
+            .restricted_to(&["b.rs".to_string(), "a.rs".to_string()].into())
+            .unwrap();
+        assert_eq!(r.story.unwrap().steps[0].code.len(), 2);
+        let only_a: HashSet<String> = ["a.rs".to_string()].into();
+        assert!(b.restricted_to(&only_a).unwrap().story.is_none());
+    }
+
+    #[test]
+    fn summarize_rewrites_every_story() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let path = dir.to_str().unwrap();
+        git(dir, &["init", "-q"]);
+        for f in ["a.rs", "b.rs", "c.rs", "d.rs", "e.rs"] {
+            fs::write(dir.join(f), "x").unwrap();
+        }
+        let wip = dir.join(".git/prefetch/wip");
+        fs::create_dir_all(&wip).unwrap();
+        let story = |title: &str, file: &str| serde_json::json!({"approach": title, "steps": [{"title": title, "why": "w", "intent": "i0", "code": [file]}]});
+        let with_story = |session: &str, file: &str, s: Option<serde_json::Value>| {
+            let mut d: serde_json::Value =
+                serde_json::from_str(&draft(session, &[&[file]])).unwrap();
+            if let Some(s) = s {
+                d["story"] = s;
+            }
+            fs::write(wip.join(format!("{session}.json")), d.to_string()).unwrap();
+        };
+        with_story("told", "a.rs", Some(story("Old", "a.rs")));
+        with_story("bare", "b.rs", None);
+        with_story("broken", "c.rs", Some(story("Kept", "c.rs")));
+        with_story("rewritten", "d.rs", Some(story("Kept too", "d.rs")));
+        let inferred = serde_json::json!({"intent": {"title": "inf"}, "inferred": true,
+            "intents": [{"title": "i0", "files": ["e.rs"]}], "story": story("Inferred", "e.rs")});
+        fs::write(wip.join("inferred.json"), inferred.to_string()).unwrap();
+        let agents = wip_split(path).unwrap().agents;
+
+        // Intents left alone come back as stories only. A step pointing at
+        // another brief's file is dropped; a malformed story keeps the old one.
+        let raw = r#"{
+            "brief": {"intent": {"title": "inf"}, "intents": [{"title": "i0", "files": ["e.rs"]}], "story": 3},
+            "agents": {
+                "told": {"story": {"approach": "New", "steps": [
+                    {"title": "New", "why": "w", "intent": "i0", "code": [{"file": "a.rs", "at": "x"}]},
+                    {"title": "Not mine", "why": "w", "code": ["b.rs"]}]}},
+                "bare": {"story": {"approach": "First", "steps": [{"title": "First", "why": "w", "code": ["b.rs"]}]}},
+                "broken": {"story": "garbage"},
+                "rewritten": {"intent": {"title": "Better"}, "intents": [{"title": "i0", "files": ["d.rs"]}], "story": {"steps": []}}
+            },
+            "message": "feat: x"}"#;
+        let s = parse_summary(raw).unwrap();
+        // A bad story never fails the summary or its message.
+        assert_eq!(s.message, "feat: x");
+        apply_summary(path, &agents, &s).unwrap();
+
+        let briefs = read_wip(path).unwrap().briefs;
+        let by = |s: &str| briefs.iter().find(|b| b.session == s).unwrap();
+        let steps = |s: &str| -> Vec<String> {
+            by(s)
+                .story
+                .as_ref()
+                .unwrap()
+                .steps
+                .iter()
+                .map(|s| s.title.clone())
+                .collect()
+        };
+        assert_eq!(steps("told"), ["New"]);
+        assert_eq!(by("told").intent.title, "lead", "intents untouched");
+        assert_eq!(steps("bare"), ["First"]);
+        assert_eq!(steps("broken"), ["Kept"]);
+        assert_eq!(by("rewritten").intent.title, "Better");
+        assert_eq!(steps("rewritten"), ["Kept too"]);
+        assert_eq!(steps(INFERRED), ["Inferred"]);
+
+        // Summarize again, after the work moved on: the new stories replace these.
+        let agents = wip_split(path).unwrap().agents;
+        let s = parse_summary(
+            r#"{"brief": {"intent": {"title": "inf"}, "intents": [{"title": "i0", "files": ["e.rs"]}],
+                 "story": {"steps": [{"title": "Again", "code": ["e.rs"]}]}},
+                "agents": {"told": {"story": {"steps": [{"title": "Again", "code": ["a.rs"]}]}}},
+                "message": "feat: y"}"#,
+        )
+        .unwrap();
+        apply_summary(path, &agents, &s).unwrap();
+        let briefs = read_wip(path).unwrap().briefs;
+        let by = |s: &str| briefs.iter().find(|b| b.session == s).unwrap();
+        assert_eq!(by("told").story.as_ref().unwrap().steps[0].title, "Again");
+        assert_eq!(by(INFERRED).story.as_ref().unwrap().steps[0].title, "Again");
+        // Left out of the reply: kept as it was.
+        assert_eq!(by("bare").story.as_ref().unwrap().steps[0].title, "First");
     }
 
     #[test]

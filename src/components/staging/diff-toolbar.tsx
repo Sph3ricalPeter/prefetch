@@ -9,10 +9,12 @@ interface DiffToolbarProps {
   isExpanded?: boolean;
   rightSlot?: React.ReactNode;
   filePath?: string;
+  /** Shown in place of the file path (the story's subject). */
+  title?: React.ReactNode;
   onBack?: () => void;
 }
 
-export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot, filePath, onBack }: DiffToolbarProps) {
+export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot, filePath, title, onBack }: DiffToolbarProps) {
   const diffViewMode = useRepoStore((s) => s.diffViewMode);
   const diffWrapLines = useRepoStore((s) => s.diffWrapLines);
   const setDiffViewMode = useRepoStore((s) => s.setDiffViewMode);
@@ -34,12 +36,13 @@ export function DiffToolbar({ onExpandAll, onCollapseAll, isExpanded, rightSlot,
           <ArrowLeft className="h-3.5 w-3.5" />
         </IconButton>
       )}
-      {filePath && (
-        <span className="truncate text-xs font-medium text-foreground min-w-0" title={filePath}>
-          {filePath}
-        </span>
-      )}
-      {(onBack || filePath) && <span className="w-px h-4 bg-border shrink-0" />}
+      {title ??
+        (filePath && (
+          <span className="truncate text-xs font-medium text-foreground min-w-0" title={filePath}>
+            {filePath}
+          </span>
+        ))}
+      {(onBack || filePath || title) && <span className="w-px h-4 bg-border shrink-0" />}
 
       {/* Unity object-level diff toggle */}
       {isUnity && (

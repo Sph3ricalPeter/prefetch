@@ -1,4 +1,4 @@
-import type { Brief, BriefIntent, FileStatus, IntentMark, RiskTier } from "@/types/git";
+import type { Brief, BriefIntent, FileStatus, IntentMark, RiskTier, Story, StoryPiece, StoryStep } from "@/types/git";
 import { COMMIT_TYPE_META, type CommitType, type IconNode } from "@/lib/commit-type";
 
 const TIER_META_COLORS = { high: "#f97316", mid: "#e3c34d", low: "#71717a", none: "#a78bfa" } as const;
@@ -179,4 +179,67 @@ export function matchBriefs(briefs: Brief[], files: FileStatus[]) {
   for (const b of shown) for (const s of b.intents) for (const f of s.files) claimed.add(f.path);
   const unclaimed = [...byPath.values()].filter((f) => !claimed.has(f.path));
   return { shown, unclaimed };
+}
+
+export type ShownBrief = ReturnType<typeof matchBriefs>["shown"][number];
+
+/** Names a brief, and an intent in it, across re-reads (a story pick). */
+export const briefKey = (b: Brief) => b.session || b.intent.title;
+export const intentKey = (b: Brief, i: BriefIntent) => `${briefKey(b)}\n${i.title}`;
+
+export interface OutlineStep {
+  step: StoryStep;
+  /** Index into `Story.steps`. */
+  i: number;
+  /** Its number as shown, in both the story and the Brief tab. */
+  n: number;
+}
+
+export interface OutlineGroup {
+  /** The intent the steps serve, in the brief that shows it; null for steps
+   *  serving no intent in view. */
+  owner: { brief: Brief; intent: BriefIntent } | null;
+  steps: OutlineStep[];
+}
+
+const sameTitle = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * The story's steps grouped by intent, in the Brief tab's order: briefs by
+ * `sortBriefs`, intents by `sortIntents`, the story's own order within an
+ * intent. Steps serving no intent in view come next, unrelated intents last.
+ * Numbered in that order. Empty groups are left out.
+ */
+export function storyOutline(story: Story, shown: ShownBrief[]): OutlineGroup[] {
+  const groups: OutlineGroup[] = sortBriefs(shown).flatMap(({ brief, intents }) =>
+    sortIntents(intents).map(({ intent }) => ({ owner: { brief, intent }, steps: [] })),
+  );
+  const loose: OutlineGroup = { owner: null, steps: [] };
+  story.steps.forEach((step, i) => {
+    const title = step.intent;
+    const named = title === null ? [] : groups.filter((g) => sameTitle(g.owner!.intent.title, title));
+    // Two briefs can share an intent title: prefer the brief that told the step.
+    const lead = story.chapters[step.chapter]?.title;
+    const group = named.find((g) => g.owner!.brief.intent.title === lead) ?? named[0] ?? loose;
+    group.steps.push({ step, i, n: 0 });
+  });
+  const side = (g: OutlineGroup) => g.owner?.intent.kind === "unrelated";
+  const ordered = [...groups.filter((g) => !side(g)), loose, ...groups.filter(side)].filter(
+    (g) => g.steps.length > 0,
+  );
+  let n = 0;
+  for (const g of ordered) for (const s of g.steps) s.n = ++n;
+  return ordered;
+}
+
+/** Added and removed lines over some pieces. */
+export function pieceCounts(pieces: StoryPiece[]) {
+  let additions = 0;
+  let deletions = 0;
+  for (const p of pieces)
+    for (const l of p.hunk.lines) {
+      if (l.origin === "+") additions++;
+      else if (l.origin === "-") deletions++;
+    }
+  return { additions, deletions };
 }

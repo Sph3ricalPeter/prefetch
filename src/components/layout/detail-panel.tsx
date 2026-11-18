@@ -110,11 +110,9 @@ export function DetailPanel() {
   }
 
   if (fileStatuses.length > 0 || operationInProgress) {
+    const shownBriefs = matchBriefs(wipBriefs.briefs, fileStatuses).shown;
     // With Claude the Brief tab is always there: its Summarize writes the first brief.
-    const briefTab =
-      claudeAvailable ||
-      wipBriefs.errors.length > 0 ||
-      matchBriefs(wipBriefs.briefs, fileStatuses).shown.length > 0;
+    const briefTab = claudeAvailable || wipBriefs.errors.length > 0 || shownBriefs.length > 0;
     // Conflicts show the file list: only it has the resolve actions.
     const showBrief =
       briefTab && detailTab === "brief" && !fileStatuses.some((f) => f.is_conflicted);
@@ -168,6 +166,7 @@ export function DetailPanel() {
           {showBrief ? (
             <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
               <BriefView
+                commitId={null}
                 briefs={wipBriefs.briefs}
                 errors={wipBriefs.errors}
                 files={fileStatuses}
@@ -490,6 +489,7 @@ function CommitDetailView({
         {showBrief && (
           <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
             <BriefView
+              commitId={commit.id}
               briefs={commitBrief}
               files={commitFiles}
               selectedFilePath={selectedFilePath}
@@ -725,7 +725,8 @@ function commitFileStatusIcon(type: string): React.ReactNode {
   }
 }
 
-/** Topbar ✦ that has Claude write (or rewrite) the commit's Change Brief. */
+/** Topbar ✦ that has Claude write (or rewrite) the commit's Change Brief and
+ *  every brief's story. */
 function GenerateBriefButton({ commitId, hasBrief }: { commitId: string; hasBrief: boolean }) {
   const claudeAvailable = useRepoStore((s) => s.claudeAvailable);
   const generateBrief = useRepoStore((s) => s.generateBrief);
@@ -746,7 +747,7 @@ function GenerateBriefButton({ commitId, hasBrief }: { commitId: string; hasBrie
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
         </IconButton>
       </TooltipTrigger>
-      <TooltipContent>{hasBrief ? "Regenerate brief with Claude" : "Generate brief with Claude"}</TooltipContent>
+      <TooltipContent>{hasBrief ? "Regenerate brief and story with Claude" : "Generate brief and story with Claude"}</TooltipContent>
     </Tooltip>
   );
 }

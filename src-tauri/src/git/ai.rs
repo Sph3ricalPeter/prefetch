@@ -150,18 +150,33 @@ fn with_instructions(instructions: &str, input: String) -> String {
     format!("{instructions}\n\n=== INPUT ===\n{input}")
 }
 
+/// How every brief Prefetch writes or reviews gets its story: written again
+/// for the diff as it is now, with the old one as input, not kept verbatim.
+const STORY_AGAIN: &str = "A brief's old story (if it has one) is the author's \
+    reasoning and reading order: keep what still holds, but every step must fit the \
+    diff as it is now and every `at` must come from that file's `+` or `-` lines. \
+    A brief with no story gets one.";
+
 const MESSAGE_WITH_BRIEF: &str = "\nReply with ONE JSON object: \
-    {\"brief\": <your Change Brief for the files no agent brief covers after your \
-    edits, staged or not; null if there are none>, \
-    \"agents\": {\"<session>\": <that agent brief rewritten, or null to drop it>}, \
+    {\"brief\": <your Change Brief, story included, for the files no agent brief \
+    covers after your edits, staged or not; null if there are none>, \
+    \"agents\": {\"<session>\": <for EVERY agent brief: the brief rewritten, its new \
+    story included; or {\"story\": <its new story>} when its intents stand as they \
+    are; or null to drop it>}, \
     \"message\": \"<git commit message for the STAGED changes only>\"}. \
-    Leave an agent brief out of `agents` to keep it as it is. \
     The message is written from all the briefs as they stand after your edits, \
     about the intents with staged files. The agent briefs carry each intent's risk \
     `tier`: a rewritten or merged intent ranks at the highest tier among the \
     intents it came from. Your own intents have none, so rank them by their risk \
     answers: `oneWay` is high risk; `data`, `external`, `contract` or `shared` is mid; \
     none is low. ";
+
+/// Generate brief's reply: agent briefs in a commit's note keep their
+/// intents, so only their stories come back.
+const COMMIT_REPLY: &str = "\nReply with ONE JSON object: \
+    {\"brief\": <your Change Brief, story included; null when no file is left for it>, \
+    \"agents\": {\"<session>\": {\"story\": <that brief's new story>}}}, one entry per \
+    other brief.";
 
 const JSON_ONLY: &str = " Output ONLY the JSON object, no fences, no preamble.";
 
@@ -240,7 +255,9 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
          for coding agents; follow its Format and Rules, ignore where to save the file and the \
          Project risk guidance setup steps. \
          Every file you describe must be in exactly one intent. You only see the diff, so \
-         set `tested` only when the diff itself adds or updates tests covering that intent.\n\n\
+         set `tested` only when the diff itself adds or updates tests covering that intent. \
+         Write the `story` too, covering only the files your brief describes; take each `at` \
+         from that file's `+` or `-` lines in the diff.\n\n\
          <spec>\n{BRIEF_SPEC}\n</spec>\n",
         current_branch(repo_path)
     );
@@ -254,7 +271,7 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
         let json = serde_json::to_string_pretty(scope.previous).unwrap_or_default();
         prompt.push_str(&format!(
             "\nAn earlier brief exists. Keep its intents and reasons where the diff \
-             supports them; fill in what it lacks (types, risk answers).\n\
+             supports them; fill in what it lacks (types, risk answers). {STORY_AGAIN}\n\
              <existing>\n{json}\n</existing>\n"
         ));
     }
@@ -277,13 +294,18 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
              - A lead or intent that describes how the work came about (a review, a \
              failing check, a backlog task) instead of what it changes: rewrite it.\n\
              - Intents that no longer match the diff: rewrite or remove them.\n\
+             - Changes in an agent brief's file that none of its intents describe: \
+             rewrite that brief to cover them (widen an intent or add one), story \
+             included. Your own brief never lists an agent brief's file.\n\
              - One file, one intent: every changed file must appear in exactly one \
              intent across all briefs, yours included. When intents in the same or \
              different briefs share a file, merge them into one intent that covers \
              all their changes, in the brief whose goal it serves, and remove them \
              from the others.\n\
-             A brief left with no intents is dropped. Keep a brief untouched only \
-             when none of these apply. A rewrite may take over files from the briefs \
+             A brief left with no intents is dropped. Keep a brief's intents as they \
+             are only when none of these apply. Either way, write every agent brief's \
+             `story` again, covering only that brief's files. {STORY_AGAIN} \
+             A rewrite may take over files from the briefs \
              it merges with; your own brief covers every file no agent brief covers \
              after your edits. When \
              one of your files is part of an intent in an agent brief (a record of its \
@@ -297,7 +319,8 @@ fn brief_prompt(repo_path: &str, subject: &str, scope: &BriefScope) -> String {
         let json = serde_json::to_string_pretty(scope.others).unwrap_or_default();
         prompt.push_str(&format!(
             "\nOther agent sessions already describe some of these changes. Their \
-             briefs are context only: do not describe their files. When one of your \
+             briefs are context only: do not describe their files. But write each one's \
+             `story` again, covering only that brief's files. {STORY_AGAIN} When one of your \
              files is part of an intent in those briefs (a record of its results, a \
              follow-up it needed), give it an intent of its own with \
              `\"joins\": \"<that brief's session>\"` and a `why` that says how it fits. \
@@ -392,9 +415,10 @@ const BRIEF_SPEC: &str = include_str!("../../../docs/skills/prefetch-brief/SKILL
 const BRIEF_SYSTEM_PROMPT: &str =
     "You write Prefetch Change Briefs. Reply with one JSON object only.";
 
-/// Infer a Change Brief for a commit and store it as the commit's note. Agent
-/// briefs in the note are kept as they are; only the inferred one is
-/// rewritten, for the files they don't cover, with the old one as a start.
+/// Infer a Change Brief for a commit and store it as the commit's note. The
+/// inferred brief is rewritten for the files agent briefs don't cover, with
+/// the old one as a start. Agent briefs keep their intents; every brief's
+/// story is written again. A malformed or missing story keeps the old one.
 pub fn generate_brief(
     repo_path: &str,
     claude: &Path,
@@ -411,17 +435,27 @@ pub fn generate_brief(
         &["show", "--format=%B", "--stat=1000", "--patch", sha],
         &[],
     )?;
-    let (previous, others, only) = (
+    let (previous, mut others, only) = (
         split.inferred.into_iter().collect::<Vec<_>>(),
         split.agents,
         split.unclaimed,
     );
-    if only.is_empty() {
-        return Err(AppError::Other(if others.is_empty() {
-            "No changes to describe".into()
-        } else {
-            "Every change already has an agent's brief; ask that agent to update it".into()
-        }));
+    if only.is_empty() && others.is_empty() {
+        return Err(AppError::Other("No changes to describe".into()));
+    }
+    // An agent that attached its own draft left no session; name it so its
+    // story can come back, and unname it again before writing.
+    let unnamed: Vec<usize> = (0..others.len())
+        .filter(|&n| others[n].session.is_empty())
+        .collect();
+    let mut taken: HashSet<String> = others.iter().map(|b| b.session.clone()).collect();
+    for &n in &unnamed {
+        let name = (n + 1..)
+            .map(|k| format!("brief-{k}"))
+            .find(|s| !taken.contains(s))
+            .unwrap_or_default();
+        taken.insert(name.clone());
+        others[n].session = name;
     }
 
     let mut instructions = brief_prompt(
@@ -434,6 +468,10 @@ pub fn generate_brief(
             review_others: false,
         },
     );
+    if only.is_empty() {
+        instructions.push_str("\nEvery file already has an agent brief, so `brief` is null.\n");
+    }
+    instructions.push_str(COMMIT_REPLY);
     instructions.push_str(JSON_ONLY);
 
     let raw = run_claude(
@@ -444,10 +482,32 @@ pub fn generate_brief(
         BRIEF_SYSTEM_PROMPT,
         with_instructions(&instructions, diff),
     )?;
-    let generated = brief::parse_generated(&raw)?;
+    let reply = brief::parse_summary(&raw)?;
     let allowed: HashSet<String> = only.into_iter().collect();
+    for b in &mut others {
+        // A model that echoes the whole brief lands in `agents`; its story still counts.
+        let echoed = reply
+            .agents
+            .get(&b.session)
+            .and_then(|a| a.as_ref()?.story.as_ref());
+        b.restory(reply.stories.get(&b.session).or(echoed));
+    }
+    for &n in &unnamed {
+        others[n].session.clear();
+    }
     let mut briefs = others;
-    briefs.extend(generated.restricted_to(&allowed));
+    let old = previous.into_iter().next();
+    let inferred = match reply.inferred {
+        Some(mut b) => {
+            let story = b.story.take();
+            b.story = old.and_then(|o| o.story);
+            b.restory(story.as_ref());
+            Some(b)
+        }
+        // Left out: the old brief stands rather than none.
+        None => old,
+    };
+    briefs.extend(inferred.and_then(|b| b.restricted_to(&allowed)));
     brief::write_note(repo_path, sha, &briefs, env)
 }
 
@@ -540,6 +600,10 @@ mod tests {
         let note = brief::read_note(path, sha).unwrap().unwrap();
         println!("{}", serde_json::to_string_pretty(&note).unwrap());
         assert!(note[0].inferred);
+        // The spec asks for a story alongside; it reads back without a model call.
+        let told = crate::git::story::read_commit(path, sha).unwrap().unwrap();
+        println!("{}", serde_json::to_string_pretty(&told).unwrap());
+        assert!(!told.steps.is_empty());
     }
 
     /// No brief yet: one call writes the brief for everything and the message
@@ -556,6 +620,57 @@ mod tests {
         println!("{}", serde_json::to_string_pretty(&wip.briefs).unwrap());
         assert!(!s.body.is_empty());
         assert!(wip.briefs[0].inferred);
+    }
+
+    /// An agent draft with no story gains one, and Summarize again after an
+    /// edit writes the story again instead of keeping it.
+    #[test]
+    #[ignore]
+    fn summarize_again_rewrites_story_live() {
+        let Some(claude) = claude_path() else { return };
+        // The raw replies.
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+        let tmp = live_repo();
+        let path = tmp.path().to_str().unwrap();
+        let wip = tmp.path().join(".git/prefetch/wip");
+        std::fs::create_dir_all(&wip).unwrap();
+        std::fs::write(
+            wip.join("agent.json"),
+            r#"{"intent":{"title":"Drop the legacy column"},"intents":[
+              {"title":"Drop legacy from users","type":"feat","files":["db.sql"],
+               "risk":{"data":true,"oneWay":true}}]}"#,
+        )
+        .unwrap();
+        let story_of = |session: &str| {
+            brief::read_wip(path)
+                .unwrap()
+                .briefs
+                .into_iter()
+                .find(|b| b.session == session)
+                .and_then(|b| b.story)
+        };
+        suggest_commit_message(path, &claude, "haiku", true, true).unwrap();
+        let first = story_of("agent").expect("the agent draft gains a story");
+        println!("first: {}", serde_json::to_string_pretty(&first).unwrap());
+
+        std::fs::write(
+            tmp.path().join("db.sql"),
+            "create table users(id int);\nalter table users drop column legacy;\n\
+             create index users_by_email on users(email);\n",
+        )
+        .unwrap();
+        let s = suggest_commit_message(path, &claude, "haiku", true, true).unwrap();
+        println!("{}\n\n{}", s.subject, s.body);
+        let second = story_of("agent").unwrap();
+        println!("second: {}", serde_json::to_string_pretty(&second).unwrap());
+        let told = crate::git::story::read_worktree(path).unwrap().unwrap();
+        println!("resolved: {}", serde_json::to_string_pretty(&told).unwrap());
+        // The edit is in the agent's file, so its story now tells it.
+        assert_ne!(first, second, "Summarize again writes the story again");
+        assert!(format!("{second:?}").contains("index"), "{second:?}");
     }
 
     #[test]

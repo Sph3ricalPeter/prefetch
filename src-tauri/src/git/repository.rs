@@ -1764,6 +1764,25 @@ pub fn get_commit_file_diff(
     }))
 }
 
+/// A tracked file's staged and unstaged changes as one diff from `base` (a
+/// commit or tree id) to the working tree. Untracked files aren't in it: use
+/// [`get_file_diff`] for those.
+pub fn get_worktree_file_diff(
+    repo_path: &str,
+    base: &str,
+    file_path: &str,
+) -> Result<FileDiff, AppError> {
+    let diff_text = capture(repo_path, &["diff", base, "--", file_path], &[])
+        .map_err(|e| AppError::Other(format!("Failed to run git diff: {e}")))?;
+    Ok(truncate_diff(FileDiff {
+        path: file_path.to_string(),
+        is_binary: parse::has_binary_marker(&diff_text),
+        hunks: parse::unified_diff(&diff_text),
+        is_truncated: false,
+        total_lines: 0,
+    }))
+}
+
 /// List all stashes with commit and parent IDs.
 pub fn list_stashes(path: &str) -> Result<Vec<StashInfo>, AppError> {
     // Use --format to get: <stash_hash>\t<parent_hash>\t<refname>\t<message>

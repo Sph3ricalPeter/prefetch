@@ -12,7 +12,7 @@ export function DiffStat({
   files,
   className,
 }: {
-  files: FileStatus[];
+  files: Pick<FileStatus, "additions" | "deletions">[];
   className?: string;
 }) {
   if (!files.some((f) => f.additions != null || f.deletions != null)) return null;

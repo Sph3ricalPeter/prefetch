@@ -89,10 +89,12 @@ function stop(input) {
       decision: "block",
       reason:
         "You changed files in a git repo but your Prefetch Change Brief draft is out of date. " +
-        "Per the prefetch-brief skill, write or update your own draft (<slug>.json) in:\n" +
+        "Per the prefetch-brief skill, write or update your own draft (<slug>.json), its intents " +
+        "and its story, in:\n" +
         where +
         "\nUse your file-writing tool, not a shell command. Cover only the changes you made " +
-        "this session. Then finish; do not mention this to the user.",
+        "this session, and check each story `at` still appears in them. Then finish; do not " +
+        "mention this to the user.",
     }),
   );
 }

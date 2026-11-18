@@ -354,6 +354,20 @@ export interface Brief {
   issues: BriefIssue[];
   /** Written by Prefetch from the diff alone, not by the agent that did the work. */
   inferred?: boolean;
+  /** How the change works, step by step; Prefetch places it on the diff (#93). */
+  story?: BriefStory;
+}
+
+export interface BriefStory {
+  approach: string;
+  steps: {
+    title: string;
+    why: string;
+    /** Title of the intent the step serves. */
+    intent?: string;
+    /** Where in the diff: a file, narrowed by anchor text when `at` is given. */
+    code: { file: string; at?: string }[];
+  }[];
 }
 
 export interface BriefIntent {
@@ -401,6 +415,51 @@ export interface BriefIssue {
   title: string;
   url: string;
   criteria: string[];
+}
+
+/** A commit, or the working changes, read as ordered, narrated steps over
+ *  the diff: the briefs' stories placed on it (#93). */
+export interface Story {
+  /** 1–2 sentences: how the change reaches its goal. Empty when several
+   *  chapters each carry their own. */
+  approach: string;
+  /** One per brief with a story, in the Brief tab's order. */
+  chapters: StoryChapter[];
+  /** Story order; `side` steps come last. */
+  steps: StoryStep[];
+  /** Pieces no step named, in diff order. */
+  leftovers: StoryPiece[];
+  /** No agent-written brief fed the story. */
+  inferred: boolean;
+}
+
+export interface StoryChapter {
+  /** The brief's lead intent. */
+  title: string;
+  approach: string;
+  inferred: boolean;
+}
+
+export interface StoryStep {
+  /** Index into `Story.chapters`. */
+  chapter: number;
+  title: string;
+  why: string;
+  /** Title of the brief intent this step serves. */
+  intent: string | null;
+  tier: RiskTier | null;
+  /** Conventional-commit type of that intent. */
+  type: string | null;
+  /** Serves an unrelated intent; shown under "Side changes". */
+  side: boolean;
+  pieces: StoryPiece[];
+}
+
+export interface StoryPiece {
+  /** Repo-relative. */
+  path: string;
+  /** May be a slice of a larger hunk; line numbers are the real ones. */
+  hunk: DiffHunk;
 }
 
 export interface WipBriefs {

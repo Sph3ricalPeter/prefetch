@@ -19,6 +19,7 @@ import type {
   RebaseProgress,
   RewordImpact,
   StashInfo,
+  Story,
   TagInfo,
   UndoAction,
   UnityObjectChange,
@@ -547,9 +548,20 @@ export async function getBriefMarks(): Promise<Record<string, IntentMark[]>> {
 }
 
 /** Have Claude infer a commit's Change Brief from its diff, replacing the
- *  brief that was there. */
+ *  inferred brief that was there, and write every brief's story again. */
 export async function generateBrief(model: string, commitId: string): Promise<void> {
   return tracedInvoke<void>("generate_brief", { model, commitId });
+}
+
+/** The story the briefs in a commit's note tell, or null. Never calls Claude. */
+export async function getCommitStory(commitId: string): Promise<Story | null> {
+  return tracedInvoke<Story | null>("get_commit_story", { commitId });
+}
+
+/** The story the working changes' drafts tell, placed on the diff as it is
+ *  now; null when none tells one or nothing is uncommitted. Never calls Claude. */
+export async function getWorktreeStory(): Promise<Story | null> {
+  return tracedInvoke<Story | null>("get_worktree_story");
 }
 
 /** Store the drafts covering HEAD as its brief note. Call right after a commit. */

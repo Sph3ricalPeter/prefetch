@@ -26,6 +26,7 @@ import {
 import { laneWidthFor, LANE_WIDTH } from "@/lib/graph-density";
 import { GraphHeader } from "@/components/graph/graph-header";
 import { DiffViewer } from "@/components/staging/diff-viewer";
+import { StoryView } from "@/components/layout/story-view";
 import { DiffToolbar } from "@/components/staging/diff-toolbar";
 import { ConflictEditor } from "@/components/staging/conflict-editor";
 import { CiLogViewer } from "@/components/ci/ci-log-viewer";
@@ -263,6 +264,8 @@ export function GraphPanel() {
   // (isLoading) stays instant since it also blocks interaction.
   const showDiffSpinner = useDelayedFlag(diffLoading, 500);
   const ciSelectedJobId = useRepoStore((s) => s.ciSelectedJobId);
+  // null === null: a working-changes story shows while no commit is selected.
+  const storyOpen = useRepoStore((s) => !!s.story?.open && s.story.commitId === s.selectedCommitId);
 
   const openRepository = useRepoStore((s) => s.openRepository);
   const selectCommit = useRepoStore((s) => s.selectCommit);
@@ -657,6 +660,9 @@ export function GraphPanel() {
               onBack={clearDiff}
             />
           </div>
+        ) : storyOpen ? (
+          // Below the diff, so Back from "Open whole file" returns here.
+          <StoryView />
         ) : showCiLog ? (
           <CiLogViewer />
         ) : (
