@@ -18,6 +18,8 @@ import { Modal, ConfirmDialog } from "@/components/ui/modal";
 import { CreateWorktreeDialog, RemoveWorktreeDialog } from "@/components/ui/worktree-dialogs";
 import {
   CommitGraphCanvas,
+  BADGE_INSET_LEFT,
+  BADGE_INSET_RIGHT,
   MESSAGE_INSET_LEFT,
   SCROLLBAR_PAD_RIGHT,
   type GraphColumnWidths,
@@ -61,8 +63,6 @@ const DIRTY_OP_LABELS = {
 const COL_BADGE_MIN = 120;
 /** Hard cap on the badge column, above the widest-badge cap. */
 const COL_BADGE_MAX = 420;
-/** Badge column insets around the pill (canvas badgeColLeft / badgeColRight). */
-const COL_BADGE_INSET = 16;
 const COL_GRAPH_MIN = 55;
 const COL_GRAPH_MAX = 800;
 const COL_AUTHOR_MIN = 80;
@@ -115,8 +115,8 @@ function minGraphWidth(lanes: number, laneWidth: number): number {
 /** Badge column max — just wide enough for the widest badge, so dragging past
  *  it adds no empty space. Falls back to the hard cap until measured. */
 function maxBadgeWidth(badgeWidth: number | undefined): number {
-  if (!badgeWidth) return COL_BADGE_MAX;
-  return clamp(badgeWidth + COL_BADGE_INSET, COL_BADGE_MIN, COL_BADGE_MAX);
+  if (badgeWidth === undefined) return COL_BADGE_MAX;
+  return clamp(badgeWidth + BADGE_INSET_LEFT + BADGE_INSET_RIGHT, COL_BADGE_MIN, COL_BADGE_MAX);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -193,20 +193,23 @@ function deriveEffectiveVisibility(
 /** Convert the pixel widths reported by the header (after a drag) back into
  *  the persistable layout. Badge/graph stay in pixels; author becomes its
  *  ratio of the resulting flex area. SHA and date are fixed constants and
- *  not part of the persisted layout. */
+ *  not part of the persisted layout. A badge/graph width equal to `shown` was
+ *  not dragged: keep the stored value, since `shown` is clamped by on-screen
+ *  content and would otherwise get saved as the user's choice. */
 function pxWidthsToLayout(
   w: GraphColumnWidths,
+  shown: GraphColumnWidths,
   containerWidth: number,
   visibility: { sha: boolean; date: boolean },
   prev: GraphLayout,
 ): GraphLayout {
   const next: GraphLayout = {
-    badge: w.badge,
-    graph: w.graph,
+    badge: w.badge !== shown.badge ? w.badge : prev.badge,
+    graph: w.graph !== shown.graph ? w.graph : prev.graph,
     authorRatio: prev.authorRatio,
   };
   if (containerWidth > 0) {
-    const flex = flexAreaPx(next.badge, next.graph, containerWidth, visibility);
+    const flex = flexAreaPx(w.badge, w.graph, containerWidth, visibility);
     if (flex > 0) {
       next.authorRatio = clamp(w.author / flex, 0.05, 0.9);
     }
@@ -691,11 +694,11 @@ export function GraphPanel() {
               onDensityChange={setGraphDensity}
               onDotNodesChange={setGraphDotNodes}
               onResize={(w) => {
-                const next = pxWidthsToLayout(w, containerWidthRef.current, effectiveVisibility, layout);
+                const next = pxWidthsToLayout(w, effectiveWidths, containerWidthRef.current, effectiveVisibility, layout);
                 setLayout(next);
               }}
               onResizeEnd={(w) => {
-                const next = pxWidthsToLayout(w, containerWidthRef.current, effectiveVisibility, layout);
+                const next = pxWidthsToLayout(w, effectiveWidths, containerWidthRef.current, effectiveVisibility, layout);
                 setLayout(next);
                 if (repoPath) {
                   setUiState(`graph_layout:${repoPath}`, JSON.stringify(next)).catch(() => {});

@@ -48,6 +48,9 @@ const ROW_PAD_RIGHT = 10;
 const GRAPH_INSET_LEFT = SCROLLBAR_PAD;
 // Inset between the right edge of the graph column and the start of label / message text.
 export const MESSAGE_INSET_LEFT = 12;
+/** Badge pill insets inside the badge column; the panel sizes the column with them. */
+export const BADGE_INSET_LEFT = SCROLLBAR_PAD + 6;
+export const BADGE_INSET_RIGHT = 6;
 const TYPE_ICON_SIZE = 13;
 const TYPE_ICON_GAP = 5;
 let LABEL_HEIGHT = 24;           // badge pill height (comfortable; per density)
@@ -824,6 +827,12 @@ function buildBadgeItems(
   return items;
 }
 
+/** Width of the "+N" chip that follows a primary badge. Sets `ctx.font`. */
+function nChipWidth(ctx: CanvasRenderingContext2D, extra: number): number {
+  ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
+  return cachedMeasureText(ctx, `+${extra}`) + LABEL_PAD_X * 2;
+}
+
 /** Untruncated width of a commit's badge (primary pill + "+N" chip). Draws
  *  off-canvas so it reuses the real pill layout math. */
 function naturalBadgeWidth(ctx: CanvasRenderingContext2D, items: BadgeItem[]): number {
@@ -834,10 +843,7 @@ function naturalBadgeWidth(ctx: CanvasRenderingContext2D, items: BadgeItem[]): n
     p.kind === "branch"
       ? drawMergedBranchPill(ctx, 0, off, p.group)
       : drawPill(ctx, 0, off, p.kind === "tag" ? p.tag.name : p.stash.message, "", "", p.kind === "tag" ? drawTagIcon : drawStashIcon);
-  if (items.length > 1) {
-    ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
-    w += 1 + cachedMeasureText(ctx, `+${items.length - 1}`) + LABEL_PAD_X * 2;
-  }
+  if (items.length > 1) w += 1 + nChipWidth(ctx, items.length - 1);
   return w;
 }
 
@@ -991,7 +997,7 @@ interface CommitGraphCanvasProps {
   /** Ref name → unix timestamp of its tip commit. Drives MRU edge-draw order. */
   refMru: Map<string, number>;
   /** Called when the visible lane count or widest badge changes. */
-  onLayoutHints?: (hints: GraphLayoutHints) => void;
+  onLayoutHints: (hints: GraphLayoutHints) => void;
 }
 
 /**
@@ -1108,8 +1114,8 @@ export function CommitGraphCanvas({
   // computed inside draw() where the canvas width is known.
   const graphLeft = columnWidths.badge + GRAPH_INSET_LEFT;
   const msgLeft = columnWidths.badge + columnWidths.graph + MESSAGE_INSET_LEFT;
-  // totalLanes is unused inside the canvas now (column widths drive layout) but the
-  // parent panel uses it to size the default graph column width and clamp the resize.
+  // totalLanes is unused inside the canvas (column widths drive layout); the panel
+  // uses it for the default graph width and as the floor until the first draw.
   void totalLanes;
   const laneX = useCallback(
     (lane: number) => graphLeft + lane * dm.laneWidth + dm.laneWidth / 2,
@@ -1510,9 +1516,16 @@ export function CommitGraphCanvas({
     // --- Edges (offset by rowOffset) — batched by color to minimize stroke() calls ---
     ctx.lineWidth = 2;
     const edgesByColor = new Map<string, { fX: number; fY: number; tX: number; tY: number; sameLane: boolean; isMerge: boolean }[]>();
+    // Lanes on screen, reported to the panel as the graph column's floor. A
+    // Straight edge runs down its from_lane, a Merge edge down its to_lane.
+    let maxLane = hasWip && firstVisibleRow === 0 ? wipLane : 0;
     for (const edge of edges) {
       const fromRow = edge.from_row + rowOffset;
       const toRow = edge.to_row + rowOffset;
+      if (fromRow <= lastVisibleRow && toRow >= firstVisibleRow) {
+        const lane = edge.edge_type === "Merge" ? edge.to_lane : edge.from_lane;
+        if (lane > maxLane) maxLane = lane;
+      }
       if (fromRow > lastVisibleRow + 5 || toRow < firstVisibleRow - 5) continue;
 
       // Color first-parent edges by source commit (branch continuity),
@@ -1656,6 +1669,7 @@ export function CommitGraphCanvas({
       const commitIdx = visRow - rowOffset;
       const commit = commits[commitIdx];
       if (!commit) continue;
+      if (commit.lane > maxLane) maxLane = commit.lane;
 
       const x = laneX(commit.lane);
       const y = visRow * ROW_HEIGHT - scrollTop + ROW_HEIGHT / 2;
@@ -1804,16 +1818,12 @@ export function CommitGraphCanvas({
         const extra = badgeItems.length - 1;
         // Left-aligned inside the badge column with small left inset; reserve a
         // small right gap before the link starts.
-        const badgeColLeft = SCROLLBAR_PAD + 6;
-        const badgeColRight = columnWidths.badge - 6;
+        const badgeColLeft = BADGE_INSET_LEFT;
+        const badgeColRight = columnWidths.badge - BADGE_INSET_RIGHT;
         const totalAvail = Math.max(0, badgeColRight - badgeColLeft);
 
         // Measure +N chip
-        let nChipW = 0;
-        if (extra > 0) {
-          ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
-          nChipW = cachedMeasureText(ctx, `+${extra}`) + LABEL_PAD_X * 2;
-        }
+        const nChipW = extra > 0 ? nChipWidth(ctx, extra) : 0;
         const gapBeforeChip = extra > 0 ? 1 : 0;
         const maxPrimaryW = Math.max(0, totalAvail - nChipW - gapBeforeChip);
 
@@ -2128,19 +2138,9 @@ export function CommitGraphCanvas({
     rowTooltipAreasRef.current = rowTooltipAreas;
 
     // --- Layout hints for the panel's column bounds ---
-    // Lanes on screen: commit nodes in view, plus edges passing through. A
-    // Straight edge runs down its from_lane, a Merge edge down its to_lane.
-    let maxLane = hasWip && firstVisibleRow === 0 ? wipLane : 0;
-    for (let r = Math.max(firstVisibleRow, rowOffset); r <= lastVisibleRow; r++) {
-      const c = commits[r - rowOffset];
-      if (c && c.lane > maxLane) maxLane = c.lane;
-    }
-    for (const edge of edges) {
-      if (edge.from_row + rowOffset > lastVisibleRow || edge.to_row + rowOffset < firstVisibleRow) continue;
-      const lane = edge.edge_type === "Merge" ? edge.to_lane : edge.from_lane;
-      if (lane > maxLane) maxLane = lane;
-    }
-    const badgeDeps = [branchMap, tagMap, stashMap, refMru, fontCfg.sans, fontCfg.sizeBody];
+    // Font status is in the key so widths measured with the fallback font get
+    // redone once the real font loads.
+    const badgeDeps = [branchMap, tagMap, stashMap, refMru, fontCfg.sans, fontCfg.sizeBody, document.fonts.status];
     const cached = badgeWidthCacheRef.current;
     let badgeWidth: number;
     if (cached && cached.deps.every((d, i) => d === badgeDeps[i])) {
@@ -2159,7 +2159,7 @@ export function CommitGraphCanvas({
     if (!last || last.visibleLanes !== maxLane + 1 || last.badgeWidth !== badgeWidth) {
       const hints = { visibleLanes: maxLane + 1, badgeWidth };
       lastHintsRef.current = hints;
-      onLayoutHintsRef.current?.(hints);
+      onLayoutHintsRef.current(hints);
     }
   }, [commits, edges, headInfo, selectedRowIdx, msgLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, filterQuery, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, dm, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile, heatById, wipHeat]);
 
