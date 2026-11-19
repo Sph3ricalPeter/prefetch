@@ -791,6 +791,56 @@ function drawMergedBranchPill(
   return pillWidth;
 }
 
+type BadgeItem =
+  | { kind: "branch"; group: MergedBranchGroup; refName: string; mru: number }
+  | { kind: "tag"; tag: TagInfo; refName: string; mru: number }
+  | { kind: "stash"; stash: StashInfo; refName: string; mru: number };
+
+/** Unified list of refs at one commit; [0] is the primary badge. HEAD branch
+ *  first, then MRU desc. */
+function buildBadgeItems(
+  branches: BranchInfo[],
+  tags: TagInfo[],
+  stashes: StashInfo[],
+  refMru: Map<string, number>,
+): BadgeItem[] {
+  const items: BadgeItem[] = [];
+  for (const g of groupBranches(branches)) {
+    const refName = g.local?.name ?? g.remote?.name ?? g.baseName;
+    items.push({ kind: "branch", group: g, refName, mru: refMru.get(refName) ?? 0 });
+  }
+  for (const t of tags) {
+    items.push({ kind: "tag", tag: t, refName: t.name, mru: refMru.get(t.name) ?? 0 });
+  }
+  for (const s of stashes) {
+    items.push({ kind: "stash", stash: s, refName: `stash@{${s.index}}`, mru: 0 });
+  }
+  items.sort((a, b) => {
+    const aHead = a.kind === "branch" && a.group.isHead ? 1 : 0;
+    const bHead = b.kind === "branch" && b.group.isHead ? 1 : 0;
+    if (aHead !== bHead) return bHead - aHead;
+    return b.mru - a.mru;
+  });
+  return items;
+}
+
+/** Untruncated width of a commit's badge (primary pill + "+N" chip). Draws
+ *  off-canvas so it reuses the real pill layout math. */
+function naturalBadgeWidth(ctx: CanvasRenderingContext2D, items: BadgeItem[]): number {
+  if (items.length === 0) return 0;
+  const p = items[0];
+  const off = -1000;
+  let w =
+    p.kind === "branch"
+      ? drawMergedBranchPill(ctx, 0, off, p.group)
+      : drawPill(ctx, 0, off, p.kind === "tag" ? p.tag.name : p.stash.message, "", "", p.kind === "tag" ? drawTagIcon : drawStashIcon);
+  if (items.length > 1) {
+    ctx.font = `${fontCfg.sizeBody}px ${fontCfg.sans}`;
+    w += 1 + cachedMeasureText(ctx, `+${items.length - 1}`) + LABEL_PAD_X * 2;
+  }
+  return w;
+}
+
 function drawStashIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -885,6 +935,14 @@ export interface GraphColumnWidths {
   date: number;
 }
 
+/** Content-driven column bounds the canvas reports to the panel. */
+export interface GraphLayoutHints {
+  /** Lanes needed by the rows currently on screen (max lane + 1). */
+  visibleLanes: number;
+  /** Widest untruncated badge across all refs, in px (0 when no refs). */
+  badgeWidth: number;
+}
+
 /** Which optional columns are visible (all hidden by default). */
 export interface GraphColumnVisibility {
   sha: boolean;
@@ -932,6 +990,8 @@ interface CommitGraphCanvasProps {
   dotNodes: boolean;
   /** Ref name → unix timestamp of its tip commit. Drives MRU edge-draw order. */
   refMru: Map<string, number>;
+  /** Called when the visible lane count or widest badge changes. */
+  onLayoutHints?: (hints: GraphLayoutHints) => void;
 }
 
 /**
@@ -967,6 +1027,7 @@ export function CommitGraphCanvas({
   density,
   dotNodes,
   refMru,
+  onLayoutHints,
 }: CommitGraphCanvasProps) {
   const graphColors = useThemeStore((s) => s.appTheme.graph);
   const cardColor = useThemeStore((s) => `hsl(${s.appTheme.cssVars["--card"]})`);
@@ -1027,6 +1088,11 @@ export function CommitGraphCanvas({
   const dropdownRowRef = useRef<number | null>(null);
   // Stable ref so async avatar-load callbacks always reach the latest draw
   const requestDrawRef = useRef<() => void>(() => {});
+  const onLayoutHintsRef = useRef(onLayoutHints);
+  useEffect(() => { onLayoutHintsRef.current = onLayoutHints; }, [onLayoutHints]);
+  const lastHintsRef = useRef<GraphLayoutHints | null>(null);
+  // Widest badge only changes with refs or font, not on scroll — cache it.
+  const badgeWidthCacheRef = useRef<{ deps: unknown[]; width: number } | null>(null);
 
   const hasWip = hasUncommittedChanges;
   const rowOffset = hasWip ? 1 : 0;
@@ -1731,37 +1797,7 @@ export function CommitGraphCanvas({
       const commitBranches = branchMap.get(commit.id) ?? [];
       const commitTags = tagMap.get(commit.id) ?? [];
       const commitStashes = stashMap.get(commit.id) ?? [];
-      const branchGroups = groupBranches(commitBranches);
-
-      // Unified, MRU-sorted list of refs at this commit. Branches sort with HEAD
-      // already promoted by groupBranches; refMru breaks remaining ties.
-      const badgeItems: Array<
-        | { kind: "branch"; group: MergedBranchGroup; refName: string; mru: number }
-        | { kind: "tag"; tag: TagInfo; refName: string; mru: number }
-        | { kind: "stash"; stash: StashInfo; refName: string; mru: number }
-      > = [];
-      for (const g of branchGroups) {
-        const refName = g.local?.name ?? g.remote?.name ?? g.baseName;
-        badgeItems.push({ kind: "branch", group: g, refName, mru: refMru.get(refName) ?? 0 });
-      }
-      for (const t of commitTags) {
-        badgeItems.push({ kind: "tag", tag: t, refName: t.name, mru: refMru.get(t.name) ?? 0 });
-      }
-      for (const s of commitStashes) {
-        badgeItems.push({
-          kind: "stash",
-          stash: s,
-          refName: `stash@{${s.index}}`,
-          mru: 0,
-        });
-      }
-      // HEAD branch always primary; otherwise MRU desc.
-      badgeItems.sort((a, b) => {
-        const aHead = a.kind === "branch" && a.group.isHead ? 1 : 0;
-        const bHead = b.kind === "branch" && b.group.isHead ? 1 : 0;
-        if (aHead !== bHead) return bHead - aHead;
-        return b.mru - a.mru;
-      });
+      const badgeItems = buildBadgeItems(commitBranches, commitTags, commitStashes, refMru);
 
       if (badgeItems.length > 0) {
         const primary = badgeItems[0];
@@ -2090,6 +2126,41 @@ export function CommitGraphCanvas({
 
     badgeHitAreasRef.current = hitAreas;
     rowTooltipAreasRef.current = rowTooltipAreas;
+
+    // --- Layout hints for the panel's column bounds ---
+    // Lanes on screen: commit nodes in view, plus edges passing through. A
+    // Straight edge runs down its from_lane, a Merge edge down its to_lane.
+    let maxLane = hasWip && firstVisibleRow === 0 ? wipLane : 0;
+    for (let r = Math.max(firstVisibleRow, rowOffset); r <= lastVisibleRow; r++) {
+      const c = commits[r - rowOffset];
+      if (c && c.lane > maxLane) maxLane = c.lane;
+    }
+    for (const edge of edges) {
+      if (edge.from_row + rowOffset > lastVisibleRow || edge.to_row + rowOffset < firstVisibleRow) continue;
+      const lane = edge.edge_type === "Merge" ? edge.to_lane : edge.from_lane;
+      if (lane > maxLane) maxLane = lane;
+    }
+    const badgeDeps = [branchMap, tagMap, stashMap, refMru, fontCfg.sans, fontCfg.sizeBody];
+    const cached = badgeWidthCacheRef.current;
+    let badgeWidth: number;
+    if (cached && cached.deps.every((d, i) => d === badgeDeps[i])) {
+      badgeWidth = cached.width;
+    } else {
+      badgeWidth = 0;
+      const ids = new Set([...branchMap.keys(), ...tagMap.keys(), ...stashMap.keys()]);
+      for (const id of ids) {
+        const items = buildBadgeItems(branchMap.get(id) ?? [], tagMap.get(id) ?? [], stashMap.get(id) ?? [], refMru);
+        badgeWidth = Math.max(badgeWidth, naturalBadgeWidth(ctx, items));
+      }
+      badgeWidth = Math.ceil(badgeWidth);
+      badgeWidthCacheRef.current = { deps: badgeDeps, width: badgeWidth };
+    }
+    const last = lastHintsRef.current;
+    if (!last || last.visibleLanes !== maxLane + 1 || last.badgeWidth !== badgeWidth) {
+      const hints = { visibleLanes: maxLane + 1, badgeWidth };
+      lastHintsRef.current = hints;
+      onLayoutHintsRef.current?.(hints);
+    }
   }, [commits, edges, headInfo, selectedRowIdx, msgLeft, laneX, hasWip, rowOffset, totalRows, branchMap, tagMap, stashMap, filterMatchSet, filterQuery, getCommitColor, colorMru, refMru, columnWidths, columnVisibility, dateFormat, dm, isWipSelected, fileStatusCount, timeGroupBoundaries, graphColors, cardColor, fontFamilyId, fontScale, activeProfile, heatById, wipHeat]);
 
   const requestDraw = useCallback(() => {

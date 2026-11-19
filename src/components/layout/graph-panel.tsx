@@ -22,6 +22,7 @@ import {
   SCROLLBAR_PAD_RIGHT,
   type GraphColumnWidths,
   type GraphColumnVisibility,
+  type GraphLayoutHints,
 } from "@/components/graph/commit-graph-canvas";
 import { laneWidthFor, LANE_WIDTH } from "@/lib/graph-density";
 import { GraphHeader } from "@/components/graph/graph-header";
@@ -50,15 +51,18 @@ const DIRTY_OP_LABELS = {
 
 // ── Graph column layout (badge / graph / message / author / date / sha) ──────
 // Static columns (user-resizable pixels, or fixed constants):
-//   - badge (branch/tag): pixels, user-resizable
-//   - graph:              pixels, user-resizable (floored by lane count)
+//   - badge (branch/tag): pixels, user-resizable (capped by the widest badge)
+//   - graph:              pixels, user-resizable (floored by on-screen lanes)
 //   - date:               fixed constant (not resizable, not persisted)
 //   - sha:                fixed constant (not resizable, not persisted), rightmost
 // Flexible columns: message + author share the remaining ("flex") width in a
 // persisted ratio so each scales with the middle pane while preserving the
 // visible-text ratio between them.
 const COL_BADGE_MIN = 120;
+/** Hard cap on the badge column, above the widest-badge cap. */
 const COL_BADGE_MAX = 420;
+/** Badge column insets around the pill (canvas badgeColLeft / badgeColRight). */
+const COL_BADGE_INSET = 16;
 const COL_GRAPH_MIN = 55;
 const COL_GRAPH_MAX = 800;
 const COL_AUTHOR_MIN = 80;
@@ -82,7 +86,7 @@ const AUTHOR_RATIO_DEFAULT = 0.25;
 interface GraphLayout {
   /** Badge (branch/tag) column width in pixels. */
   badge: number;
-  /** Graph column width in pixels (floored by lane count at render time). */
+  /** Graph column width in pixels (floored by on-screen lanes at render time). */
   graph: number;
   /** Author's share (0..1) of the flexible message+author area. */
   authorRatio: number;
@@ -103,9 +107,16 @@ function defaultGraphWidth(totalLanes: number, laneWidth: number): number {
   );
 }
 
-/** Minimum allowed graph column width — must fit every lane in the current topology. */
-function minGraphWidth(totalLanes: number, laneWidth: number): number {
-  return Math.max(COL_GRAPH_MIN, totalLanes * laneWidth + 8);
+/** Minimum allowed graph column width — must fit every lane on screen. */
+function minGraphWidth(lanes: number, laneWidth: number): number {
+  return Math.max(COL_GRAPH_MIN, lanes * laneWidth + 8);
+}
+
+/** Badge column max — just wide enough for the widest badge, so dragging past
+ *  it adds no empty space. Falls back to the hard cap until measured. */
+function maxBadgeWidth(badgeWidth: number | undefined): number {
+  if (!badgeWidth) return COL_BADGE_MAX;
+  return clamp(badgeWidth + COL_BADGE_INSET, COL_BADGE_MIN, COL_BADGE_MAX);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -114,32 +125,27 @@ function clamp(v: number, lo: number, hi: number): number {
 
 /** Compute the pixel width available to the message+author pair. */
 function flexAreaPx(
-  layout: GraphLayout,
+  badge: number,
+  graph: number,
   containerWidth: number,
-  totalLanes: number,
   visibility: { sha: boolean; date: boolean },
-  laneWidth: number,
 ): number {
-  const badge = clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX);
-  const graph = clamp(layout.graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX);
   const sha = visibility.sha ? COL_SHA : 0;
   const date = visibility.date ? COL_DATE : 0;
   return Math.max(0, containerWidth - badge - graph - sha - date);
 }
 
-/** Project the persisted layout onto the current container, clamped to pixel
- *  min/max. The author column is derived from `authorRatio × flexArea`. */
+/** Project the clamped badge/graph widths onto the current container. The
+ *  author column is derived from `authorRatio × flexArea`. */
 function deriveWidths(
-  layout: GraphLayout,
+  badge: number,
+  graph: number,
+  authorRatio: number,
   containerWidth: number,
-  totalLanes: number,
   visibility: { sha: boolean; author: boolean; date: boolean },
-  laneWidth: number,
 ): GraphColumnWidths {
-  const badge = clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX);
-  const graph = clamp(layout.graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX);
-  const flex = flexAreaPx(layout, containerWidth, totalLanes, visibility, laneWidth);
-  let author = clamp(layout.authorRatio * flex, COL_AUTHOR_MIN, COL_AUTHOR_MAX);
+  const flex = flexAreaPx(badge, graph, containerWidth, visibility);
+  let author = clamp(authorRatio * flex, COL_AUTHOR_MIN, COL_AUTHOR_MAX);
   // Never let a wide author ratio starve the message below its minimum — cap
   // author at whatever leaves COL_MSG_MIN for the message (floored at its min).
   if (flex - author < COL_MSG_MIN) {
@@ -191,10 +197,8 @@ function deriveEffectiveVisibility(
 function pxWidthsToLayout(
   w: GraphColumnWidths,
   containerWidth: number,
-  totalLanes: number,
   visibility: { sha: boolean; date: boolean },
   prev: GraphLayout,
-  laneWidth: number,
 ): GraphLayout {
   const next: GraphLayout = {
     badge: w.badge,
@@ -202,7 +206,7 @@ function pxWidthsToLayout(
     authorRatio: prev.authorRatio,
   };
   if (containerWidth > 0) {
-    const flex = flexAreaPx(next, containerWidth, totalLanes, visibility, laneWidth);
+    const flex = flexAreaPx(next.badge, next.graph, containerWidth, visibility);
     if (flex > 0) {
       next.authorRatio = clamp(w.author / flex, 0.05, 0.9);
     }
@@ -213,7 +217,7 @@ function pxWidthsToLayout(
 /** Parse the persisted layout blob `{ badge, graph, authorRatio }`. Invalid
  *  or missing entries reject so callers fall back to defaults — there is no
  *  migration from older formats. */
-function parseStoredLayout(raw: string | null, totalLanes: number, laneWidth: number): GraphLayout | null {
+function parseStoredLayout(raw: string | null): GraphLayout | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -232,7 +236,7 @@ function parseStoredLayout(raw: string | null, totalLanes: number, laneWidth: nu
     }
     return {
       badge: clamp(badge, COL_BADGE_MIN, COL_BADGE_MAX),
-      graph: clamp(graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX),
+      graph: clamp(graph, COL_GRAPH_MIN, COL_GRAPH_MAX),
       authorRatio: clamp(authorRatio, 0.05, 0.9),
     };
   } catch {
@@ -400,6 +404,8 @@ export function GraphPanel() {
   // Lanes pack tighter when commit nodes are dots — feeds the column-width math.
   const laneWidth = laneWidthFor(graphDotNodes);
   const [graphContainerWidth, setGraphContainerWidth] = useState<number>(0);
+  // Visible lanes + widest badge, reported by the canvas as it draws.
+  const [layoutHints, setLayoutHints] = useState<GraphLayoutHints | null>(null);
   // Keep refs alongside the state so async load + drag-end callbacks can read
   // the latest container width and visibility without needing them in deps.
   const containerWidthRef = useRef(0);
@@ -435,7 +441,7 @@ export function GraphPanel() {
     getUiState(`graph_layout:${repoPath}`)
       .then((raw) => {
         if (cancelled) return;
-        setLayout(parseStoredLayout(raw, totalLanes, lw) ?? defaults);
+        setLayout(parseStoredLayout(raw) ?? defaults);
       })
       .catch(() => {
         if (!cancelled) setLayout(defaults);
@@ -449,22 +455,26 @@ export function GraphPanel() {
   // the panel is too narrow to keep a readable message column. The user's
   // chosen `columnVisibility` stays the source of truth (settings checkmarks +
   // tooltip surfacing); this derived value drives what's actually laid out.
+  const badgeMax = maxBadgeWidth(layoutHints?.badgeWidth);
+  const graphMin = minGraphWidth(layoutHints?.visibleLanes ?? totalLanes, laneWidth);
+  const badgeW = clamp(layout.badge, COL_BADGE_MIN, badgeMax);
+  const graphW = clamp(layout.graph, graphMin, COL_GRAPH_MAX);
   const effectiveVisibility: GraphColumnVisibility = deriveEffectiveVisibility(
-    clamp(layout.badge, COL_BADGE_MIN, COL_BADGE_MAX),
-    clamp(layout.graph, minGraphWidth(totalLanes, laneWidth), COL_GRAPH_MAX),
+    badgeW,
+    graphW,
     graphContainerWidth,
     columnVisibility,
   );
 
   // Effective pixel widths fed to header + canvas — derived each render from
-  // the persisted layout, the current container width, the topology's lane
-  // count (which floors the graph column), and which optional columns are on.
+  // the persisted layout, the current container width, the on-screen lanes
+  // (which floor the graph column), and which optional columns are on.
   const effectiveWidths: GraphColumnWidths = deriveWidths(
-    layout,
+    badgeW,
+    graphW,
+    layout.authorRatio,
     graphContainerWidth,
-    totalLanes,
     effectiveVisibility,
-    laneWidth,
   );
 
 
@@ -671,8 +681,8 @@ export function GraphPanel() {
               widths={effectiveWidths}
               containerWidth={graphContainerWidth}
               badgeMin={COL_BADGE_MIN}
-              badgeMax={COL_BADGE_MAX}
-              graphMin={minGraphWidth(totalLanes, laneWidth)}
+              badgeMax={badgeMax}
+              graphMin={graphMin}
               graphMax={COL_GRAPH_MAX}
               visibility={effectiveVisibility}
               userVisibility={columnVisibility}
@@ -681,11 +691,11 @@ export function GraphPanel() {
               onDensityChange={setGraphDensity}
               onDotNodesChange={setGraphDotNodes}
               onResize={(w) => {
-                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, effectiveVisibility, layout, laneWidth);
+                const next = pxWidthsToLayout(w, containerWidthRef.current, effectiveVisibility, layout);
                 setLayout(next);
               }}
               onResizeEnd={(w) => {
-                const next = pxWidthsToLayout(w, containerWidthRef.current, totalLanes, effectiveVisibility, layout, laneWidth);
+                const next = pxWidthsToLayout(w, containerWidthRef.current, effectiveVisibility, layout);
                 setLayout(next);
                 if (repoPath) {
                   setUiState(`graph_layout:${repoPath}`, JSON.stringify(next)).catch(() => {});
@@ -725,6 +735,7 @@ export function GraphPanel() {
                 density={graphDensity}
                 dotNodes={graphDotNodes}
                 refMru={refMru}
+                onLayoutHints={setLayoutHints}
               />
             </div>
           </div>
