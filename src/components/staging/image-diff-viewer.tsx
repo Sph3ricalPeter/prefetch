@@ -79,6 +79,17 @@ const CHECKER_BG = "bg-[length:16px_16px] [background-image:linear-gradient(45de
 
 const IMG_CONSTRAINT = "block max-w-[calc(100cqw-2rem)] max-h-[calc(100cqh-1rem)]";
 
+// Small images (icons, pixel art, textures) only ever get upscaled by zoom, so render them
+// nearest-neighbor. Large ones stay smooth: they are downscaled to fit, where pixelated aliases.
+// ponytail: size heuristic, measure actual displayed-vs-natural scale if mid-size images need it
+const PIXELATED_MAX_PX = 256;
+
+function imgClass(img: ImageState): string {
+  return Math.max(img.width, img.height) <= PIXELATED_MAX_PX
+    ? `${IMG_CONSTRAINT} [image-rendering:pixelated]`
+    : IMG_CONSTRAINT;
+}
+
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 20;
 const ZOOM_STEP = 1.15;
@@ -363,7 +374,7 @@ function UnifiedView({
           <img
             src={img.dataUri}
             alt="Preview"
-            className={`${IMG_CONSTRAINT} pointer-events-none`}
+            className={`${imgClass(img)} pointer-events-none`}
             draggable={false}
           />
         </div>
@@ -432,7 +443,7 @@ function ImagePanel({
           <img
             src={img.dataUri}
             alt={label}
-            className={`${IMG_CONSTRAINT} pointer-events-none`}
+            className={`${imgClass(img)} pointer-events-none`}
             draggable={false}
           />
         </div>
@@ -519,7 +530,7 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
             <img
               src={newImg.dataUri}
               alt="After"
-              className={`${IMG_CONSTRAINT} pointer-events-none`}
+              className={`${imgClass(newImg)} pointer-events-none`}
               draggable={false}
             />
             <div
@@ -529,7 +540,7 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
               <img
                 src={oldImg.dataUri}
                 alt="Before"
-                className={IMG_CONSTRAINT}
+                className={imgClass(oldImg)}
                 draggable={false}
               />
             </div>
