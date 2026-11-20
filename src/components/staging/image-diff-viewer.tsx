@@ -79,15 +79,17 @@ const CHECKER_BG = "bg-[length:16px_16px] [background-image:linear-gradient(45de
 
 const IMG_CONSTRAINT = "block max-w-[calc(100cqw-2rem)] max-h-[calc(100cqh-1rem)]";
 
-// Small images (icons, pixel art, textures) only ever get upscaled by zoom, so render them
-// nearest-neighbor. Large ones stay smooth: they are downscaled to fit, where pixelated aliases.
-// ponytail: size heuristic, measure actual displayed-vs-natural scale if mid-size images need it
-const PIXELATED_MAX_PX = 256;
+interface ViewportSize {
+  width: number;
+  height: number;
+}
 
-function imgClass(img: ImageState): string {
-  return Math.max(img.width, img.height) <= PIXELATED_MAX_PX
-    ? `${IMG_CONSTRAINT} [image-rendering:pixelated]`
-    : IMG_CONSTRAINT;
+// Nearest-neighbor only once an image is drawn above its natural size, so zoomed-in pixel
+// art stays crisp. Below that (fit-to-panel shrink, 100%) smooth filtering avoids aliasing.
+// The 32/16 offsets mirror IMG_CONSTRAINT's 2rem/1rem.
+function imgClass(img: ImageState, scale: number, viewport: ViewportSize): string {
+  const fit = Math.min(1, (viewport.width - 32) / img.width, (viewport.height - 16) / img.height);
+  return scale * fit > 1 ? `${IMG_CONSTRAINT} [image-rendering:pixelated]` : IMG_CONSTRAINT;
 }
 
 const ZOOM_MIN = 1;
@@ -112,10 +114,16 @@ function useZoomAndPan(
   const panStart = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const rafId = useRef<number>(0);
   const lastMouse = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [viewport, setViewport] = useState<ViewportSize>({ width: 0, height: 0 });
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      setViewport({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    resizeObserver.observe(el);
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -183,8 +191,11 @@ function useZoomAndPan(
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       if (rafId.current) cancelAnimationFrame(rafId.current);
+      resizeObserver.disconnect();
     };
   }, [containerRef, onZoomChange]);
+
+  return viewport;
 }
 
 export function ImageDiffViewer({ filePath, source, staged, onBack }: ImageDiffViewerProps) {
@@ -199,7 +210,6 @@ export function ImageDiffViewer({ filePath, source, staged, onBack }: ImageDiffV
     setZoom(INITIAL_ZOOM);
   }, [setImageDiffViewMode]);
 
-  // Reset zoom/swipe when the viewed file changes
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setZoom(INITIAL_ZOOM); setSwipePos(50); }, [filePath]);
 
@@ -350,7 +360,7 @@ function UnifiedView({
   onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  useZoomAndPan(viewportRef, zoom, onZoomChange);
+  const viewport = useZoomAndPan(viewportRef, zoom, onZoomChange);
 
   const wrapperStyle: React.CSSProperties = {
     transform: `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`,
@@ -366,15 +376,14 @@ function UnifiedView({
       </div>
       <div
         ref={viewportRef}
-        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden [container-type:size]"
-        style={{ cursor: zoom.scale > 1 ? "grab" : "default" }}
+        className={`flex-1 min-h-0 flex items-center justify-center overflow-hidden [container-type:size] ${zoom.scale > 1 ? "cursor-grab" : "cursor-default"}`}
         onDoubleClick={() => onZoomChange(INITIAL_ZOOM)}
       >
         <div className={`rounded-md border border-border ${CHECKER_BG}`} style={wrapperStyle}>
           <img
             src={img.dataUri}
             alt="Preview"
-            className={`${imgClass(img)} pointer-events-none`}
+            className={`${imgClass(img, zoom.scale, viewport)} pointer-events-none`}
             draggable={false}
           />
         </div>
@@ -410,7 +419,7 @@ function ImagePanel({
   onZoomChange: React.Dispatch<React.SetStateAction<ZoomState>>;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  useZoomAndPan(viewportRef, zoom, onZoomChange);
+  const viewport = useZoomAndPan(viewportRef, zoom, onZoomChange);
 
   if (!img) {
     const text = label === "Before" ? "No previous version" : "File removed";
@@ -435,15 +444,14 @@ function ImagePanel({
       </div>
       <div
         ref={viewportRef}
-        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden [container-type:size]"
-        style={{ cursor: zoom.scale > 1 ? "grab" : "default" }}
+        className={`flex-1 min-h-0 flex items-center justify-center overflow-hidden [container-type:size] ${zoom.scale > 1 ? "cursor-grab" : "cursor-default"}`}
         onDoubleClick={() => onZoomChange(INITIAL_ZOOM)}
       >
         <div className={`rounded-md border border-border ${CHECKER_BG}`} style={wrapperStyle}>
           <img
             src={img.dataUri}
             alt={label}
-            className={`${imgClass(img)} pointer-events-none`}
+            className={`${imgClass(img, zoom.scale, viewport)} pointer-events-none`}
             draggable={false}
           />
         </div>
@@ -486,7 +494,7 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
   const wrapperRef = useRef<HTMLDivElement>(null);
   const swipeDragging = useRef(false);
 
-  useZoomAndPan(viewportRef, zoom, onZoomChange);
+  const viewport = useZoomAndPan(viewportRef, zoom, onZoomChange);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -521,8 +529,7 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
       </div>
       <div
         ref={viewportRef}
-        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden select-none [container-type:size]"
-        style={{ cursor: zoom.scale > 1 ? "grab" : "default" }}
+        className={`flex-1 min-h-0 flex items-center justify-center overflow-hidden select-none [container-type:size] ${zoom.scale > 1 ? "cursor-grab" : "cursor-default"}`}
         onDoubleClick={() => onZoomChange(INITIAL_ZOOM)}
       >
         <div ref={wrapperRef} className="relative" style={wrapperStyle}>
@@ -530,7 +537,7 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
             <img
               src={newImg.dataUri}
               alt="After"
-              className={`${imgClass(newImg)} pointer-events-none`}
+              className={`${imgClass(newImg, zoom.scale, viewport)} pointer-events-none`}
               draggable={false}
             />
             <div
@@ -540,15 +547,15 @@ function SwipeView({ oldImg, newImg, swipePos, onSwipePosChange, zoom, onZoomCha
               <img
                 src={oldImg.dataUri}
                 alt="Before"
-                className={imgClass(oldImg)}
+                className={imgClass(oldImg, zoom.scale, viewport)}
                 draggable={false}
               />
             </div>
           </div>
           <div
             data-swipe-handle
-            className="absolute top-0 bottom-0 z-10"
-            style={{ left: `${swipePos}%`, width: "24px", marginLeft: "-12px", cursor: "ew-resize" }}
+            className="absolute top-0 bottom-0 z-10 w-6 -ml-3 cursor-ew-resize"
+            style={{ left: `${swipePos}%` }}
             onMouseDown={(e) => {
               e.preventDefault();
               swipeDragging.current = true;
